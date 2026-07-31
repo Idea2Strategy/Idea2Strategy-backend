@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "event-envelope.v1",
+  "eventId": "00000000-0000-4000-8000-000000000103",
+  "eventType": "identity.authentication.succeeded",
+  "occurredAt": "2026-07-31T12:00:00Z",
+  "correlationId": "00000000-0000-4000-8000-000000000102",
+  "idempotencyKey": "idem-common-auth-0001",
+  "payload": {}
+}
