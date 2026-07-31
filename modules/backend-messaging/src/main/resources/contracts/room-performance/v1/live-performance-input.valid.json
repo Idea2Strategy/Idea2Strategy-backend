@@ -1,0 +1,13 @@
+{
+  "contractVersion": "room-performance.v1",
+  "eventId": "60000000-0000-4000-8000-000000000041",
+  "roomId": "10000000-0000-4000-8000-000000000001",
+  "evaluationSegmentId": "40000000-0000-4000-8000-000000000001",
+  "anonymousBotId": "bot-orchid-07",
+  "scheduleVersion": "room-schedule.v1",
+  "source": "LIVE_TRADING",
+  "eventType": "FILL",
+  "sourceEventSequence": 41,
+  "occurredAt": "2026-08-15T00:05:00Z",
+  "evidenceHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

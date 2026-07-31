@@ -1,0 +1,62 @@
+[
+  {
+    "contractVersion": "room-performance.v1",
+    "commandId": "50000000-0000-4000-8000-000000000001",
+    "type": "INITIALIZE_EVALUATION",
+    "roomId": "10000000-0000-4000-8000-000000000001",
+    "participationId": "20000000-0000-4000-8000-000000000001",
+    "botId": "30000000-0000-4000-8000-000000000001",
+    "evaluationSegmentId": "40000000-0000-4000-8000-000000000001",
+    "scheduleVersion": "room-schedule.v1",
+    "effectiveAt": "2026-08-14T23:55:00Z",
+    "idempotencyKey": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  {
+    "contractVersion": "room-performance.v1",
+    "commandId": "50000000-0000-4000-8000-000000000002",
+    "type": "START_EVALUATION",
+    "roomId": "10000000-0000-4000-8000-000000000001",
+    "participationId": "20000000-0000-4000-8000-000000000001",
+    "botId": "30000000-0000-4000-8000-000000000001",
+    "evaluationSegmentId": "40000000-0000-4000-8000-000000000001",
+    "scheduleVersion": "room-schedule.v1",
+    "effectiveAt": "2026-08-15T00:00:00Z",
+    "idempotencyKey": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  {
+    "contractVersion": "room-performance.v1",
+    "commandId": "50000000-0000-4000-8000-000000000003",
+    "type": "END_EVALUATION",
+    "roomId": "10000000-0000-4000-8000-000000000001",
+    "participationId": "20000000-0000-4000-8000-000000000001",
+    "botId": "30000000-0000-4000-8000-000000000001",
+    "evaluationSegmentId": "40000000-0000-4000-8000-000000000001",
+    "scheduleVersion": "room-schedule.v1",
+    "effectiveAt": "2026-08-29T00:00:00Z",
+    "idempotencyKey": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  {
+    "contractVersion": "room-performance.v1",
+    "commandId": "50000000-0000-4000-8000-000000000004",
+    "type": "CONTINUE_AS_PRIVATE_BOT",
+    "roomId": "10000000-0000-4000-8000-000000000001",
+    "participationId": "20000000-0000-4000-8000-000000000001",
+    "botId": "30000000-0000-4000-8000-000000000001",
+    "evaluationSegmentId": "40000000-0000-4000-8000-000000000001",
+    "scheduleVersion": "room-schedule.v1",
+    "effectiveAt": "2026-08-29T00:01:00Z",
+    "idempotencyKey": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  {
+    "contractVersion": "room-performance.v1",
+    "commandId": "50000000-0000-4000-8000-000000000005",
+    "type": "STOP_BOT",
+    "roomId": "10000000-0000-4000-8000-000000000001",
+    "participationId": "20000000-0000-4000-8000-000000000001",
+    "botId": "30000000-0000-4000-8000-000000000001",
+    "evaluationSegmentId": "40000000-0000-4000-8000-000000000001",
+    "scheduleVersion": "room-schedule.v1",
+    "effectiveAt": "2026-08-29T00:01:00Z",
+    "idempotencyKey": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  }
+]

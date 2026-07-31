@@ -1,0 +1,15 @@
+{
+  "contractVersion": "room-performance.v1",
+  "roomId": "10000000-0000-4000-8000-000000000003",
+  "scheduleVersion": "room-schedule.v1",
+  "competitionType": "BACKTEST",
+  "organizerType": "PLATFORM",
+  "accessType": "PUBLIC",
+  "recruitmentOpensAt": "2026-08-01T00:00:00Z",
+  "participationOpensAt": "2026-08-01T00:00:00Z",
+  "evaluationStartsAt": "2026-08-15T00:00:00Z",
+  "participationClosesAt": "2026-08-31T00:00:00Z",
+  "evaluationEndsAt": "2026-08-31T00:00:00Z",
+  "finalizationDeadlineAt": "2026-09-01T00:00:00Z",
+  "timeZone": "America/New_York"
+}
