@@ -15,6 +15,7 @@ import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.ApplicationEventPublisher;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
@@ -49,6 +50,11 @@ public class IdentityAuthConfiguration {
     @Bean
     HmacSessionTokens sessionTokens(@Value("${identity.crypto.session-hmac-key}") String key) {
         return new HmacSessionTokens(decode(key));
+    }
+
+    @Bean
+    VerificationDeliveryPort verificationDeliveryPort(ApplicationEventPublisher publisher) {
+        return new ApplicationEventVerificationDelivery(publisher);
     }
 
     @Bean
