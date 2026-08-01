@@ -33,6 +33,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
     private static final UUID FEATURE_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID FEE_ID = UUID.fromString("80000000-0000-4000-8000-000000000001");
     private static final UUID BUFFER_ID = UUID.fromString("90000000-0000-4000-8000-000000000001");
+    private static final UUID DATASET_ID = UUID.fromString("a0000000-0000-4000-8000-000000000001");
     private static final Instant NOW = Instant.parse("2026-08-01T09:00:00Z");
 
     @Test
@@ -78,12 +79,19 @@ class ImmutableStrategyReleaseCommandServiceTest {
         assertThat(releases.validationRunId).isEqualTo(RUN_ID);
         assertThat(releases.validatedEditSequence).isEqualTo(7);
         assertThat(releases.validatedSemanticHash).isEqualTo(document.semanticHash());
+        assertThat(releases.backtestRequest.botId()).isEqualTo(RELEASE_ID);
+        assertThat(releases.backtestRequest.expectedSnapshotHash()).isEqualTo("sha256:" + release.snapshotHash());
+        assertThat(releases.backtestRequest.compiledPlanChecksum()).isEqualTo("sha256:" + planPort.saved.planHash());
+        assertThat(releases.backtestRequest.datasetManifestId()).isEqualTo(DATASET_ID);
+        assertThat(releases.backtestRequest.assumptionsVersion()).isEqualTo("accounting/v1");
+        assertThat(releases.backtestRequest.requestReason()).isEqualTo("STRATEGY_RELEASE");
+        assertThat(releases.backtestRequest.metadata().idempotencyKey()).startsWith("sha256:").hasSize(71);
     }
 
     private static ImmutableStrategyReleaseCommand command() {
         return new ImmutableStrategyReleaseCommand(
                 RELEASE_ID, new BigDecimal("100000.00"), 10_000, "broker/v1", "accounting/v1",
-                "precision/v1", FEE_ID, BUFFER_ID, "{\"policy\":\"FIRST_WINS\"}");
+                "precision/v1", FEE_ID, BUFFER_ID, DATASET_ID, "{\"policy\":\"FIRST_WINS\"}");
     }
 
     private static StrategyDocument document() {
@@ -159,16 +167,19 @@ class ImmutableStrategyReleaseCommandServiceTest {
         private UUID validationRunId;
         private long validatedEditSequence;
         private String validatedSemanticHash;
+        private OfficialBacktestRequest backtestRequest;
 
         @Override
         public ImmutableStrategyRelease saveOnce(
                 ImmutableStrategyRelease release,
+                OfficialBacktestRequest backtestRequest,
                 UUID validationRunId,
                 long validatedEditSequence,
                 String validatedSemanticHash) {
             this.validationRunId = validationRunId;
             this.validatedEditSequence = validatedEditSequence;
             this.validatedSemanticHash = validatedSemanticHash;
+            this.backtestRequest = backtestRequest;
             return release;
         }
     }

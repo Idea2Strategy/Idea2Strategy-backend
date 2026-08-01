@@ -13,6 +13,7 @@ public record ImmutableStrategyReleaseCommand(
         String precisionRulesVersion,
         UUID feePolicyId,
         UUID buyingPowerBufferPolicyId,
+        UUID datasetManifestId,
         String candidateConflictPolicy) {
     public ImmutableStrategyReleaseCommand {
         Objects.requireNonNull(releaseId, "releaseId");
@@ -22,6 +23,7 @@ public record ImmutableStrategyReleaseCommand(
         Objects.requireNonNull(precisionRulesVersion, "precisionRulesVersion");
         Objects.requireNonNull(feePolicyId, "feePolicyId");
         Objects.requireNonNull(buyingPowerBufferPolicyId, "buyingPowerBufferPolicyId");
+        Objects.requireNonNull(datasetManifestId, "datasetManifestId");
         candidateConflictPolicy = StrategyDocumentJson.canonicalize(candidateConflictPolicy);
     }
 }

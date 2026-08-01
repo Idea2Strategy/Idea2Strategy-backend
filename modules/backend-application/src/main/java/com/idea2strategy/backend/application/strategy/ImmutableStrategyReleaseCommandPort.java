@@ -6,6 +6,7 @@ import java.util.UUID;
 public interface ImmutableStrategyReleaseCommandPort {
     ImmutableStrategyRelease saveOnce(
             ImmutableStrategyRelease release,
+            OfficialBacktestRequest backtestRequest,
             UUID validationRunId,
             long validatedEditSequence,
             String validatedSemanticHash);

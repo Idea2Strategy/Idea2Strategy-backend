@@ -108,8 +108,11 @@ public final class ImmutableStrategyReleaseCommandService {
                 presentationSnapshot, semanticHash, presentationHash, snapshotHash, configuration, partition,
                 clock.instant());
 
+        var backtestRequest = OfficialBacktestRequest.forRelease(
+                release, plan.planHash(), command.datasetManifestId());
         return releasePort.saveOnce(
-                release, validationRunId, validation.requestedEditSequence(), validation.semanticHash());
+                release, backtestRequest, validationRunId,
+                validation.requestedEditSequence(), validation.semanticHash());
     }
 
     private List<Flow> flows(

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
+import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -39,6 +40,8 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID FEATURE_ID = UUID.fromString("a0000000-0000-4000-8000-000000000011");
     private static final UUID FEE_ID = UUID.fromString("b0000000-0000-4000-8000-000000000011");
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
+    private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
+    private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
     private static final Instant NOW = Instant.parse("2026-08-01T09:00:00Z");
     private static final String HASH_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static final String HASH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -79,6 +82,22 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "plan_document, plan_hash, created_at) values (?, ?, ?, 'basic-compiler:1.0.0', ?, "
                         + "'{}'::jsonb, ?, ?)",
                 PLAN_ID, CATALOG_ID, HASH_A, HASH_B, HASH_C, at);
+        jdbc.update(
+                "insert into market_data.providers (id, code, display_name, rights_version, status, created_at) "
+                        + "values (?, 'TEST', 'Test', 'rights/v1', 'ACTIVE', ?)",
+                UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'OFFICIAL', 'BAR', '1d', 'UTC', 'v1', ?)",
+                FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+        jdbc.update(
+                "insert into market_data.dataset_manifests "
+                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "schema_version, dataset_hash, created_at, available_at) "
+                        + "values (?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
+                        + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
+                DATASET_ID, FEED_ID, HASH_D, at, at);
         jdbc.update(
                 "insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -122,9 +141,11 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     @Test
     void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
+        OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
+                release, HASH_C, DATASET_ID);
 
-        assertThat(adapter.saveOnce(release, RUN_ID, 7, HASH_A)).isEqualTo(release);
-        assertThat(adapter.saveOnce(release, RUN_ID, 7, HASH_A)).isEqualTo(release);
+        assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
+        assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
 
         assertThat(count("bot.bots")).isEqualTo(1);
         assertThat(count("bot.launch_snapshots")).isEqualTo(1);
@@ -133,11 +154,21 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("bot.flows")).isEqualTo(1);
         assertThat(count("bot.flow_instruments")).isEqualTo(1);
         assertThat(count("bot.flow_feature_requirements")).isEqualTo(1);
+        assertThat(count("backtest.runs")).isEqualTo(1);
+        assertThat(count("operations.outbox_messages")).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select status::text from backtest.runs where bot_id = ?", String.class, BOT_ID))
+                .isEqualTo("QUEUED");
+        assertThat(jdbc.queryForObject(
+                        "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
+                                + "where aggregate_id = ?", String.class, BOT_ID))
+                .isEqualTo(DATASET_ID.toString());
         assertThat(jdbc.queryForObject(
                         "select started_at is null from bot.bots where id = ?", Boolean.class, BOT_ID))
                 .isTrue();
 
-        assertThatThrownBy(() -> adapter.saveOnce(release(BOT_ID, HASH_C), RUN_ID, 7, HASH_A))
+        assertThatThrownBy(() -> adapter.saveOnce(
+                        release(BOT_ID, HASH_C), request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
                 .hasMessage("Release id is already bound to different immutable content");
     }
