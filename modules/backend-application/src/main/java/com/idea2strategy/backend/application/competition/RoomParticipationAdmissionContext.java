@@ -9,12 +9,14 @@ public record RoomParticipationAdmissionContext(
         UUID ownerAccountId,
         Instant admittedAt,
         Instant executionEligibleFrom,
+        RoomSubmissionTiming submissionTiming,
         RoomBotLaunchRules launchRules) {
     public RoomParticipationAdmissionContext {
         Objects.requireNonNull(roomId, "roomId");
         Objects.requireNonNull(ownerAccountId, "ownerAccountId");
         Objects.requireNonNull(admittedAt, "admittedAt");
         Objects.requireNonNull(executionEligibleFrom, "executionEligibleFrom");
+        Objects.requireNonNull(submissionTiming, "submissionTiming");
         Objects.requireNonNull(launchRules, "launchRules");
     }
 }

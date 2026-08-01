@@ -67,6 +67,7 @@ class RoomParticipationAdmissionServiceTest {
             }
             UUID botId = provisioningAction.provision(new RoomParticipationAdmissionContext(
                     request.roomId(), request.ownerAccountId(), request.admittedAt(), NOW.plusSeconds(3600),
+                    RoomSubmissionTiming.WAIT_UNTIL_EVALUATION,
                     new RoomBotLaunchRules(
                             new java.math.BigDecimal("100000.00"),
                             UUID.fromString("70000000-0000-4000-8000-000000000001"),
