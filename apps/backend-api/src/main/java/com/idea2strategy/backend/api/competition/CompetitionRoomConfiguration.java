@@ -8,13 +8,23 @@ import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryServ
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
 import com.idea2strategy.backend.application.competition.RoomInvitationService;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionService;
+import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.strategy.BasicExecutionPlanCommandService;
+import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandService;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomParticipationAdmissionJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.ScoringTemplateCatalogJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.CompiledFlowPlanJooqCommandAdapter;
+import com.idea2strategy.backend.persistence.strategy.ImmutableStrategyReleaseJooqCommandAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJooqQueryAdapter;
 import java.time.Clock;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -29,7 +39,13 @@ import org.springframework.context.annotation.Import;
     ScoringTemplateCatalogJooqQueryAdapter.class,
     PublicRoomSearchJooqAdapter.class,
     RoomInvitationJooqAdapter.class,
-    RoomParticipationAdmissionJooqAdapter.class
+    RoomParticipationAdmissionJooqAdapter.class,
+    RoomStrategyBotProvisioningJooqAdapter.class,
+    CompiledFlowPlanJooqCommandAdapter.class,
+    ImmutableStrategyReleaseJooqCommandAdapter.class,
+    StrategyDocumentJooqQueryAdapter.class,
+    StrategyJooqQueryAdapter.class,
+    StrategyValidationRunJooqQueryAdapter.class
 })
 public class CompetitionRoomConfiguration {
     @Bean
@@ -61,6 +77,62 @@ public class CompetitionRoomConfiguration {
                 principal,
                 Clock.systemUTC(),
                 UUID::randomUUID,
+                UUID::randomUUID);
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    BasicExecutionPlanCommandService roomBasicExecutionPlanCommandService(
+            CompiledFlowPlanJooqCommandAdapter planAdapter,
+            StrategyValidationRunJooqQueryAdapter validationAdapter,
+            StrategyJooqQueryAdapter strategyAdapter,
+            StrategyDocumentJooqQueryAdapter documentAdapter,
+            CurrentPrincipal principal) {
+        return new BasicExecutionPlanCommandService(
+                planAdapter,
+                validationAdapter,
+                strategyAdapter,
+                documentAdapter,
+                principal,
+                UUID::randomUUID,
+                Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    ImmutableStrategyReleaseCommandService roomImmutableStrategyReleaseCommandService(
+            ImmutableStrategyReleaseJooqCommandAdapter releaseAdapter,
+            BasicExecutionPlanCommandService planService,
+            StrategyValidationRunJooqQueryAdapter validationAdapter,
+            StrategyJooqQueryAdapter strategyAdapter,
+            StrategyDocumentJooqQueryAdapter documentAdapter,
+            CurrentPrincipal principal) {
+        return new ImmutableStrategyReleaseCommandService(
+                releaseAdapter,
+                planService,
+                validationAdapter,
+                strategyAdapter,
+                documentAdapter,
+                principal,
+                Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    RoomStrategyParticipationService roomStrategyParticipationService(
+            RoomParticipationAdmissionService admissionService,
+            RoomStrategyBotProvisioningJooqAdapter provisioningAdapter,
+            ImmutableStrategyReleaseCommandService releaseService,
+            BasicStrategyCatalogQueryService catalogService,
+            StrategyValidationRunJooqQueryAdapter validationAdapter,
+            CurrentPrincipal principal) {
+        return new RoomStrategyParticipationService(
+                admissionService,
+                provisioningAdapter,
+                releaseService,
+                catalogService,
+                validationAdapter,
+                principal,
                 UUID::randomUUID);
     }
 
