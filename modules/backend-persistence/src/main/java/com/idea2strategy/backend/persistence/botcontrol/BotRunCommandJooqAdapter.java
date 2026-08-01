@@ -10,6 +10,7 @@ import com.idea2strategy.backend.application.botcontrol.BotRunDispatchMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -67,6 +68,18 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
         BotRunDispatchMode mode = executionEligibleFrom.isAfter(requestedAt)
                 ? BotRunDispatchMode.WAITING
                 : BotRunDispatchMode.IMMEDIATE;
+
+        if (participationStatus == null) {
+            dsl.execute(
+                    "insert into bot.continuation_deadlines "
+                            + "(bot_id, due_at, renewal_sequence, created_at, updated_at) "
+                            + "values (?, ?::timestamptz, 0, ?::timestamptz, ?::timestamptz) "
+                            + "on conflict (bot_id) do nothing",
+                    botId,
+                    requestedAt.plus(Duration.ofDays(30)).atOffset(ZoneOffset.UTC),
+                    requestedAt.atOffset(ZoneOffset.UTC),
+                    requestedAt.atOffset(ZoneOffset.UTC));
+        }
 
         if (!currentEligibility.toInstant().equals(executionEligibleFrom)) {
             dsl.execute(

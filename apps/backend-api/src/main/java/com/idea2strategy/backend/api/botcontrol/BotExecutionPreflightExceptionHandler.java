@@ -1,6 +1,8 @@
 package com.idea2strategy.backend.api.botcontrol;
 
 import com.idea2strategy.backend.application.botcontrol.BotExecutionPreflightNotFoundException;
+import com.idea2strategy.backend.application.botcontrol.BotContinuationConflictException;
+import com.idea2strategy.backend.application.botcontrol.BotContinuationNotFoundException;
 import com.idea2strategy.backend.application.botcontrol.BotRunCommandConflictException;
 import com.idea2strategy.backend.application.botcontrol.BotRunCommandRejectedException;
 import com.idea2strategy.backend.application.botcontrol.BotStopCommandConflictException;
@@ -12,7 +14,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice(assignableTypes = {
     BotExecutionPreflightController.class,
     BotRunCommandController.class,
-    BotStopCommandController.class
+    BotStopCommandController.class,
+    BotContinuationController.class
 })
 public class BotExecutionPreflightExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
@@ -29,6 +32,13 @@ public class BotExecutionPreflightExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(BotContinuationNotFoundException.class)
+    ProblemDetail continuationNotFound(BotContinuationNotFoundException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+        problem.setTitle(HttpStatus.NOT_FOUND.getReasonPhrase());
+        return problem;
+    }
+
     @ExceptionHandler(BotRunCommandRejectedException.class)
     ProblemDetail preflightRejected(BotRunCommandRejectedException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
@@ -37,8 +47,12 @@ public class BotExecutionPreflightExceptionHandler {
         return problem;
     }
 
-    @ExceptionHandler({BotRunCommandConflictException.class, BotStopCommandConflictException.class})
-    ProblemDetail commandConflict(IllegalStateException exception) {
+    @ExceptionHandler({
+        BotRunCommandConflictException.class,
+        BotStopCommandConflictException.class,
+        BotContinuationConflictException.class
+    })
+    ProblemDetail commandConflict(RuntimeException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
         problem.setTitle(HttpStatus.CONFLICT.getReasonPhrase());
         return problem;
