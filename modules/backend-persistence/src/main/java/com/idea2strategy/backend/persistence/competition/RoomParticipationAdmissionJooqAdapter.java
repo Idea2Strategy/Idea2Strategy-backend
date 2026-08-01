@@ -8,6 +8,10 @@ import com.idea2strategy.backend.application.competition.RoomParticipationAdmiss
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionOutcome;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionPort;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionRequest;
+import com.idea2strategy.backend.application.competition.RoomSubmissionSchedule;
+import com.idea2strategy.backend.application.competition.RoomSubmissionTiming;
+import com.idea2strategy.backend.domain.competition.CompetitionType;
+import com.idea2strategy.backend.domain.competition.RoomStatus;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -46,14 +50,15 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
                         + "rules.bot_participation_limit, rules.per_account_bot_limit, "
                         + "rules.initial_cash_amount, rules.fee_policy_id, "
                         + "rules.buying_power_buffer_policy_id, rules.precision_rules_version, "
-                        + "schedule.recruitment_opens_at, schedule.participation_closes_at, "
+                        + "schedule.participation_opens_at, schedule.participation_closes_at, "
                         + "schedule.evaluation_starts_at "
                         + "from competition.rooms r "
                         + "join competition.room_rules rules on rules.room_id = r.id "
                         + "join competition.room_schedules schedule on schedule.room_id = r.id "
                         + "where r.id = ? for update of r",
                 request.roomId());
-        if (!joinable(room, request.admittedAt().atOffset(ZoneOffset.UTC))) {
+        var submissionTiming = submissionTiming(room, request.admittedAt());
+        if (submissionTiming == null) {
             return rejected(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
         }
 
@@ -72,12 +77,17 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
             return rejected(RoomParticipationAdmissionFailure.ACCOUNT_EXECUTION_LIMIT_REACHED);
         }
 
-        OffsetDateTime executionEligibleFrom = room.get("evaluation_starts_at", OffsetDateTime.class);
+        OffsetDateTime evaluationStartsAt = room.get("evaluation_starts_at", OffsetDateTime.class);
+        OffsetDateTime admittedAt = request.admittedAt().atOffset(ZoneOffset.UTC);
+        OffsetDateTime executionEligibleFrom = admittedAt.isAfter(evaluationStartsAt)
+                ? admittedAt
+                : evaluationStartsAt;
         var context = new RoomParticipationAdmissionContext(
                 request.roomId(),
                 request.ownerAccountId(),
                 request.admittedAt(),
                 executionEligibleFrom.toInstant(),
+                submissionTiming,
                 new RoomBotLaunchRules(
                         room.get("initial_cash_amount", java.math.BigDecimal.class),
                         room.get("fee_policy_id", UUID.class),
@@ -93,7 +103,6 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
             return rejected(RoomParticipationAdmissionFailure.PROVISIONED_BOT_INVALID);
         }
 
-        OffsetDateTime admittedAt = request.admittedAt().atOffset(ZoneOffset.UTC);
         dsl.execute(
                 "insert into competition.participations "
                         + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at) "
@@ -121,16 +130,17 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
                 request.admittedAt()));
     }
 
-    private static boolean joinable(Record room, OffsetDateTime at) {
-        if (room == null
-                || !"LIVE_PAPER".equals(room.get("competition_type", String.class))
-                || !"RECRUITING".equals(room.get("room_status", String.class))) {
-            return false;
+    private static RoomSubmissionTiming submissionTiming(Record room, java.time.Instant at) {
+        if (room == null) {
+            return null;
         }
-        OffsetDateTime opensAt = room.get("recruitment_opens_at", OffsetDateTime.class);
-        OffsetDateTime closesAt = room.get("participation_closes_at", OffsetDateTime.class);
-        OffsetDateTime evaluationStartsAt = room.get("evaluation_starts_at", OffsetDateTime.class);
-        return !at.isBefore(opensAt) && at.isBefore(closesAt) && at.isBefore(evaluationStartsAt);
+        var schedule = new RoomSubmissionSchedule(
+                CompetitionType.valueOf(room.get("competition_type", String.class)),
+                RoomStatus.valueOf(room.get("room_status", String.class)),
+                room.get("participation_opens_at", OffsetDateTime.class).toInstant(),
+                room.get("evaluation_starts_at", OffsetDateTime.class).toInstant(),
+                room.get("participation_closes_at", OffsetDateTime.class).toInstant());
+        return schedule.timingAt(at).orElse(null);
     }
 
     private int countOccupied(UUID roomId, UUID ownerAccountId) {

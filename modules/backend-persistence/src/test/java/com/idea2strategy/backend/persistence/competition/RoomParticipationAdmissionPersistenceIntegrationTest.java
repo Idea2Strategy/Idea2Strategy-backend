@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.application.competition.RoomBotProvisioningAction;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionFailure;
+import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionContext;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionOutcome;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionRequest;
+import com.idea2strategy.backend.application.competition.RoomSubmissionTiming;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -15,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +43,7 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     private static final UUID SCORING_ID = UUID.fromString("76000000-0000-4000-8000-000000000006");
     private static final UUID FEE_ID = UUID.fromString("76000000-0000-4000-8000-000000000007");
     private static final UUID BUFFER_ID = UUID.fromString("76000000-0000-4000-8000-000000000008");
+    private static final UUID OPERATOR_ID = UUID.fromString("76000000-0000-4000-8000-000000000009");
     private static final Instant NOW = Instant.parse("2026-08-02T00:00:00Z");
 
     @Container
@@ -69,6 +73,7 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
         jdbc.update("delete from competition.live_room_rules");
         jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.rooms");
+        jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
@@ -100,6 +105,13 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 BUFFER_ID,
                 at.minusDays(1),
                 at.minusDays(1));
+        jdbc.update(
+                "insert into operations.operator_accounts "
+                        + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
+                        + "values (?, 'operator-e10', 'ACTIVE', ?, ?)",
+                OPERATOR_ID,
+                at.minusDays(2),
+                at.minusDays(2));
     }
 
     @Test
@@ -121,6 +133,23 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                         String.class,
                         id(1)))
                 .isEqualTo("PARTICIPATION_REGISTERED");
+    }
+
+    @Test
+    void startsBacktestSubmissionImmediatelyDuringEvaluation() {
+        insertBacktestRoom(ROOM_A, 4, 2);
+        UUID botId = id(106);
+        var observedContext = new AtomicReference<RoomParticipationAdmissionContext>();
+
+        var outcome = adapter.admit(request(6, ROOM_A, OWNER_A, "bot-backtest"), context -> {
+            observedContext.set(context);
+            insertBot(botId, OWNER_A, context.executionEligibleFrom());
+            return botId;
+        });
+
+        assertThat(outcome.accepted()).isTrue();
+        assertThat(observedContext.get().submissionTiming()).isEqualTo(RoomSubmissionTiming.START_IMMEDIATELY);
+        assertThat(observedContext.get().executionEligibleFrom()).isEqualTo(NOW);
     }
 
     @Test
@@ -312,6 +341,43 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 at.plusHours(1),
                 at.plusHours(3),
                 at.plusHours(4));
+    }
+
+    private void insertBacktestRoom(UUID roomId, int roomLimit, int accountLimit) {
+        var at = NOW.atOffset(ZoneOffset.UTC);
+        jdbc.update(
+                "insert into competition.rooms "
+                        + "(id, competition_type, organizer_type, created_by_operator_id, name, access_type, status, created_at) "
+                        + "values (?, 'BACKTEST', 'PLATFORM', ?, 'Backtest Room', 'PUBLIC', 'EVALUATING', ?)",
+                roomId,
+                OPERATOR_ID,
+                at.minusDays(2));
+        jdbc.update(
+                "insert into competition.room_rules "
+                        + "(room_id, scoring_template_version_id, initial_cash_amount, bot_participation_limit, "
+                        + "per_account_bot_limit, eligibility_document, market_scope_document, scoring_parameters, "
+                        + "fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, precision_rules_version, "
+                        + "rules_hash, locked_at) values (?, ?, 100000, ?, ?, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, "
+                        + "?, 5, ?, 'v1', 'rules-v1', ?)",
+                roomId,
+                SCORING_ID,
+                roomLimit,
+                accountLimit,
+                FEE_ID,
+                BUFFER_ID,
+                at.minusDays(2));
+        jdbc.update(
+                "insert into competition.room_schedules "
+                        + "(room_id, recruitment_opens_at, participation_opens_at, evaluation_starts_at, "
+                        + "participation_closes_at, evaluation_ends_at, finalization_deadline_at, timezone_name) "
+                        + "values (?, ?, ?, ?, ?, ?, ?, 'UTC')",
+                roomId,
+                at.minusHours(2),
+                at.minusHours(2),
+                at.minusHours(1),
+                at.plusHours(1),
+                at.plusHours(2),
+                at.plusHours(3));
     }
 
     private static UUID id(int suffix) {

@@ -8,7 +8,8 @@ import org.springframework.boot.test.context.SpringBootTest;
             + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
             + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
             + "org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration",
-    "idea2strategy.batch.expired-bot-stop.enabled=false"
+    "idea2strategy.batch.expired-bot-stop.enabled=false",
+    "idea2strategy.batch.room-schedule-transition.enabled=false"
 })
 class BackendBatchApplicationTest {
     @Test

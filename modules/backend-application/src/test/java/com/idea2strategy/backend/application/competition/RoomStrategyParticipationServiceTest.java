@@ -59,6 +59,7 @@ class RoomStrategyParticipationServiceTest {
                     OWNER_ID,
                     ADMITTED_AT,
                     EVALUATION_START,
+                    RoomSubmissionTiming.WAIT_UNTIL_EVALUATION,
                     new RoomBotLaunchRules(new BigDecimal("250000.00"), FEE_ID, BUFFER_ID, "room-precision/v2")));
             return new RoomParticipationAdmission(
                     UUID.randomUUID(), ROOM_ID, botId, OWNER_ID, "ALPHA", ADMITTED_AT);
