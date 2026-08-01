@@ -4,9 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.common.CurrentOperatorPrincipal;
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
+import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
+import com.idea2strategy.backend.application.competition.RoomInvitationService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.ScoringTemplateCatalogJooqQueryAdapter;
 import java.time.Clock;
 import java.util.UUID;
@@ -17,8 +22,33 @@ import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(type = "org.jooq.DSLContext")
-@Import({CompetitionRoomJpaCommandAdapter.class, ScoringTemplateCatalogJooqQueryAdapter.class})
+@Import({
+    CompetitionRoomJpaCommandAdapter.class,
+    ScoringTemplateCatalogJooqQueryAdapter.class,
+    PublicRoomSearchJooqAdapter.class,
+    RoomInvitationJooqAdapter.class
+})
 public class CompetitionRoomConfiguration {
+    @Bean
+    PublicRoomDiscoveryService publicRoomDiscoveryService(PublicRoomSearchJooqAdapter searchAdapter) {
+        return new PublicRoomDiscoveryService(searchAdapter);
+    }
+
+    @Bean
+    RoomInvitationSecretIssuer roomInvitationSecretIssuer() {
+        return new SecureRoomInvitationSecretIssuer();
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    RoomInvitationService roomInvitationService(
+            RoomInvitationJooqAdapter invitationAdapter,
+            RoomInvitationSecretIssuer secretIssuer,
+            CurrentPrincipal principal) {
+        return new RoomInvitationService(
+                invitationAdapter, principal, secretIssuer, Clock.systemUTC(), UUID::randomUUID);
+    }
+
     @Bean
     ScoringTemplateCatalogService scoringTemplateCatalogService(
             ScoringTemplateCatalogJooqQueryAdapter queryAdapter) {
