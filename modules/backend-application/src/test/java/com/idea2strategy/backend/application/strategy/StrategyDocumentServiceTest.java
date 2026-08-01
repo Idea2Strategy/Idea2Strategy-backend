@@ -56,9 +56,9 @@ class StrategyDocumentServiceTest {
 
         assertThat(loaded).isEqualTo(saved);
         assertThat(loaded.semanticDocument())
-                .isEqualTo("{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"buy\",\"blocks\":[{\"id\":\"rsi\",\"period\":14}]}]}");
+                .isEqualTo("{\"groups\":[{\"blocks\":[{\"id\":\"rsi\",\"period\":14}],\"id\":\"buy\"}],\"mode\":\"BASIC\"}");
         assertThat(loaded.presentationDocument())
-                .isEqualTo("{\"viewport\":{\"x\":12,\"y\":34},\"positions\":{\"rsi\":{\"x\":100,\"y\":220}}}");
+                .isEqualTo("{\"positions\":{\"rsi\":{\"x\":100,\"y\":220}},\"viewport\":{\"x\":12,\"y\":34}}");
         assertThat(loaded.semanticHash()).isEqualTo(sha256(loaded.semanticDocument()));
         assertThat(loaded.presentationHash()).isEqualTo(sha256(loaded.presentationDocument()));
         assertThat(loaded.editSequence()).isZero();
