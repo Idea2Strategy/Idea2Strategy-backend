@@ -120,6 +120,14 @@ public final class BasicBlockAssemblyValidator {
                         "Parameter does not match the catalog type");
             }
         });
+        block.parameters().keySet().stream()
+                .filter(name -> !schema.path("properties").has(name))
+                .sorted()
+                .forEach(name -> add(
+                        issues,
+                        "UNDECLARED_PARAMETER",
+                        blockPath + ".parameters." + name,
+                        "Parameter is not declared by the published catalog"));
     }
 
     private void validateContainer(

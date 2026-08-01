@@ -158,9 +158,15 @@ class BasicExecutionPlanCommandServiceTest {
     }
 
     private static StrategyElementDefinition element(String code, String inputs, String outputs, String contract) {
+        String parameters = switch (code) {
+            case "RSI" -> "{\"properties\":{\"operator\":{\"type\":\"string\"},"
+                    + "\"threshold\":{\"type\":\"integer\"}}}";
+            case "BUY_ORDER" -> "{\"properties\":{\"orderType\":{\"type\":\"string\"}}}";
+            default -> "{\"properties\":{}}";
+        };
         return new StrategyElementDefinition(
                 UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8)), CATALOG_ID,
-                code, "BLOCK", "{}", inputs, outputs, contract,
+                code, "BLOCK", parameters, inputs, outputs, contract,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     }
 
