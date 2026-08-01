@@ -39,6 +39,18 @@ public final class MigrationPolicy {
                     .toList();
             var plan = verifyNames(migrationFiles);
             verifyBaselineChecksum(directory.resolve(BASELINE_FILE));
+            for (var migrationFile : migrationFiles) {
+                var migrationSql = Files.readString(directory.resolve(migrationFile), StandardCharsets.UTF_8);
+                DatabaseAccessPolicy.verifyNoApplicationDdlGrants(migrationSql);
+                if (!BASELINE_FILE.equals(migrationFile)) {
+                    var matcher = TIMESTAMP_MIGRATION.matcher(migrationFile);
+                    if (!matcher.matches()) {
+                        throw new IllegalArgumentException("Invalid migration name: " + migrationFile);
+                    }
+                    DatabaseAccessPolicy.verifyMigrationOwnership(
+                            MigrationOwner.fromKey(matcher.group("owner")), migrationSql);
+                }
+            }
             return plan;
         } catch (IOException exception) {
             throw new UncheckedIOException("Unable to verify migration directory: " + directory, exception);
