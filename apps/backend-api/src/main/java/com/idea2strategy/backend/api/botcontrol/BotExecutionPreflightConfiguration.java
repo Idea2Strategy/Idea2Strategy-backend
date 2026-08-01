@@ -2,9 +2,11 @@ package com.idea2strategy.backend.api.botcontrol;
 
 import com.idea2strategy.backend.application.botcontrol.BotExecutionPreflightService;
 import com.idea2strategy.backend.application.botcontrol.BotRunCommandService;
+import com.idea2strategy.backend.application.botcontrol.BotStopCommandService;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.persistence.botcontrol.BotExecutionPreflightJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
+import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
@@ -13,7 +15,11 @@ import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnBean(value = CurrentPrincipal.class, type = "org.jooq.DSLContext")
-@Import({BotExecutionPreflightJooqQueryAdapter.class, BotRunCommandJooqAdapter.class})
+@Import({
+    BotExecutionPreflightJooqQueryAdapter.class,
+    BotRunCommandJooqAdapter.class,
+    BotStopCommandJooqAdapter.class
+})
 public class BotExecutionPreflightConfiguration {
     @Bean
     BotExecutionPreflightService botExecutionPreflightService(
@@ -27,5 +33,11 @@ public class BotExecutionPreflightConfiguration {
             BotExecutionPreflightService preflightService,
             CurrentPrincipal principal) {
         return new BotRunCommandService(commandAdapter, preflightService, principal, Clock.systemUTC());
+    }
+
+    @Bean
+    BotStopCommandService botStopCommandService(
+            BotStopCommandJooqAdapter commandAdapter, CurrentPrincipal principal) {
+        return new BotStopCommandService(commandAdapter, principal, Clock.systemUTC());
     }
 }
