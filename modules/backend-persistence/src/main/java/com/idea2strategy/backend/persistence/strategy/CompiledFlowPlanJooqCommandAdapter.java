@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.idea2strategy.backend.application.strategy.CompiledFlowPlanCommandPort;
+import com.idea2strategy.backend.application.strategy.StrategyDocumentJson;
 import com.idea2strategy.backend.domain.strategy.CompiledFlowPlan;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -61,7 +62,7 @@ public class CompiledFlowPlanJooqCommandAdapter implements CompiledFlowPlanComma
                         record.get(semanticHash),
                         record.get(compilerVersion),
                         record.get(featureHash),
-                        record.get(planDocument).data(),
+                        StrategyDocumentJson.canonicalize(record.get(planDocument).data()),
                         record.get(planHash),
                         record.get(createdAt).toInstant()))
                 .orElseThrow(() -> new IllegalStateException("Compiled flow plan was not persisted"));
