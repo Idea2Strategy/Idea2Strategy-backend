@@ -1,17 +1,34 @@
 package com.idea2strategy.backend.api.botcontrol;
 
 import com.idea2strategy.backend.application.botcontrol.BotExecutionPreflightNotFoundException;
+import com.idea2strategy.backend.application.botcontrol.BotRunCommandConflictException;
+import com.idea2strategy.backend.application.botcontrol.BotRunCommandRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(assignableTypes = BotExecutionPreflightController.class)
+@RestControllerAdvice(assignableTypes = {BotExecutionPreflightController.class, BotRunCommandController.class})
 public class BotExecutionPreflightExceptionHandler {
     @ExceptionHandler(BotExecutionPreflightNotFoundException.class)
     ProblemDetail notFound(BotExecutionPreflightNotFoundException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
         problem.setTitle(HttpStatus.NOT_FOUND.getReasonPhrase());
+        return problem;
+    }
+
+    @ExceptionHandler(BotRunCommandRejectedException.class)
+    ProblemDetail preflightRejected(BotRunCommandRejectedException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle(HttpStatus.CONFLICT.getReasonPhrase());
+        problem.setProperty("issues", exception.issues());
+        return problem;
+    }
+
+    @ExceptionHandler(BotRunCommandConflictException.class)
+    ProblemDetail commandConflict(BotRunCommandConflictException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle(HttpStatus.CONFLICT.getReasonPhrase());
         return problem;
     }
 }
