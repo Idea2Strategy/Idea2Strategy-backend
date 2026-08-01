@@ -8,6 +8,9 @@ import com.idea2strategy.backend.application.identity.AccountLifecycleStatus;
 import com.idea2strategy.backend.application.identity.EmailStatus;
 import com.idea2strategy.backend.application.identity.IdentityQueryPort;
 import com.idea2strategy.backend.application.identity.LoginIdentityStatus;
+import com.idea2strategy.backend.application.identity.OidcIdentityQueryPort;
+import com.idea2strategy.backend.application.identity.OidcLoginAccount;
+import com.idea2strategy.backend.application.identity.OidcProvider;
 import com.idea2strategy.backend.application.identity.PasswordLoginAccount;
 import com.idea2strategy.backend.application.identity.RegistrationQueryPort;
 import java.util.Optional;
@@ -16,7 +19,7 @@ import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class IdentityJooqQueryAdapter implements IdentityQueryPort, RegistrationQueryPort {
+public class IdentityJooqQueryAdapter implements IdentityQueryPort, RegistrationQueryPort, OidcIdentityQueryPort {
     private final DSLContext dsl;
 
     public IdentityJooqQueryAdapter(DSLContext dsl) {
@@ -74,6 +77,46 @@ public class IdentityJooqQueryAdapter implements IdentityQueryPort, Registration
                         LoginIdentityStatus.valueOf(record.get(loginStatus)),
                         record.get(passwordHash),
                         record.get(credentialVersion),
+                        record.get(authEpoch)));
+    }
+
+    @Override
+    public Optional<OidcProvider> findProvider(String providerCode) {
+        var providers = table(name("identity", "auth_providers")).as("provider");
+        var id = field(name("provider", "id"), Short.class);
+        var code = field(name("provider", "code"), String.class);
+        var issuer = field(name("provider", "issuer"), String.class);
+        var active = field(name("provider", "is_active"), Boolean.class);
+        return dsl.select(id, code, issuer, active)
+                .from(providers)
+                .where(code.eq(providerCode)
+                        .and(field(name("provider", "provider_type")).cast(String.class).eq("OIDC")))
+                .fetchOptional(record -> new OidcProvider(
+                        record.get(id), record.get(code), record.get(issuer), Boolean.TRUE.equals(record.get(active))));
+    }
+
+    @Override
+    public Optional<OidcLoginAccount> findActiveLogin(short providerId, String subjectHmac) {
+        var identities = table(name("identity", "login_identities")).as("login");
+        var accounts = table(name("identity", "accounts")).as("account");
+        var security = table(name("identity", "account_security_states")).as("security");
+        var accountId = field(name("account", "id"), UUID.class);
+        var loginId = field(name("login", "id"), UUID.class);
+        var accountStatus = field(name("account", "lifecycle_status")).cast(String.class);
+        var loginStatus = field(name("login", "status")).cast(String.class);
+        var authEpoch = field(name("security", "auth_epoch"), Long.class);
+        return dsl.select(accountId, loginId, accountStatus, loginStatus, authEpoch)
+                .from(identities)
+                .join(accounts).on(field(name("login", "account_id"), UUID.class).eq(accountId))
+                .join(security).on(field(name("security", "account_id"), UUID.class).eq(accountId))
+                .where(field(name("login", "provider_id"), Short.class).eq(providerId)
+                        .and(field(name("login", "provider_subject_hmac"), String.class).eq(subjectHmac))
+                        .and(loginStatus.eq("ACTIVE")))
+                .fetchOptional(record -> new OidcLoginAccount(
+                        record.get(accountId),
+                        record.get(loginId),
+                        AccountLifecycleStatus.valueOf(record.get(accountStatus)),
+                        LoginIdentityStatus.valueOf(record.get(loginStatus)),
                         record.get(authEpoch)));
     }
 }

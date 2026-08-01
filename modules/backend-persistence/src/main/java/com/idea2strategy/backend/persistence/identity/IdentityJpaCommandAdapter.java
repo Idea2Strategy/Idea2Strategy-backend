@@ -2,9 +2,12 @@ package com.idea2strategy.backend.persistence.identity;
 
 import com.idea2strategy.backend.application.identity.AuthenticationSession;
 import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
+import com.idea2strategy.backend.application.identity.ActivateOidcLink;
 import com.idea2strategy.backend.application.identity.IdentityCommandPort;
 import com.idea2strategy.backend.application.identity.LoginFailure;
+import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
+import com.idea2strategy.backend.application.identity.PendingOidcLink;
 import com.idea2strategy.backend.application.identity.RegistrationCommandPort;
 import com.idea2strategy.backend.application.identity.VerificationOutcome;
 import com.idea2strategy.backend.application.identity.VerificationReplacement;
@@ -18,7 +21,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public class IdentityJpaCommandAdapter implements RegistrationCommandPort, IdentityCommandPort {
+public class IdentityJpaCommandAdapter implements RegistrationCommandPort, IdentityCommandPort, OidcIdentityCommandPort {
     private final EntityManager entityManager;
 
     public IdentityJpaCommandAdapter(EntityManager entityManager) {
@@ -301,6 +304,151 @@ public class IdentityJpaCommandAdapter implements RegistrationCommandPort, Ident
     public void completeLogin(AuthenticationSession session, AuthenticationSuccess success) {
         createSession(session);
         recordLoginSuccess(success);
+    }
+
+    @Override
+    @Transactional
+    public void createPendingLink(PendingOidcLink link) {
+        Object status = entityManager.createNativeQuery("""
+                        select account.lifecycle_status::text
+                        from identity.accounts account
+                        join identity.login_identities login on login.account_id = account.id
+                        join identity.auth_providers provider on provider.id = :providerId
+                        where account.id = :accountId and login.id = :currentLoginId
+                          and login.status = cast('ACTIVE' as identity.login_identity_status)
+                          and provider.provider_type = cast('OIDC' as identity.auth_provider_type)
+                          and provider.is_active = true
+                        for update of account, login, provider
+                        """)
+                .setParameter("accountId", link.accountId())
+                .setParameter("currentLoginId", link.reauthenticatedLoginIdentityId())
+                .setParameter("providerId", link.providerId())
+                .getSingleResult();
+        if (!"ACTIVE".equals(status)) {
+            throw new IllegalStateException("Only active accounts can link an OIDC identity");
+        }
+        OffsetDateTime now = utc(link.requestedAt());
+        entityManager.createNativeQuery("""
+                        insert into identity.login_identities
+                            (id, account_id, provider_id, provider_subject_hmac, subject_key_version,
+                             status, created_at, linked_at)
+                        values (:id, :accountId, :providerId, :subjectHmac, :keyVersion,
+                                cast('PENDING' as identity.login_identity_status), :now, :now)
+                        """)
+                .setParameter("id", link.id())
+                .setParameter("accountId", link.accountId())
+                .setParameter("providerId", link.providerId())
+                .setParameter("subjectHmac", link.subjectHmac())
+                .setParameter("keyVersion", link.subjectKeyVersion())
+                .setParameter("now", now)
+                .executeUpdate();
+        insertAuthenticationEvent(
+                link.accountId(),
+                "OIDC_LINK_PENDING",
+                link.id(),
+                "USER",
+                null,
+                link.correlationId(),
+                "oidc-link-pending:" + link.correlationId(),
+                now);
+    }
+
+    @Override
+    @Transactional
+    public long activatePendingLink(ActivateOidcLink command) {
+        Object[] row;
+        try {
+            row = (Object[]) entityManager.createNativeQuery("""
+                            select current_login.status::text, pending_login.status::text, security.auth_epoch
+                            from identity.accounts account
+                            join identity.account_security_states security on security.account_id = account.id
+                            join identity.login_identities current_login
+                              on current_login.account_id = account.id and current_login.id = :currentLoginId
+                            join identity.login_identities pending_login
+                              on pending_login.account_id = account.id and pending_login.id = :pendingLoginId
+                            where account.id = :accountId
+                              and pending_login.provider_id = :providerId
+                              and pending_login.provider_subject_hmac = :subjectHmac
+                            for update of account, security, current_login, pending_login
+                            """)
+                    .setParameter("accountId", command.accountId())
+                    .setParameter("currentLoginId", command.reauthenticatedLoginIdentityId())
+                    .setParameter("pendingLoginId", command.pendingLoginIdentityId())
+                    .setParameter("providerId", command.providerId())
+                    .setParameter("subjectHmac", command.subjectHmac())
+                    .getSingleResult();
+        } catch (NoResultException exception) {
+            throw new IllegalStateException("OIDC link does not belong to the authenticated account", exception);
+        }
+        if (!"ACTIVE".equals(row[0]) || !"PENDING".equals(row[1])) {
+            throw new IllegalStateException("OIDC link is no longer activatable");
+        }
+
+        OffsetDateTime now = utc(command.activatedAt());
+        entityManager.createNativeQuery("""
+                        update identity.login_identities
+                        set status = cast('REPLACED' as identity.login_identity_status), replaced_at = :now
+                        where id = :currentLoginId
+                        """)
+                .setParameter("now", now)
+                .setParameter("currentLoginId", command.reauthenticatedLoginIdentityId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.login_identities
+                        set status = cast('ACTIVE' as identity.login_identity_status), activated_at = :now
+                        where id = :pendingLoginId
+                        """)
+                .setParameter("now", now)
+                .setParameter("pendingLoginId", command.pendingLoginIdentityId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.account_security_states
+                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        where account_id = :accountId
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", command.accountId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.sessions
+                        set revoked_at = coalesce(revoked_at, :now),
+                            revoke_reason_code = coalesce(revoke_reason_code, 'LOGIN_IDENTITY_REPLACED')
+                        where account_id = :accountId and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", command.accountId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.password_reset_requests
+                        set revoked_at = :now
+                        where account_id = :accountId and consumed_at is null and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", command.accountId())
+                .executeUpdate();
+        insertAuthenticationTransitionEvent(command, now);
+        return ((Number) row[2]).longValue() + 1;
+    }
+
+    private void insertAuthenticationTransitionEvent(ActivateOidcLink command, OffsetDateTime occurredAt) {
+        entityManager.createNativeQuery("""
+                        insert into identity.authentication_events
+                            (id, account_id, event_sequence, event_type, subject_login_identity_id,
+                             previous_login_identity_id, new_login_identity_id, actor_type,
+                             correlation_id, idempotency_key, occurred_at)
+                        values (gen_random_uuid(), :accountId,
+                                (select coalesce(max(event_sequence), 0) + 1
+                                 from identity.authentication_events where account_id = :accountId),
+                                'LOGIN_IDENTITY_REPLACED', :newLoginId, :previousLoginId, :newLoginId,
+                                'USER', :correlationId, :idempotencyKey, :occurredAt)
+                        """)
+                .setParameter("accountId", command.accountId())
+                .setParameter("newLoginId", command.pendingLoginIdentityId())
+                .setParameter("previousLoginId", command.reauthenticatedLoginIdentityId())
+                .setParameter("correlationId", command.correlationId())
+                .setParameter("idempotencyKey", "oidc-link-activate:" + command.correlationId())
+                .setParameter("occurredAt", occurredAt)
+                .executeUpdate();
     }
 
     private void insertVerification(
