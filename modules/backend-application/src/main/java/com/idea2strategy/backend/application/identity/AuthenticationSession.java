@@ -9,7 +9,7 @@ public record AuthenticationSession(
         UUID accountId,
         UUID loginIdentityId,
         long authEpoch,
-        long credentialVersion,
+        Long credentialVersion,
         String tokenDigest,
         String deviceLabel,
         Instant issuedAt,
