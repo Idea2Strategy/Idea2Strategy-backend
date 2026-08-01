@@ -13,3 +13,11 @@ application {
     applicationName = "idea2strategy"
     mainClass = "com.idea2strategy.cli.Idea2StrategyCli"
 }
+
+tasks.named<Test>("test") {
+    dependsOn(tasks.named("installDist"))
+    systemProperty(
+        "idea2strategy.cli.installDir",
+        layout.buildDirectory.dir("install/idea2strategy").get().asFile.absolutePath,
+    )
+}

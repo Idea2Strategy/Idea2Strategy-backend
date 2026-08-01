@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "idea2strategy",
+  "outputMode": "JSON",
+  "contractCommand": ["tool-contract"],
+  "workflow": [
+    {
+      "name": "preview-basic-edit",
+      "command": [
+        "strategy", "edit", "preview",
+        "--strategy-id", "<id>",
+        "--authorization-id", "<id>",
+        "--credential-id", "<id>",
+        "--operations-file", "<path>"
+      ],
+      "requiredOutputFields": ["data.diff", "data.previewHash"]
+    },
+    {
+      "name": "apply-reviewed-basic-edit",
+      "command": [
+        "strategy", "edit", "apply",
+        "--strategy-id", "<id>",
+        "--authorization-id", "<id>",
+        "--credential-id", "<id>",
+        "--operations-file", "<same-path>",
+        "--preview-hash", "<reviewed-data.previewHash>"
+      ]
+    }
+  ],
+  "reviewGate": {
+    "previewDiffMustBeInspected": true,
+    "applyRequiresPreviewHash": true,
+    "applyMustReuseReviewedOperations": true
+  },
+  "allowedEditOperations": [
+    "ADD_BLOCK",
+    "REMOVE_BLOCK",
+    "CONNECT_BLOCKS",
+    "SET_VALUE"
+  ],
+  "allowedDelegationScopes": [
+    "STRATEGY_EDIT",
+    "STRATEGY_VALIDATE"
+  ],
+  "forbiddenCapabilities": [
+    "ARBITRARY_CODE",
+    "DIRECT_ORDER",
+    "EXTERNAL_DATA"
+  ],
+  "exitCodes": {
+    "0": "success",
+    "2": "invalid-usage",
+    "3": "authentication-rejected",
+    "4": "authorization-or-scope-rejected",
+    "5": "validation-conflict-or-safety-rejected",
+    "6": "api-unavailable-or-invalid-response",
+    "70": "internal-cli-failure"
+  }
+}
