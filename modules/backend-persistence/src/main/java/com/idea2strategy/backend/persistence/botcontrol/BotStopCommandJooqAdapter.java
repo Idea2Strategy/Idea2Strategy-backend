@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.idea2strategy.backend.application.botcontrol.BotStopCommandConflictException;
 import com.idea2strategy.backend.application.botcontrol.BotStopCommandPort;
 import com.idea2strategy.backend.application.botcontrol.BotStopDispatch;
+import com.idea2strategy.backend.application.botcontrol.ExpiredBotStopCandidate;
+import com.idea2strategy.backend.application.botcontrol.ExpiredBotStopCommandPort;
 import com.idea2strategy.backend.domain.botcontrol.BotLifecycleStatus;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -21,10 +23,11 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public class BotStopCommandJooqAdapter implements BotStopCommandPort {
+public class BotStopCommandJooqAdapter implements BotStopCommandPort, ExpiredBotStopCommandPort {
     private static final String CONTRACT_VERSION = "strategy-bot.v1";
     private static final String MESSAGE_TYPE = "BOT_STOP_COMMAND";
     private static final String BLOCK_REASON = "BOT_STOP_REQUESTED";
+    private static final String EXPIRATION_REASON = "CONTINUATION_DEADLINE_EXPIRED";
 
     private final DSLContext dsl;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -102,6 +105,71 @@ public class BotStopCommandJooqAdapter implements BotStopCommandPort {
                 utc(requestedAt));
         return Optional.of(new BotStopDispatch(
                 botId, messageId, idempotencyKey, lifecycleStatus, reasonCode, inserted == 1));
+    }
+
+    @Override
+    @Transactional
+    public boolean issueExpired(ExpiredBotStopCandidate candidate, Instant requestedAt) {
+        UUID botId = candidate.botId();
+        dsl.fetchOne("select pg_advisory_xact_lock(hashtextextended(?::text, 0))", botId);
+        var bot = dsl.fetchOne(
+                "select b.lifecycle_status::text as lifecycle_status, s.snapshot_hash, d.due_at "
+                        + "from bot.bots b join bot.launch_snapshots s on s.bot_id = b.id "
+                        + "join bot.continuation_deadlines d on d.bot_id = b.id "
+                        + "where b.id = ? and b.owner_account_id = ? and b.deleted_at is null "
+                        + "and not exists (select 1 from competition.participations p where p.bot_id = b.id "
+                        + "and p.status not in ('WITHDRAWN', 'EXPELLED', 'COMPLETED', 'EVALUATION_FAILED')) "
+                        + "for update of b, d",
+                botId,
+                candidate.ownerAccountId());
+        if (bot == null
+                || BotLifecycleStatus.valueOf(bot.get("lifecycle_status", String.class))
+                        != BotLifecycleStatus.RUNNING
+                || bot.get("due_at", OffsetDateTime.class).toInstant().isAfter(requestedAt)) {
+            return false;
+        }
+
+        String expectedSnapshotHash = "sha256:" + bot.get("snapshot_hash", String.class);
+        dsl.execute(
+                "update bot.bots set lifecycle_status = 'STOPPING'::bot.lifecycle_status, "
+                        + "lifecycle_changed_at = ?::timestamptz, execution_blocked_at = ?::timestamptz, "
+                        + "execution_block_reason_code = ?, stop_requested_at = ?::timestamptz, "
+                        + "stop_reason_code = ?, updated_at = ?::timestamptz where id = ?",
+                utc(requestedAt),
+                utc(requestedAt),
+                BLOCK_REASON,
+                utc(requestedAt),
+                EXPIRATION_REASON,
+                utc(requestedAt),
+                botId);
+        issueOutbox(botId, expectedSnapshotHash, EXPIRATION_REASON, requestedAt);
+        return true;
+    }
+
+    private void issueOutbox(
+            UUID botId, String expectedSnapshotHash, String reasonCode, Instant requestedAt) {
+        String idempotencyKey = idempotencyKey(botId, expectedSnapshotHash, "STOP|" + reasonCode);
+        UUID messageId = derivedId("message", idempotencyKey);
+        UUID correlationId = derivedId("correlation", idempotencyKey);
+        var sequenceRecord = dsl.fetchOne(
+                "select coalesce(max(aggregate_sequence), 0) + 1 from operations.outbox_messages "
+                        + "where owner_domain = 'strategy-bot' and aggregate_id = ?",
+                botId);
+        long aggregateSequence = ((Number) sequenceRecord.get(0)).longValue();
+        dsl.execute(
+                "insert into operations.outbox_messages "
+                        + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
+                        + "payload_document, idempotency_key, created_at) "
+                        + "values (?, 'strategy-bot', ?, ?, ?, ?, ?::jsonb, ?, ?::timestamptz) "
+                        + "on conflict (idempotency_key) do nothing",
+                messageId,
+                botId,
+                aggregateSequence,
+                MESSAGE_TYPE,
+                CONTRACT_VERSION,
+                payload(botId, messageId, correlationId, expectedSnapshotHash, reasonCode, idempotencyKey, requestedAt),
+                idempotencyKey,
+                utc(requestedAt));
     }
 
     private boolean outboxExists(String idempotencyKey) {
