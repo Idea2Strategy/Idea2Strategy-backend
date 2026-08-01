@@ -7,11 +7,13 @@ import com.idea2strategy.backend.application.competition.OfficialCompetitionRoom
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
 import com.idea2strategy.backend.application.competition.RoomInvitationService;
+import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomParticipationAdmissionJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.ScoringTemplateCatalogJooqQueryAdapter;
 import java.time.Clock;
 import java.util.UUID;
@@ -26,7 +28,8 @@ import org.springframework.context.annotation.Import;
     CompetitionRoomJpaCommandAdapter.class,
     ScoringTemplateCatalogJooqQueryAdapter.class,
     PublicRoomSearchJooqAdapter.class,
-    RoomInvitationJooqAdapter.class
+    RoomInvitationJooqAdapter.class,
+    RoomParticipationAdmissionJooqAdapter.class
 })
 public class CompetitionRoomConfiguration {
     @Bean
@@ -47,6 +50,18 @@ public class CompetitionRoomConfiguration {
             CurrentPrincipal principal) {
         return new RoomInvitationService(
                 invitationAdapter, principal, secretIssuer, Clock.systemUTC(), UUID::randomUUID);
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    RoomParticipationAdmissionService roomParticipationAdmissionService(
+            RoomParticipationAdmissionJooqAdapter admissionAdapter, CurrentPrincipal principal) {
+        return new RoomParticipationAdmissionService(
+                admissionAdapter,
+                principal,
+                Clock.systemUTC(),
+                UUID::randomUUID,
+                UUID::randomUUID);
     }
 
     @Bean
