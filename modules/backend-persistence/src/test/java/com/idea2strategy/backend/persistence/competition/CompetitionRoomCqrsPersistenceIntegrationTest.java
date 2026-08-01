@@ -3,9 +3,11 @@ package com.idea2strategy.backend.persistence.competition;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.idea2strategy.backend.application.competition.RoomInvitationIssueRequest;
 import com.idea2strategy.backend.domain.competition.CompetitionRoom;
 import com.idea2strategy.backend.domain.competition.LiveRoomRules;
 import com.idea2strategy.backend.domain.competition.RoomAccessType;
+import com.idea2strategy.backend.domain.competition.RoomInvitationCredentialType;
 import com.idea2strategy.backend.domain.competition.RoomSchedule;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -33,6 +35,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID OPERATOR_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID ROOM_ID = UUID.fromString("50000000-0000-4000-8000-000000000001");
+    private static final UUID SECOND_ROOM_ID = UUID.fromString("50000000-0000-4000-8000-000000000002");
+    private static final UUID INVITATION_ID = UUID.fromString("50000000-0000-4000-8000-000000000003");
     private static final UUID SCORING_VERSION_ID = UUID.fromString("51000000-0000-4000-8000-000000000001");
     private static final UUID FEE_POLICY_ID = UUID.fromString("52000000-0000-4000-8000-000000000001");
     private static final UUID BUFFER_POLICY_ID = UUID.fromString("53000000-0000-4000-8000-000000000001");
@@ -57,10 +61,17 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
     private CompetitionRoomJooqQueryAdapter queryAdapter;
 
     @Autowired
+    private PublicRoomSearchJooqAdapter publicRoomSearchAdapter;
+
+    @Autowired
+    private RoomInvitationJooqAdapter invitationAdapter;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void prepareReferences() {
+        jdbcTemplate.update("delete from competition.room_invitations");
         jdbcTemplate.update("delete from competition.room_schedules");
         jdbcTemplate.update("delete from competition.live_room_rules");
         jdbcTemplate.update("delete from competition.room_rules");
@@ -231,10 +242,120 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 .isEqualTo(CREATED_AT);
     }
 
+    @Test
+    void publicDiscoveryReturnsOnlyRecruitingPublicRooms() {
+        commandAdapter.save(userRoom(ROOM_ID, "Visible August room", RoomAccessType.PUBLIC));
+        commandAdapter.save(userRoom(SECOND_ROOM_ID, "Hidden secret room", RoomAccessType.SECRET));
+        jdbcTemplate.update(
+                "update competition.rooms set status = 'RECRUITING' where id in (?, ?)",
+                ROOM_ID,
+                SECOND_ROOM_ID);
+
+        var found = publicRoomSearchAdapter.search("august", null, null, 20);
+
+        assertThat(found).extracting(item -> item.id()).containsExactly(ROOM_ID);
+    }
+
+    @Test
+    void invitationStoresOnlyDigestCapsExpiryAndCanBeConsumedOnce() {
+        commandAdapter.save(userRoom(ROOM_ID, "Secret room", RoomAccessType.SECRET));
+        jdbcTemplate.update("update competition.rooms set status = 'RECRUITING' where id = ?", ROOM_ID);
+        Instant issuedAt = CREATED_AT.plusSeconds(90);
+        Instant participationClosesAt = CREATED_AT.plusSeconds(180);
+        String digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+        var issued = invitationAdapter.issue(new RoomInvitationIssueRequest(
+                        INVITATION_ID,
+                        ROOM_ID,
+                        OWNER_ID,
+                        RoomInvitationCredentialType.CODE,
+                        digest,
+                        issuedAt,
+                        CREATED_AT.plusSeconds(600)))
+                .orElseThrow();
+
+        assertThat(issued.expiresAt()).isEqualTo(participationClosesAt);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select credential_digest from competition.room_invitations where id = ?",
+                        String.class,
+                        INVITATION_ID))
+                .isEqualTo(digest);
+        assertThat(invitationAdapter.consume(digest, issuedAt.plusSeconds(1)))
+                .hasValueSatisfying(consumed -> assertThat(consumed.roomId()).isEqualTo(ROOM_ID));
+        assertThat(invitationAdapter.consume(digest, issuedAt.plusSeconds(2))).isEmpty();
+        assertThat(jdbcTemplate.queryForObject(
+                        "select revocation_reason_code from competition.room_invitations where id = ?",
+                        String.class,
+                        INVITATION_ID))
+                .isEqualTo("CONSUMED");
+    }
+
+    @Test
+    void onlyTheSecretRoomOwnerCanIssueOrRevokeAnInvitation() {
+        commandAdapter.save(userRoom(ROOM_ID, "Owned secret room", RoomAccessType.SECRET));
+        UUID outsiderId = UUID.fromString("10000000-0000-4000-8000-000000000099");
+        var request = new RoomInvitationIssueRequest(
+                INVITATION_ID,
+                ROOM_ID,
+                outsiderId,
+                RoomInvitationCredentialType.LINK,
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                CREATED_AT.plusSeconds(90),
+                CREATED_AT.plusSeconds(120));
+
+        assertThat(invitationAdapter.issue(request)).isEmpty();
+
+        var ownerRequest = new RoomInvitationIssueRequest(
+                request.id(),
+                request.roomId(),
+                OWNER_ID,
+                request.credentialType(),
+                request.credentialDigest(),
+                request.issuedAt(),
+                request.requestedExpiresAt());
+        assertThat(invitationAdapter.issue(ownerRequest)).isPresent();
+        assertThat(invitationAdapter.revoke(ROOM_ID, INVITATION_ID, outsiderId, CREATED_AT.plusSeconds(100)))
+                .isFalse();
+        assertThat(invitationAdapter.revoke(ROOM_ID, INVITATION_ID, OWNER_ID, CREATED_AT.plusSeconds(101)))
+                .isTrue();
+        assertThat(invitationAdapter.consume(request.credentialDigest(), CREATED_AT.plusSeconds(102)))
+                .isEmpty();
+    }
+
+    private static CompetitionRoom userRoom(UUID id, String name, RoomAccessType accessType) {
+        return CompetitionRoom.userLive(
+                id,
+                OWNER_ID,
+                name,
+                accessType,
+                SCORING_VERSION_ID,
+                new BigDecimal("100000.00000000"),
+                10,
+                1,
+                "{}",
+                FEE_POLICY_ID,
+                BUFFER_POLICY_ID,
+                new LiveRoomRules("COUNT_UNTIL_END", 3600, 5),
+                new RoomSchedule(
+                        CREATED_AT.plusSeconds(60),
+                        CREATED_AT.plusSeconds(120),
+                        CREATED_AT.plusSeconds(240),
+                        CREATED_AT.plusSeconds(180),
+                        CREATED_AT.plusSeconds(300),
+                        CREATED_AT.plusSeconds(360),
+                        "UTC"),
+                CREATED_AT);
+    }
+
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @EntityScan(basePackageClasses = CompetitionRoomJpaEntity.class)
     @EnableJpaRepositories(basePackageClasses = CompetitionRoomSpringDataRepository.class)
-    @Import({CompetitionRoomJpaCommandAdapter.class, CompetitionRoomJooqQueryAdapter.class})
+    @Import({
+        CompetitionRoomJpaCommandAdapter.class,
+        CompetitionRoomJooqQueryAdapter.class,
+        PublicRoomSearchJooqAdapter.class,
+        RoomInvitationJooqAdapter.class
+    })
     static class TestApplication {}
 }
