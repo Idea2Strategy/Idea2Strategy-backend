@@ -119,4 +119,13 @@ public class IdentityJooqQueryAdapter implements IdentityQueryPort, Registration
                         LoginIdentityStatus.valueOf(record.get(loginStatus)),
                         record.get(authEpoch)));
     }
+
+    @Override
+    public boolean subjectExists(short providerId, String subjectHmac) {
+        var identities = table(name("identity", "login_identities"));
+        return dsl.fetchExists(dsl.selectOne()
+                .from(identities)
+                .where(field(name("provider_id"), Short.class).eq(providerId)
+                        .and(field(name("provider_subject_hmac"), String.class).eq(subjectHmac))));
+    }
 }

@@ -32,7 +32,7 @@ public final class OidcIdentityLinkingService {
                 .orElseThrow(() -> new AuthenticationRejectedException("OIDC provider is not trusted"));
         ProtectedOidcSubject protectedSubject = subjectProtector.protect(new VerifiedOidcPrincipal(
                 providerCode, command.issuer(), command.subject(), command.email()));
-        if (queryPort.findActiveLogin(provider.id(), protectedSubject.hmac()).isPresent()) {
+        if (queryPort.subjectExists(provider.id(), protectedSubject.hmac())) {
             throw new AuthenticationRejectedException("OIDC identity is already linked");
         }
 
