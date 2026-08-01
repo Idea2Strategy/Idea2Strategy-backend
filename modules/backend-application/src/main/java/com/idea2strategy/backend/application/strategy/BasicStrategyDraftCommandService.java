@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.application.strategy;
 
-import com.idea2strategy.backend.application.common.CurrentPrincipal;
+import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
 import com.idea2strategy.backend.application.common.DomainEventPublisher;
 import com.idea2strategy.backend.application.common.IdGenerator;
 import com.idea2strategy.backend.domain.strategy.Strategy;
@@ -23,7 +23,7 @@ public final class BasicStrategyDraftCommandService {
     private final BasicStrategyDraftCommandPort commandPort;
     private final StrategyQueryPort strategyQueryPort;
     private final StrategyDocumentQueryPort documentQueryPort;
-    private final CurrentPrincipal principal;
+    private final CurrentSessionPrincipal principal;
     private final IdGenerator idGenerator;
     private final Clock clock;
     private final DomainEventPublisher eventPublisher;
@@ -32,7 +32,7 @@ public final class BasicStrategyDraftCommandService {
             BasicStrategyDraftCommandPort commandPort,
             StrategyQueryPort strategyQueryPort,
             StrategyDocumentQueryPort documentQueryPort,
-            CurrentPrincipal principal,
+            CurrentSessionPrincipal principal,
             IdGenerator idGenerator,
             Clock clock,
             DomainEventPublisher eventPublisher) {
@@ -65,6 +65,7 @@ public final class BasicStrategyDraftCommandService {
     public StrategyDocument autosave(
             UUID strategyId,
             long expectedEditSequence,
+            String leaseToken,
             String semanticDocument,
             String presentationDocument,
             String semanticSchemaVersion,
@@ -72,6 +73,7 @@ public final class BasicStrategyDraftCommandService {
         return save(
                 strategyId,
                 expectedEditSequence,
+                leaseToken,
                 semanticDocument,
                 presentationDocument,
                 semanticSchemaVersion,
@@ -81,6 +83,7 @@ public final class BasicStrategyDraftCommandService {
     public StrategyDocument saveExplicitly(
             UUID strategyId,
             long expectedEditSequence,
+            String leaseToken,
             String semanticDocument,
             String presentationDocument,
             String semanticSchemaVersion,
@@ -88,6 +91,7 @@ public final class BasicStrategyDraftCommandService {
         return save(
                 strategyId,
                 expectedEditSequence,
+                leaseToken,
                 semanticDocument,
                 presentationDocument,
                 semanticSchemaVersion,
@@ -97,6 +101,7 @@ public final class BasicStrategyDraftCommandService {
     private StrategyDocument save(
             UUID strategyId,
             long expectedEditSequence,
+            String leaseToken,
             String semanticDocument,
             String presentationDocument,
             String semanticSchemaVersion,
@@ -118,6 +123,7 @@ public final class BasicStrategyDraftCommandService {
 
         String canonicalSemantic = StrategyDocumentJson.canonicalize(semanticDocument);
         String canonicalPresentation = StrategyDocumentJson.canonicalize(presentationDocument);
+        Instant now = clock.instant();
         StrategyDocument replacement = current.replace(
                 canonicalSemantic,
                 canonicalPresentation,
@@ -125,9 +131,18 @@ public final class BasicStrategyDraftCommandService {
                 presentationSchemaVersion,
                 StrategyDocumentJson.sha256(canonicalSemantic),
                 StrategyDocumentJson.sha256(canonicalPresentation),
-                clock.instant());
-        if (!commandPort.replaceDocument(replacement, expectedEditSequence)) {
+                now);
+        StrategyDraftReplaceResult result = commandPort.replaceDocument(
+                replacement,
+                expectedEditSequence,
+                principal.sessionId(),
+                StrategyEditLeaseTokens.sha256(leaseToken),
+                now);
+        if (result == StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE) {
             throw new StrategyDraftConflictException();
+        }
+        if (result == StrategyDraftReplaceResult.INVALID_LEASE) {
+            throw new StrategyEditLeaseInvalidException();
         }
         return replacement;
     }
