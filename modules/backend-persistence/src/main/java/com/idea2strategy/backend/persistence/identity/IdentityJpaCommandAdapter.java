@@ -10,6 +10,7 @@ import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
 import com.idea2strategy.backend.application.identity.PendingOidcLink;
 import com.idea2strategy.backend.application.identity.RegistrationCommandPort;
+import com.idea2strategy.backend.application.identity.SessionCommandPort;
 import com.idea2strategy.backend.application.identity.VerificationOutcome;
 import com.idea2strategy.backend.application.identity.VerificationReplacement;
 import jakarta.persistence.EntityManager;
@@ -22,7 +23,8 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public class IdentityJpaCommandAdapter implements RegistrationCommandPort, IdentityCommandPort, OidcIdentityCommandPort {
+public class IdentityJpaCommandAdapter
+        implements RegistrationCommandPort, IdentityCommandPort, OidcIdentityCommandPort, SessionCommandPort {
     private final EntityManager entityManager;
 
     public IdentityJpaCommandAdapter(EntityManager entityManager) {
@@ -303,8 +305,148 @@ public class IdentityJpaCommandAdapter implements RegistrationCommandPort, Ident
     @Override
     @Transactional
     public void completeLogin(AuthenticationSession session, AuthenticationSuccess success) {
+        completeLogin(session, success, Integer.MAX_VALUE);
+    }
+
+    @Override
+    @Transactional
+    public void completeLogin(AuthenticationSession session, AuthenticationSuccess success, int maxActiveSessions) {
+        entityManager.createNativeQuery("""
+                        select account_id from identity.account_security_states
+                        where account_id = :accountId for update
+                        """)
+                .setParameter("accountId", session.accountId())
+                .getSingleResult();
+        Number activeSessions = (Number) entityManager.createNativeQuery("""
+                        select count(*) from identity.sessions
+                        where account_id = :accountId and revoked_at is null and expires_at > :now
+                        """)
+                .setParameter("accountId", session.accountId())
+                .setParameter("now", utc(session.issuedAt()))
+                .getSingleResult();
+        if (activeSessions.intValue() >= maxActiveSessions) {
+            throw new AuthenticationRejectedException("Active session limit reached");
+        }
         createSession(session);
         recordLoginSuccess(success);
+    }
+
+    @Override
+    @Transactional
+    public boolean revoke(UUID accountId, UUID sessionId, String reason, UUID correlationId, Instant now) {
+        UUID loginIdentityId;
+        try {
+            loginIdentityId = (UUID) entityManager.createNativeQuery("""
+                            select authenticated_by_login_identity_id
+                            from identity.sessions
+                            where id = :sessionId and account_id = :accountId
+                              and revoked_at is null and expires_at > :now
+                            for update
+                            """)
+                    .setParameter("sessionId", sessionId)
+                    .setParameter("accountId", accountId)
+                    .setParameter("now", utc(now))
+                    .getSingleResult();
+        } catch (NoResultException exception) {
+            return false;
+        }
+        entityManager.createNativeQuery("""
+                        update identity.sessions
+                        set revoked_at = :now, revoke_reason_code = :reason
+                        where id = :sessionId and account_id = :accountId and revoked_at is null
+                        """)
+                .setParameter("now", utc(now))
+                .setParameter("reason", reason)
+                .setParameter("sessionId", sessionId)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        insertSessionEvent(accountId, loginIdentityId, sessionId, "SESSION_REVOKED", reason, correlationId, utc(now));
+        return true;
+    }
+
+    @Override
+    @Transactional
+    public void touch(UUID accountId, UUID sessionId, Instant now) {
+        entityManager.createNativeQuery("""
+                        update identity.sessions set last_seen_at = :now
+                        where id = :sessionId and account_id = :accountId
+                          and revoked_at is null and expires_at > :now
+                        """)
+                .setParameter("now", utc(now))
+                .setParameter("sessionId", sessionId)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+    }
+
+    @Override
+    @Transactional
+    public void recordEvent(
+            UUID accountId,
+            UUID loginIdentityId,
+            UUID sessionId,
+            String eventType,
+            String reason,
+            UUID correlationId,
+            Instant now) {
+        insertSessionEvent(accountId, loginIdentityId, sessionId, eventType, reason, correlationId, utc(now));
+    }
+
+    @Override
+    @Transactional
+    public boolean rotate(
+            UUID accountId,
+            UUID sessionId,
+            String previousTokenDigest,
+            String replacementTokenDigest,
+            Instant expiresAt,
+            UUID correlationId,
+            Instant now) {
+        int updated = entityManager.createNativeQuery("""
+                        update identity.sessions
+                        set token_digest = :replacementDigest, digest_key_version = 1,
+                            issued_at = :now, last_seen_at = :now, expires_at = :expiresAt
+                        where id = :sessionId and account_id = :accountId
+                          and token_digest = :previousDigest and revoked_at is null and expires_at > :now
+                        """)
+                .setParameter("replacementDigest", replacementTokenDigest)
+                .setParameter("previousDigest", previousTokenDigest)
+                .setParameter("now", utc(now))
+                .setParameter("expiresAt", utc(expiresAt))
+                .setParameter("sessionId", sessionId)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        if (updated == 0) {
+            return false;
+        }
+        insertSessionEvent(accountId, null, sessionId, "SESSION_ROTATED", null, correlationId, utc(now));
+        return true;
+    }
+
+    @Override
+    @Transactional
+    public int revokeAll(UUID accountId, String reason, UUID correlationId, Instant now) {
+        entityManager.createNativeQuery("select id from identity.accounts where id = :id for update")
+                .setParameter("id", accountId)
+                .getSingleResult();
+        entityManager.createNativeQuery("""
+                        update identity.account_security_states
+                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        where account_id = :accountId
+                        """)
+                .setParameter("now", utc(now))
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        int count = entityManager.createNativeQuery("""
+                        update identity.sessions
+                        set revoked_at = :now, revoke_reason_code = :reason
+                        where account_id = :accountId and revoked_at is null and expires_at > :now
+                        """)
+                .setParameter("now", utc(now))
+                .setParameter("reason", reason)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        insertSessionEvent(accountId, null, null, "SESSIONS_REVOKED", reason, correlationId, utc(now));
+        return count;
     }
 
     @Override
@@ -516,6 +658,38 @@ public class IdentityJpaCommandAdapter implements RegistrationCommandPort, Ident
                 .setParameter("reason", reason)
                 .setParameter("correlationId", correlationId)
                 .setParameter("idempotencyKey", idempotencyKey)
+                .setParameter("occurredAt", occurredAt)
+                .executeUpdate();
+    }
+
+    private void insertSessionEvent(
+            UUID accountId,
+            UUID loginIdentityId,
+            UUID sessionId,
+            String eventType,
+            String reason,
+            UUID correlationId,
+            OffsetDateTime occurredAt) {
+        entityManager.createNativeQuery("select id from identity.accounts where id = :id for update")
+                .setParameter("id", accountId)
+                .getSingleResult();
+        entityManager.createNativeQuery("""
+                        insert into identity.authentication_events
+                            (id, account_id, event_sequence, event_type, subject_login_identity_id,
+                             actor_type, reason_code, correlation_id, idempotency_key, occurred_at)
+                        values (gen_random_uuid(), :accountId,
+                                (select coalesce(max(event_sequence), 0) + 1
+                                 from identity.authentication_events where account_id = :accountId),
+                                :eventType, :loginId, 'ACCOUNT', :reason, :correlationId,
+                                :idempotencyKey, :occurredAt)
+                        on conflict (account_id, idempotency_key) do nothing
+                        """)
+                .setParameter("accountId", accountId)
+                .setParameter("loginId", loginIdentityId)
+                .setParameter("eventType", eventType)
+                .setParameter("reason", reason)
+                .setParameter("correlationId", correlationId)
+                .setParameter("idempotencyKey", "session:" + eventType + ":" + sessionId + ":" + correlationId)
                 .setParameter("occurredAt", occurredAt)
                 .executeUpdate();
     }

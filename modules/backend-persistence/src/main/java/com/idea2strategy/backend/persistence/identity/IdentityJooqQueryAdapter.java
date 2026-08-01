@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.idea2strategy.backend.application.identity.AccountLifecycleStatus;
+import com.idea2strategy.backend.application.identity.ActiveSession;
 import com.idea2strategy.backend.application.identity.EmailStatus;
 import com.idea2strategy.backend.application.identity.IdentityQueryPort;
 import com.idea2strategy.backend.application.identity.LoginIdentityStatus;
@@ -13,13 +14,18 @@ import com.idea2strategy.backend.application.identity.OidcLoginAccount;
 import com.idea2strategy.backend.application.identity.OidcProvider;
 import com.idea2strategy.backend.application.identity.PasswordLoginAccount;
 import com.idea2strategy.backend.application.identity.RegistrationQueryPort;
+import com.idea2strategy.backend.application.identity.SessionQueryPort;
+import com.idea2strategy.backend.application.identity.StoredSession;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public class IdentityJooqQueryAdapter implements IdentityQueryPort, RegistrationQueryPort, OidcIdentityQueryPort {
+public class IdentityJooqQueryAdapter
+        implements IdentityQueryPort, RegistrationQueryPort, OidcIdentityQueryPort, SessionQueryPort {
     private final DSLContext dsl;
 
     public IdentityJooqQueryAdapter(DSLContext dsl) {
@@ -127,5 +133,94 @@ public class IdentityJooqQueryAdapter implements IdentityQueryPort, Registration
                 .from(identities)
                 .where(field(name("provider_id"), Short.class).eq(providerId)
                         .and(field(name("provider_subject_hmac"), String.class).eq(subjectHmac))));
+    }
+
+    @Override
+    public Optional<StoredSession> findByTokenDigest(String tokenDigest) {
+        var sessions = table(name("identity", "sessions")).as("session");
+        var accounts = table(name("identity", "accounts")).as("account");
+        var logins = table(name("identity", "login_identities")).as("login");
+        var security = table(name("identity", "account_security_states")).as("security");
+        var credentials = table(name("identity", "password_credentials")).as("credential");
+
+        return dsl.select(
+                        field(name("session", "id"), UUID.class),
+                        field(name("session", "account_id"), UUID.class),
+                        field(name("session", "authenticated_by_login_identity_id"), UUID.class),
+                        field(name("session", "auth_epoch_at_issue"), Long.class),
+                        field(name("security", "auth_epoch"), Long.class),
+                        field(name("session", "credential_version_at_issue"), Long.class),
+                        field(name("credential", "credential_version"), Long.class),
+                        field(name("account", "lifecycle_status")).cast(String.class),
+                        field(name("login", "status")).cast(String.class),
+                        field(name("session", "device_label"), String.class),
+                        field(name("session", "issued_at"), Instant.class),
+                        field(name("session", "last_seen_at"), Instant.class),
+                        field(name("session", "expires_at"), Instant.class),
+                        field(name("session", "revoked_at"), Instant.class))
+                .from(sessions)
+                .join(accounts).on(field(name("account", "id"), UUID.class)
+                        .eq(field(name("session", "account_id"), UUID.class)))
+                .join(logins).on(field(name("login", "id"), UUID.class)
+                        .eq(field(name("session", "authenticated_by_login_identity_id"), UUID.class)))
+                .join(security).on(field(name("security", "account_id"), UUID.class)
+                        .eq(field(name("session", "account_id"), UUID.class)))
+                .leftJoin(credentials).on(field(name("credential", "login_identity_id"), UUID.class)
+                        .eq(field(name("login", "id"), UUID.class)))
+                .where(field(name("session", "token_digest"), String.class).eq(tokenDigest))
+                .fetchOptional(record -> new StoredSession(
+                        record.value1(),
+                        record.value2(),
+                        record.value3(),
+                        record.value4(),
+                        record.value5(),
+                        record.value6(),
+                        record.value7(),
+                        AccountLifecycleStatus.valueOf(record.value8()),
+                        LoginIdentityStatus.valueOf(record.value9()),
+                        record.value10(),
+                        record.value11(),
+                        record.value12(),
+                        record.value13(),
+                        record.value14()));
+    }
+
+    @Override
+    public List<ActiveSession> findActiveByAccountId(UUID accountId, Instant now) {
+        var sessions = table(name("identity", "sessions")).as("session");
+        var accounts = table(name("identity", "accounts")).as("account");
+        var logins = table(name("identity", "login_identities")).as("login");
+        var security = table(name("identity", "account_security_states")).as("security");
+        var credentials = table(name("identity", "password_credentials")).as("credential");
+        var credentialAtIssue = field(name("session", "credential_version_at_issue"), Long.class);
+        var currentCredential = field(name("credential", "credential_version"), Long.class);
+        return dsl.select(
+                        field(name("session", "id"), UUID.class),
+                        field(name("session", "device_label"), String.class),
+                        field(name("session", "issued_at"), Instant.class),
+                        field(name("session", "last_seen_at"), Instant.class),
+                        field(name("session", "expires_at"), Instant.class))
+                .from(sessions)
+                .join(accounts).on(field(name("account", "id"), UUID.class)
+                        .eq(field(name("session", "account_id"), UUID.class)))
+                .join(logins).on(field(name("login", "id"), UUID.class)
+                        .eq(field(name("session", "authenticated_by_login_identity_id"), UUID.class)))
+                .join(security).on(field(name("security", "account_id"), UUID.class)
+                        .eq(field(name("session", "account_id"), UUID.class)))
+                .leftJoin(credentials).on(field(name("credential", "login_identity_id"), UUID.class)
+                        .eq(field(name("login", "id"), UUID.class)))
+                .where(field(name("session", "account_id"), UUID.class)
+                        .eq(accountId)
+                        .and(field(name("session", "revoked_at")).isNull())
+                        .and(field(name("session", "expires_at"), Instant.class).gt(now))
+                        .and(field(name("session", "auth_epoch_at_issue"), Long.class)
+                                .eq(field(name("security", "auth_epoch"), Long.class)))
+                        .and(field(name("account", "lifecycle_status")).cast(String.class).eq("ACTIVE"))
+                        .and(field(name("login", "status")).cast(String.class).eq("ACTIVE"))
+                        .and(credentialAtIssue.eq(currentCredential)
+                                .or(credentialAtIssue.isNull().and(currentCredential.isNull()))))
+                .orderBy(field(name("session", "last_seen_at")).desc(), field(name("session", "id")))
+                .fetch(record -> new ActiveSession(
+                        record.value1(), record.value2(), record.value3(), record.value4(), record.value5()));
     }
 }

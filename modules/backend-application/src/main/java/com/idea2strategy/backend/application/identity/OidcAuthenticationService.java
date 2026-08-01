@@ -7,13 +7,15 @@ import java.util.Objects;
 import java.util.UUID;
 
 public final class OidcAuthenticationService {
-    private static final Duration SESSION_LIFETIME = Duration.ofHours(12);
+    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofHours(12);
 
     private final OidcIdentityQueryPort queryPort;
     private final IdentityCommandPort commandPort;
     private final OidcSubjectProtector subjectProtector;
     private final SessionTokenIssuer tokenIssuer;
     private final Clock clock;
+    private final Duration sessionLifetime;
+    private final int maxActiveSessions;
 
     public OidcAuthenticationService(
             OidcIdentityQueryPort queryPort,
@@ -21,11 +23,30 @@ public final class OidcAuthenticationService {
             OidcSubjectProtector subjectProtector,
             SessionTokenIssuer tokenIssuer,
             Clock clock) {
+        this(queryPort, commandPort, subjectProtector, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME, 5);
+    }
+
+    public OidcAuthenticationService(
+            OidcIdentityQueryPort queryPort,
+            IdentityCommandPort commandPort,
+            OidcSubjectProtector subjectProtector,
+            SessionTokenIssuer tokenIssuer,
+            Clock clock,
+            Duration sessionLifetime,
+            int maxActiveSessions) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.subjectProtector = Objects.requireNonNull(subjectProtector, "subjectProtector");
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
+        if (sessionLifetime.isZero() || sessionLifetime.isNegative()) {
+            throw new IllegalArgumentException("sessionLifetime must be positive");
+        }
+        if (maxActiveSessions < 1) {
+            throw new IllegalArgumentException("maxActiveSessions must be positive");
+        }
+        this.maxActiveSessions = maxActiveSessions;
     }
 
     public LoginResult login(OidcLoginCommand command) {
@@ -48,7 +69,7 @@ public final class OidcAuthenticationService {
         }
 
         var now = clock.instant();
-        var expiresAt = now.plus(SESSION_LIFETIME);
+        var expiresAt = now.plus(sessionLifetime);
         UUID sessionId = UUID.randomUUID();
         SessionToken token = tokenIssuer.issue();
         var session = new AuthenticationSession(
@@ -64,7 +85,8 @@ public final class OidcAuthenticationService {
         commandPort.completeLogin(
                 session,
                 new AuthenticationSuccess(
-                        account.accountId(), account.loginIdentityId(), command.correlationId(), now));
+                        account.accountId(), account.loginIdentityId(), command.correlationId(), now),
+                maxActiveSessions);
         return new LoginResult(account.accountId(), sessionId, token.rawToken(), expiresAt);
     }
 }

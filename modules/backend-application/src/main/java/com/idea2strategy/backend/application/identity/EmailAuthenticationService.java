@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 public final class EmailAuthenticationService {
-    private static final Duration SESSION_LIFETIME = Duration.ofHours(12);
+    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofHours(12);
 
     private final IdentityQueryPort queryPort;
     private final IdentityCommandPort commandPort;
@@ -14,6 +14,8 @@ public final class EmailAuthenticationService {
     private final EmailLookup emailLookup;
     private final SessionTokenIssuer tokenIssuer;
     private final Clock clock;
+    private final Duration sessionLifetime;
+    private final int maxActiveSessions;
 
     public EmailAuthenticationService(
             IdentityQueryPort queryPort,
@@ -22,12 +24,32 @@ public final class EmailAuthenticationService {
             EmailLookup emailLookup,
             SessionTokenIssuer tokenIssuer,
             Clock clock) {
+        this(queryPort, commandPort, passwordVerifier, emailLookup, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME, 5);
+    }
+
+    public EmailAuthenticationService(
+            IdentityQueryPort queryPort,
+            IdentityCommandPort commandPort,
+            PasswordVerifier passwordVerifier,
+            EmailLookup emailLookup,
+            SessionTokenIssuer tokenIssuer,
+            Clock clock,
+            Duration sessionLifetime,
+            int maxActiveSessions) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.passwordVerifier = Objects.requireNonNull(passwordVerifier, "passwordVerifier");
         this.emailLookup = Objects.requireNonNull(emailLookup, "emailLookup");
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
+        if (sessionLifetime.isZero() || sessionLifetime.isNegative()) {
+            throw new IllegalArgumentException("sessionLifetime must be positive");
+        }
+        if (maxActiveSessions < 1) {
+            throw new IllegalArgumentException("maxActiveSessions must be positive");
+        }
+        this.maxActiveSessions = maxActiveSessions;
     }
 
     public LoginResult login(LoginCommand command) {
@@ -51,7 +73,7 @@ public final class EmailAuthenticationService {
 
         SessionToken token = tokenIssuer.issue();
         UUID sessionId = UUID.randomUUID();
-        var expiresAt = now.plus(SESSION_LIFETIME);
+        var expiresAt = now.plus(sessionLifetime);
         var session = new AuthenticationSession(
                 sessionId,
                 account.accountId(),
@@ -65,7 +87,8 @@ public final class EmailAuthenticationService {
         commandPort.completeLogin(
                 session,
                 new AuthenticationSuccess(
-                        account.accountId(), account.loginIdentityId(), command.correlationId(), now));
+                        account.accountId(), account.loginIdentityId(), command.correlationId(), now),
+                maxActiveSessions);
         return new LoginResult(account.accountId(), sessionId, token.rawToken(), expiresAt);
     }
 

@@ -15,4 +15,8 @@ public final class HmacSessionTokens implements SessionTokenIssuer {
         String raw = OpaqueTokenSupport.issueRaw();
         return new SessionToken(raw, OpaqueTokenSupport.digest(key, raw));
     }
+
+    public String digest(String rawToken) {
+        return OpaqueTokenSupport.digest(key, rawToken);
+    }
 }
