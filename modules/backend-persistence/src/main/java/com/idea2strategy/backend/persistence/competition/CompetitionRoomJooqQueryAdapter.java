@@ -7,6 +7,7 @@ import static org.jooq.impl.DSL.table;
 import com.idea2strategy.backend.application.competition.CompetitionRoomQueryPort;
 import com.idea2strategy.backend.domain.competition.CompetitionRoom;
 import com.idea2strategy.backend.domain.competition.CompetitionType;
+import com.idea2strategy.backend.domain.competition.LiveRoomRules;
 import com.idea2strategy.backend.domain.competition.RoomAccessType;
 import com.idea2strategy.backend.domain.competition.RoomOrganizerType;
 import com.idea2strategy.backend.domain.competition.RoomSchedule;
@@ -32,6 +33,7 @@ public class CompetitionRoomJooqQueryAdapter implements CompetitionRoomQueryPort
         var rooms = table(name("competition", "rooms")).as("r");
         var rules = table(name("competition", "room_rules")).as("rr");
         var schedules = table(name("competition", "room_schedules")).as("rs");
+        var liveRules = table(name("competition", "live_room_rules")).as("lrr");
         var id = field(name("r", "id"), UUID.class);
         var competitionType = field(name("r", "competition_type"), String.class);
         var organizerType = field(name("r", "organizer_type"), String.class);
@@ -62,6 +64,9 @@ public class CompetitionRoomJooqQueryAdapter implements CompetitionRoomQueryPort
         var evaluationEndsAt = field(name("rs", "evaluation_ends_at"), OffsetDateTime.class);
         var finalizationDeadlineAt = field(name("rs", "finalization_deadline_at"), OffsetDateTime.class);
         var timezoneName = field(name("rs", "timezone_name"), String.class);
+        var stoppedBotSlotPolicy = field(name("lrr", "stopped_bot_slot_policy"), String.class);
+        var minimumOperationSeconds = field(name("lrr", "minimum_operation_seconds"), Long.class);
+        var minimumFillCount = field(name("lrr", "minimum_fill_count"), Integer.class);
 
         return dsl.select(
                         id,
@@ -93,12 +98,17 @@ public class CompetitionRoomJooqQueryAdapter implements CompetitionRoomQueryPort
                         participationClosesAt,
                         evaluationEndsAt,
                         finalizationDeadlineAt,
-                        timezoneName)
+                        timezoneName,
+                        stoppedBotSlotPolicy,
+                        minimumOperationSeconds,
+                        minimumFillCount)
                 .from(rooms)
                 .join(rules)
                 .on(id.eq(field(name("rr", "room_id"), UUID.class)))
                 .join(schedules)
                 .on(id.eq(field(name("rs", "room_id"), UUID.class)))
+                .leftJoin(liveRules)
+                .on(id.eq(field(name("lrr", "room_id"), UUID.class)))
                 .where(id.eq(roomId))
                 .fetchOptional(record -> new CompetitionRoom(
                         record.get(id),
@@ -123,6 +133,12 @@ public class CompetitionRoomJooqQueryAdapter implements CompetitionRoomQueryPort
                         record.get(precisionRulesVersion),
                         record.get(rulesHash),
                         record.get(lockedAt).toInstant(),
+                        record.get(competitionType).equals(CompetitionType.LIVE_PAPER.name())
+                                ? new LiveRoomRules(
+                                        record.get(stoppedBotSlotPolicy),
+                                        record.get(minimumOperationSeconds),
+                                        record.get(minimumFillCount))
+                                : null,
                         new RoomSchedule(
                                 record.get(recruitmentOpensAt).toInstant(),
                                 record.get(participationOpensAt).toInstant(),

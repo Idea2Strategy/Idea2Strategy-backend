@@ -1,8 +1,10 @@
 package com.idea2strategy.backend.persistence.competition;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.domain.competition.CompetitionRoom;
+import com.idea2strategy.backend.domain.competition.LiveRoomRules;
 import com.idea2strategy.backend.domain.competition.RoomAccessType;
 import com.idea2strategy.backend.domain.competition.RoomSchedule;
 import java.math.BigDecimal;
@@ -59,6 +61,7 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
     @BeforeEach
     void prepareReferences() {
         jdbcTemplate.update("delete from competition.room_schedules");
+        jdbcTemplate.update("delete from competition.live_room_rules");
         jdbcTemplate.update("delete from competition.room_rules");
         jdbcTemplate.update("delete from competition.rooms");
         jdbcTemplate.update("delete from competition.scoring_template_versions where id = ?", SCORING_VERSION_ID);
@@ -101,16 +104,19 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 Instant.parse("2026-08-04T00:00:00Z"),
                 Instant.parse("2026-08-04T01:00:00Z"),
                 "America/New_York");
-        var room = CompetitionRoom.publicLive(
+        var room = CompetitionRoom.userLive(
                 ROOM_ID,
                 OWNER_ID,
                 "August room",
+                RoomAccessType.PUBLIC,
                 SCORING_VERSION_ID,
                 new BigDecimal("100000.00000000"),
                 10,
                 1,
+                "{\"minimumTrades\":5}",
                 FEE_POLICY_ID,
                 BUFFER_POLICY_ID,
+                new LiveRoomRules("COUNT_UNTIL_END", 3600, 5),
                 schedule,
                 CREATED_AT);
 
@@ -121,6 +127,43 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         assertThat(loaded.schedule()).isEqualTo(schedule);
         assertThat(loaded.initialCashAmount()).isEqualByComparingTo("100000.00000000");
         assertThat(loaded.scoringTemplateVersionId()).isEqualTo(SCORING_VERSION_ID);
+        assertThat(loaded.liveRules()).isEqualTo(new LiveRoomRules("COUNT_UNTIL_END", 3600, 5));
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from competition.live_room_rules where room_id = ?",
+                        Integer.class,
+                        ROOM_ID))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void failedRulesInsertRollsBackEveryRoomRow() {
+        var room = CompetitionRoom.userLive(
+                ROOM_ID,
+                OWNER_ID,
+                "Rollback room",
+                RoomAccessType.SECRET,
+                SCORING_VERSION_ID,
+                new BigDecimal("100000.00000000"),
+                10,
+                1,
+                "{\"minimumTrades\":5}",
+                UUID.fromString("52000000-0000-4000-8000-000000000099"),
+                BUFFER_POLICY_ID,
+                new LiveRoomRules("COUNT_UNTIL_END", 3600, 5),
+                new RoomSchedule(
+                        CREATED_AT.plusSeconds(60),
+                        CREATED_AT.plusSeconds(120),
+                        CREATED_AT.plusSeconds(240),
+                        CREATED_AT.plusSeconds(180),
+                        CREATED_AT.plusSeconds(300),
+                        CREATED_AT.plusSeconds(360),
+                        "UTC"),
+                CREATED_AT);
+
+        assertThatThrownBy(() -> commandAdapter.save(room)).isInstanceOf(RuntimeException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from competition.rooms where id = ?", Integer.class, ROOM_ID))
+                .isZero();
     }
 
     @SpringBootConfiguration

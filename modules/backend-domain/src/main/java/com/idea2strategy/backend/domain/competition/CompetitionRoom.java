@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.domain.competition;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -28,6 +29,7 @@ public record CompetitionRoom(
         String precisionRulesVersion,
         String rulesHash,
         Instant lockedAt,
+        LiveRoomRules liveRules,
         RoomSchedule schedule,
         Instant createdAt) {
 
@@ -57,6 +59,10 @@ public record CompetitionRoom(
         if (initialCashAmount.signum() <= 0) {
             throw new IllegalArgumentException("initialCashAmount must be positive");
         }
+        if (effectiveScale(initialCashAmount) > 8
+                || initialCashAmount.setScale(8, RoundingMode.UNNECESSARY).precision() > 24) {
+            throw new IllegalArgumentException("initialCashAmount exceeds supported precision");
+        }
         if (botParticipationLimit <= 0 || perAccountBotLimit <= 0
                 || perAccountBotLimit > botParticipationLimit) {
             throw new IllegalArgumentException("bot participation limits are invalid");
@@ -72,18 +78,30 @@ public record CompetitionRoom(
                 && (creatorAccountId != null || createdByOperatorId == null)) {
             throw new IllegalArgumentException("Platform rooms require exactly one operator");
         }
+        if (competitionType == CompetitionType.LIVE_PAPER) {
+            Objects.requireNonNull(liveRules, "liveRules");
+            if (schedule.participationClosesAt().isAfter(schedule.evaluationStartsAt())) {
+                throw new IllegalArgumentException(
+                        "LIVE_PAPER participation must close before evaluation starts");
+            }
+        } else if (liveRules != null) {
+            throw new IllegalArgumentException("BACKTEST rooms must not contain live rules");
+        }
     }
 
-    public static CompetitionRoom publicLive(
+    public static CompetitionRoom userLive(
             UUID id,
             UUID creatorAccountId,
             String name,
+            RoomAccessType accessType,
             UUID scoringTemplateVersionId,
             BigDecimal initialCashAmount,
             int botParticipationLimit,
             int perAccountBotLimit,
+            String scoringParameters,
             UUID feePolicyId,
             UUID buyingPowerBufferPolicyId,
+            LiveRoomRules liveRules,
             RoomSchedule schedule,
             Instant createdAt) {
         return new CompetitionRoom(
@@ -93,7 +111,7 @@ public record CompetitionRoom(
                 creatorAccountId,
                 null,
                 name,
-                RoomAccessType.PUBLIC,
+                accessType,
                 RoomStatus.DRAFT,
                 scoringTemplateVersionId,
                 initialCashAmount,
@@ -102,14 +120,19 @@ public record CompetitionRoom(
                 perAccountBotLimit,
                 "{}",
                 "{\"market\":\"US\"}",
-                "{}",
+                scoringParameters,
                 feePolicyId,
                 5,
                 buyingPowerBufferPolicyId,
                 "v1",
                 "room-rules-" + id,
                 createdAt,
+                liveRules,
                 schedule,
                 createdAt);
+    }
+
+    private static int effectiveScale(BigDecimal value) {
+        return Math.max(0, value.stripTrailingZeros().scale());
     }
 }
