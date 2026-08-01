@@ -74,4 +74,20 @@ class MigrationPolicyTest {
                 IllegalArgumentException.class,
                 () -> MigrationPolicy.verifyDirectory(temporaryDirectory));
     }
+
+    @Test
+    void rejectsAnApplicationDdlGrantFromTheCheckedMigrationSet() throws Exception {
+        try (var baseline = getClass()
+                .getClassLoader()
+                .getResourceAsStream("db/migration/" + MigrationPolicy.BASELINE_FILE)) {
+            Files.write(temporaryDirectory.resolve(MigrationPolicy.BASELINE_FILE), baseline.readAllBytes());
+        }
+        Files.writeString(
+                temporaryDirectory.resolve("V20260801130000__shared_unsafe_access.sql"),
+                "GRANT CREATE ON SCHEMA market_data TO idea2strategy_pipeline;");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> MigrationPolicy.verifyDirectory(temporaryDirectory));
+    }
 }
