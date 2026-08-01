@@ -70,6 +70,12 @@ public record CompetitionRoom(
         if (slippageRateBps != 5) {
             throw new IllegalArgumentException("slippageRateBps must be 5");
         }
+        if (precisionRulesVersion.isBlank() || precisionRulesVersion.length() > 80) {
+            throw new IllegalArgumentException("precisionRulesVersion must contain 1..80 characters");
+        }
+        if (!rulesHash.matches("[A-Za-z0-9_-]{1,128}")) {
+            throw new IllegalArgumentException("rulesHash must be a stable identifier");
+        }
         if (organizerType == RoomOrganizerType.USER
                 && (creatorAccountId == null || createdByOperatorId != null)) {
             throw new IllegalArgumentException("User rooms require exactly one creator account");
@@ -126,6 +132,53 @@ public record CompetitionRoom(
                 buyingPowerBufferPolicyId,
                 "v1",
                 "room-rules-" + id,
+                createdAt,
+                liveRules,
+                schedule,
+                createdAt);
+    }
+
+    public static CompetitionRoom platformLive(
+            UUID id,
+            UUID operatorId,
+            String name,
+            RoomAccessType accessType,
+            UUID scoringTemplateVersionId,
+            BigDecimal initialCashAmount,
+            int botParticipationLimit,
+            int perAccountBotLimit,
+            String eligibilityDocument,
+            String marketScopeDocument,
+            String scoringParameters,
+            UUID feePolicyId,
+            UUID buyingPowerBufferPolicyId,
+            String precisionRulesVersion,
+            String rulesHash,
+            LiveRoomRules liveRules,
+            RoomSchedule schedule,
+            Instant createdAt) {
+        return new CompetitionRoom(
+                id,
+                CompetitionType.LIVE_PAPER,
+                RoomOrganizerType.PLATFORM,
+                null,
+                operatorId,
+                name,
+                accessType,
+                RoomStatus.DRAFT,
+                scoringTemplateVersionId,
+                initialCashAmount,
+                "USD",
+                botParticipationLimit,
+                perAccountBotLimit,
+                eligibilityDocument,
+                marketScopeDocument,
+                scoringParameters,
+                feePolicyId,
+                5,
+                buyingPowerBufferPolicyId,
+                precisionRulesVersion,
+                rulesHash,
                 createdAt,
                 liveRules,
                 schedule,
