@@ -3,6 +3,8 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
 import com.idea2strategy.backend.application.identity.EmailRegistrationService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
+import com.idea2strategy.backend.application.identity.SessionManagementService;
+import java.time.Duration;
 import com.idea2strategy.backend.persistence.identity.IdentityAccountJpaEntity;
 import com.idea2strategy.backend.persistence.identity.IdentityJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJpaCommandAdapter;
@@ -87,9 +89,28 @@ public class IdentityAuthConfiguration {
             Pbkdf2PasswordCodec passwordCodec,
             AesGcmEmailProtector emailProtector,
             HmacSessionTokens sessionTokens,
-            Clock identityClock) {
+            Clock identityClock,
+            @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime,
+            @Value("${identity.session.max-active-sessions:5}") int maxActiveSessions) {
         return new EmailAuthenticationService(
-                queries, commands, passwordCodec, emailProtector, sessionTokens, identityClock);
+                queries,
+                commands,
+                passwordCodec,
+                emailProtector,
+                sessionTokens,
+                identityClock,
+                sessionLifetime,
+                maxActiveSessions);
+    }
+
+    @Bean
+    SessionManagementService sessionManagementService(
+            IdentityJooqQueryAdapter queries,
+            IdentityJpaCommandAdapter commands,
+            HmacSessionTokens sessionTokens,
+            Clock identityClock,
+            @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime) {
+        return new SessionManagementService(queries, commands, identityClock, sessionTokens, sessionLifetime);
     }
 
     private static byte[] decode(String value) {
