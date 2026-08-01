@@ -59,9 +59,37 @@ public final class ImmutableStrategyReleaseCommandService {
             UUID validationRunId,
             BasicStrategyCatalog catalog,
             ImmutableStrategyReleaseCommand command) {
+        Objects.requireNonNull(command, "command");
+        var preparation = new ImmutableStrategyReleasePreparationCommand(
+                command.releaseId(),
+                command.initialCashAmount(),
+                command.budgetCapBps(),
+                command.brokerRulesVersion(),
+                command.accountingRulesVersion(),
+                command.precisionRulesVersion(),
+                command.feePolicyId(),
+                command.buyingPowerBufferPolicyId(),
+                command.candidateConflictPolicy());
+        var release = prepare(validationRunId, catalog, preparation, clock.instant());
+        var validation = validationPort.findOwnedById(validationRunId, principal.accountId())
+                .orElseThrow(() -> new NoSuchElementException("Strategy validation not found"));
+        var plan = planService.compile(validationRunId, catalog);
+        var backtestRequest = OfficialBacktestRequest.forRelease(
+                release, plan.planHash(), command.datasetManifestId());
+        return releasePort.saveOnce(
+                release, backtestRequest, validationRunId,
+                validation.requestedEditSequence(), validation.semanticHash());
+    }
+
+    public ImmutableStrategyRelease prepare(
+            UUID validationRunId,
+            BasicStrategyCatalog catalog,
+            ImmutableStrategyReleasePreparationCommand command,
+            java.time.Instant releasedAt) {
         Objects.requireNonNull(validationRunId, "validationRunId");
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(releasedAt, "releasedAt");
 
         var plan = planService.compile(validationRunId, catalog);
         UUID ownerId = principal.accountId();
@@ -92,9 +120,9 @@ public final class ImmutableStrategyReleaseCommandService {
         JsonNode planRoot = parse(plan.planDocument());
         JsonNode presentationRoot = parse(document.presentationDocument());
         List<Flow> flows = flows(
-                command.releaseId(), planRoot, presentationRoot, plan.id(), catalog, configurationHash);
+                command.botId(), planRoot, presentationRoot, plan.id(), catalog, configurationHash);
         var partition = new Partition(
-                derivedId(command.releaseId(), "partition"), strategy.name(), strategy.description(),
+                derivedId(command.botId(), "partition"), strategy.name(), strategy.description(),
                 command.budgetCapBps(),
                 configurationHash, flows);
 
@@ -104,15 +132,10 @@ public final class ImmutableStrategyReleaseCommandService {
         String presentationHash = StrategyDocumentJson.sha256(presentationSnapshot);
         String snapshotHash = snapshotHash(semanticHash, presentationHash, configurationHash);
         var release = new ImmutableStrategyRelease(
-                command.releaseId(), ownerId, strategy.name(), strategy.description(), semanticSnapshot,
+                command.botId(), ownerId, strategy.name(), strategy.description(), semanticSnapshot,
                 presentationSnapshot, semanticHash, presentationHash, snapshotHash, configuration, partition,
-                clock.instant());
-
-        var backtestRequest = OfficialBacktestRequest.forRelease(
-                release, plan.planHash(), command.datasetManifestId());
-        return releasePort.saveOnce(
-                release, backtestRequest, validationRunId,
-                validation.requestedEditSequence(), validation.semanticHash());
+                releasedAt);
+        return release;
     }
 
     private List<Flow> flows(
@@ -154,7 +177,7 @@ public final class ImmutableStrategyReleaseCommandService {
         return List.copyOf(result);
     }
 
-    private String configurationDocument(ImmutableStrategyReleaseCommand command) {
+    private String configurationDocument(ImmutableStrategyReleasePreparationCommand command) {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("accountingRulesVersion", command.accountingRulesVersion());
         root.put("brokerRulesVersion", command.brokerRulesVersion());

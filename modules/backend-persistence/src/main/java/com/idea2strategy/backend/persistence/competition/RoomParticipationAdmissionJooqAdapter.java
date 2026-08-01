@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.persistence.competition;
 
 import com.idea2strategy.backend.application.competition.RoomBotProvisioningAction;
+import com.idea2strategy.backend.application.competition.RoomBotLaunchRules;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmission;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionContext;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionFailure;
@@ -43,6 +44,8 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
         Record room = dsl.fetchOne(
                 "select r.competition_type::text as competition_type, r.status::text as room_status, "
                         + "rules.bot_participation_limit, rules.per_account_bot_limit, "
+                        + "rules.initial_cash_amount, rules.fee_policy_id, "
+                        + "rules.buying_power_buffer_policy_id, rules.precision_rules_version, "
                         + "schedule.recruitment_opens_at, schedule.participation_closes_at, "
                         + "schedule.evaluation_starts_at "
                         + "from competition.rooms r "
@@ -74,7 +77,12 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
                 request.roomId(),
                 request.ownerAccountId(),
                 request.admittedAt(),
-                executionEligibleFrom.toInstant());
+                executionEligibleFrom.toInstant(),
+                new RoomBotLaunchRules(
+                        room.get("initial_cash_amount", java.math.BigDecimal.class),
+                        room.get("fee_policy_id", UUID.class),
+                        room.get("buying_power_buffer_policy_id", UUID.class),
+                        room.get("precision_rules_version", String.class)));
         UUID botId = provisioningAction.provision(context);
         if (!validProvisionedBot(
                 botId,

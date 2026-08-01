@@ -66,7 +66,12 @@ class RoomParticipationAdmissionServiceTest {
                 return RoomParticipationAdmissionOutcome.rejected(failure);
             }
             UUID botId = provisioningAction.provision(new RoomParticipationAdmissionContext(
-                    request.roomId(), request.ownerAccountId(), request.admittedAt(), NOW.plusSeconds(3600)));
+                    request.roomId(), request.ownerAccountId(), request.admittedAt(), NOW.plusSeconds(3600),
+                    new RoomBotLaunchRules(
+                            new java.math.BigDecimal("100000.00"),
+                            UUID.fromString("70000000-0000-4000-8000-000000000001"),
+                            UUID.fromString("80000000-0000-4000-8000-000000000001"),
+                            "precision/v1")));
             return RoomParticipationAdmissionOutcome.accepted(new RoomParticipationAdmission(
                     request.participationId(), request.roomId(), botId, request.ownerAccountId(),
                     request.anonymousAlias(), request.admittedAt()));

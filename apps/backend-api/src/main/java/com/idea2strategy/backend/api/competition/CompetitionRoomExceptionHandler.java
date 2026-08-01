@@ -4,6 +4,10 @@ import com.idea2strategy.backend.application.competition.ScoringTemplateNotFound
 import com.idea2strategy.backend.application.competition.OperatorAuthorizationException;
 import com.idea2strategy.backend.application.competition.RoomInvitationAccessException;
 import com.idea2strategy.backend.application.competition.RoomInvitationUnavailableException;
+import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionException;
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
+import com.idea2strategy.backend.application.strategy.StrategyCatalogNotFoundException;
+import java.util.NoSuchElementException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,7 +17,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     CompetitionRoomController.class,
     OfficialCompetitionRoomController.class,
     PublicRoomDiscoveryController.class,
-    RoomInvitationController.class
+    RoomInvitationController.class,
+    RoomParticipationController.class
 })
 public class CompetitionRoomExceptionHandler {
     @ExceptionHandler(RoomInvitationAccessException.class)
@@ -41,6 +46,28 @@ public class CompetitionRoomExceptionHandler {
     ProblemDetail templateNotFound(ScoringTemplateNotFoundException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
         problem.setTitle("Scoring template not selectable");
+        return problem;
+    }
+
+    @ExceptionHandler({StrategyCatalogNotFoundException.class, NoSuchElementException.class})
+    ProblemDetail strategyNotFound(RuntimeException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+        problem.setTitle("Strategy selection not found");
+        return problem;
+    }
+
+    @ExceptionHandler(RoomParticipationAdmissionException.class)
+    ProblemDetail participationRejected(RoomParticipationAdmissionException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Room participation rejected");
+        problem.setProperty("code", exception.failure().name());
+        return problem;
+    }
+
+    @ExceptionHandler({IllegalStateException.class, ImmutableStrategyReleaseRejectedException.class})
+    ProblemDetail strategyRejected(RuntimeException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Strategy is not eligible for room participation");
         return problem;
     }
 

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
+import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -21,6 +22,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -62,6 +65,12 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
 
     @Autowired
     private ImmutableStrategyReleaseJooqCommandAdapter adapter;
+
+    @Autowired
+    private RoomStrategyBotProvisioningJooqAdapter roomAdapter;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -171,6 +180,29 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         release(BOT_ID, HASH_C), request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
                 .hasMessage("Release id is already bound to different immutable content");
+
+        UUID roomBotId = UUID.fromString("60000000-0000-4000-8000-000000000012");
+        Instant evaluationStart = NOW.plusSeconds(3600);
+        var roomRelease = release(roomBotId, HASH_D);
+        UUID provisioned = new TransactionTemplate(transactionManager).execute(status -> roomAdapter.provision(
+                roomRelease, RUN_ID, 7, HASH_A, evaluationStart));
+
+        assertThat(provisioned).isEqualTo(roomBotId);
+        assertThat(count("bot.bots")).isEqualTo(2);
+        assertThat(count("bot.launch_snapshots")).isEqualTo(2);
+        assertThat(count("bot.launch_configurations")).isEqualTo(2);
+        assertThat(count("bot.bot_partitions")).isEqualTo(2);
+        assertThat(count("bot.flows")).isEqualTo(2);
+        assertThat(count("backtest.runs")).isEqualTo(1);
+        assertThat(count("operations.outbox_messages")).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select execution_eligible_from from bot.bots where id = ?",
+                        java.time.OffsetDateTime.class,
+                        roomBotId).toInstant())
+                .isEqualTo(evaluationStart);
+        assertThat(jdbc.queryForObject(
+                        "select started_at is null from bot.bots where id = ?", Boolean.class, roomBotId))
+                .isTrue();
     }
 
     private int count(String table) {
@@ -181,12 +213,14 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         var configuration = new ImmutableStrategyRelease.LaunchConfiguration(
                 new BigDecimal("100000.00"), "broker/v1", "accounting/v1", "precision/v1",
                 FEE_ID, BUFFER_ID, "{\"policy\":\"FIRST_WINS\"}", HASH_C);
+        UUID flowId = UUID.nameUUIDFromBytes((botId + ":flow").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        UUID partitionId = UUID.nameUUIDFromBytes((botId + ":partition").getBytes(java.nio.charset.StandardCharsets.UTF_8));
         var flow = new ImmutableStrategyRelease.Flow(
-                FLOW_ID, "buy", CATALOG_ID, PLAN_ID, "{\"key\":\"buy\"}", "{}", HASH_A, HASH_B,
+                flowId, "buy", CATALOG_ID, PLAN_ID, "{\"key\":\"buy\"}", "{}", HASH_A, HASH_B,
                 HASH_C, List.of(INSTRUMENT_ID),
                 List.of(new ImmutableStrategyRelease.FeatureRequirement(INSTRUMENT_ID, FEATURE_ID)), 0);
         var partition = new ImmutableStrategyRelease.Partition(
-                PARTITION_ID, "Momentum", null, 10_000, HASH_C, List.of(flow));
+                partitionId, "Momentum", null, 10_000, HASH_C, List.of(flow));
         return new ImmutableStrategyRelease(
                 botId, OWNER_ID, "Momentum", null, "{\"mode\":\"BASIC\"}", "{\"name\":\"Momentum\"}",
                 HASH_A, HASH_B, snapshotHash, configuration, partition, NOW);
@@ -194,6 +228,6 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import(ImmutableStrategyReleaseJooqCommandAdapter.class)
+    @Import({ImmutableStrategyReleaseJooqCommandAdapter.class, RoomStrategyBotProvisioningJooqAdapter.class})
     static class TestApplication {}
 }
