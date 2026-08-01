@@ -165,6 +165,20 @@ class IdentityPersistenceIntegrationTest {
                 "select id from identity.login_identities where account_id = ? and status = 'ACTIVE'",
                 UUID.class,
                 signup.accountId());
+        UUID resetRequestId = UUID.randomUUID();
+        jdbcTemplate.update(
+                """
+                insert into identity.password_reset_requests
+                    (id, account_id, login_identity_id, auth_epoch_at_issue, credential_version_at_issue,
+                     token_digest, digest_key_version, requested_at, expires_at)
+                values (?, ?, ?, 1, 1, ?, 1, ?, ?)
+                """,
+                resetRequestId,
+                signup.accountId(),
+                passwordLoginId,
+                "digest:reset:" + resetRequestId,
+                NOW.atOffset(ZoneOffset.UTC),
+                NOW.plusSeconds(600).atOffset(ZoneOffset.UTC));
 
         var linking = new OidcIdentityLinkingService(
                 queryAdapter,
@@ -179,7 +193,22 @@ class IdentityPersistenceIntegrationTest {
                 "raw-external-subject",
                 "oidc-person@example.com",
                 UUID.randomUUID()));
-        long authEpoch = linking.activate(new ConfirmOidcLinkCommand(
+        assertThatThrownBy(() -> linking.start(new StartOidcLinkCommand(
+                        signup.accountId(),
+                        passwordLoginId,
+                        "EXAMPLE",
+                        "https://issuer.example",
+                        "raw-external-subject",
+                        "oidc-person@example.com",
+                        UUID.randomUUID())))
+                .isInstanceOf(AuthenticationRejectedException.class)
+                .hasMessage("OIDC identity is already linked");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.login_identities where account_id = ? and status = 'PENDING'",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+        var confirmation = new ConfirmOidcLinkCommand(
                 signup.accountId(),
                 passwordLoginId,
                 pendingId,
@@ -187,7 +216,8 @@ class IdentityPersistenceIntegrationTest {
                 "https://issuer.example",
                 "raw-external-subject",
                 "oidc-person@example.com",
-                UUID.randomUUID()));
+                UUID.randomUUID());
+        long authEpoch = linking.activate(confirmation);
 
         assertThat(authEpoch).isEqualTo(2);
         assertThat(jdbcTemplate.queryForObject(
@@ -205,6 +235,11 @@ class IdentityPersistenceIntegrationTest {
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select revoked_at is not null from identity.password_reset_requests where id = ?",
+                        Boolean.class,
+                        resetRequestId))
+                .isTrue();
         assertThat(jdbcTemplate.queryForObject(
                         "select provider_subject_hmac from identity.login_identities where id = ?",
                         String.class,
@@ -231,6 +266,30 @@ class IdentityPersistenceIntegrationTest {
                         Long.class,
                         result.sessionId()))
                 .isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_IDENTITY_REPLACED'",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+
+        assertThatThrownBy(() -> linking.activate(confirmation))
+                .isInstanceOf(AuthenticationRejectedException.class)
+                .hasMessage("OIDC link is no longer activatable");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select auth_epoch from identity.account_security_states where account_id = ?",
+                        Long.class,
+                        signup.accountId()))
+                .isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select revoked_at is not null from identity.password_reset_requests where id = ?",
+                        Boolean.class,
+                        resetRequestId))
+                .isTrue();
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_IDENTITY_REPLACED'",
                         Integer.class,

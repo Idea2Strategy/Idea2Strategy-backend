@@ -2,6 +2,7 @@ package com.idea2strategy.backend.persistence.identity;
 
 import com.idea2strategy.backend.application.identity.AuthenticationSession;
 import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
+import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.ActivateOidcLink;
 import com.idea2strategy.backend.application.identity.IdentityCommandPort;
 import com.idea2strategy.backend.application.identity.LoginFailure;
@@ -378,10 +379,10 @@ public class IdentityJpaCommandAdapter implements RegistrationCommandPort, Ident
                     .setParameter("subjectHmac", command.subjectHmac())
                     .getSingleResult();
         } catch (NoResultException exception) {
-            throw new IllegalStateException("OIDC link does not belong to the authenticated account", exception);
+            throw new AuthenticationRejectedException("OIDC link is not valid for this account");
         }
         if (!"ACTIVE".equals(row[0]) || !"PENDING".equals(row[1])) {
-            throw new IllegalStateException("OIDC link is no longer activatable");
+            throw new AuthenticationRejectedException("OIDC link is no longer activatable");
         }
 
         OffsetDateTime now = utc(command.activatedAt());
