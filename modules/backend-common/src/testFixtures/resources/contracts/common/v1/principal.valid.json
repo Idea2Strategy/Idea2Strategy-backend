@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "auth-principal.v1",
+  "actorType": "ACCOUNT",
+  "actorId": "00000000-0000-4000-8000-000000000101",
+  "authEpoch": 7,
+  "authorities": ["ROLE_USER"]
+}
