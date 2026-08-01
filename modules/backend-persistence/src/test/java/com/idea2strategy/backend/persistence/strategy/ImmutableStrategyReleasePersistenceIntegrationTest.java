@@ -3,6 +3,7 @@ package com.idea2strategy.backend.persistence.strategy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -137,7 +138,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 .isTrue();
 
         assertThatThrownBy(() -> adapter.saveOnce(release(BOT_ID, HASH_C), RUN_ID, 7, HASH_A))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
                 .hasMessage("Release id is already bound to different immutable content");
     }
 

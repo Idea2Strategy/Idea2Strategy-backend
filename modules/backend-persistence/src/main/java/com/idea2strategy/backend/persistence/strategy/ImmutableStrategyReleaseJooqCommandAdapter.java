@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.persistence.strategy;
 
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandPort;
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
 import java.time.ZoneOffset;
@@ -33,7 +34,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             UUID existingOwnerId = existing.get("owner_account_id", UUID.class);
             if (!release.ownerAccountId().equals(existingOwnerId)
                     || !existingHash.equals(release.snapshotHash())) {
-                throw new IllegalStateException("Release id is already bound to different immutable content");
+                throw new ImmutableStrategyReleaseRejectedException(
+                        "Release id is already bound to different immutable content");
             }
             return release;
         }
@@ -53,7 +55,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 validatedEditSequence,
                 validatedSemanticHash);
         if (locked == null) {
-            throw new IllegalStateException("Strategy validation became stale before release");
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Strategy validation became stale before release");
         }
 
         for (var flow : release.partition().flows()) {
@@ -67,7 +70,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                     flow.compiledFlowPlanId(),
                     flow.elementCatalogVersionId());
             if (pinnedPlan == null) {
-                throw new IllegalStateException("Compiled flow plan does not match the validated strategy");
+                throw new ImmutableStrategyReleaseRejectedException(
+                        "Compiled flow plan does not match the validated strategy");
             }
         }
 
@@ -87,7 +91,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 releasedAt,
                 releasedAt);
         if (activePolicies == null) {
-            throw new IllegalStateException("Launch policies must be effective at the release instant");
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Launch policies must be effective at the release instant");
         }
 
         var at = releasedAt;
