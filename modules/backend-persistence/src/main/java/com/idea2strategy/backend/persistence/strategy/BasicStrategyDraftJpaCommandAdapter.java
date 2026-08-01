@@ -1,9 +1,12 @@
 package com.idea2strategy.backend.persistence.strategy;
 
 import com.idea2strategy.backend.application.strategy.BasicStrategyDraftCommandPort;
+import com.idea2strategy.backend.application.strategy.StrategyDraftReplaceResult;
 import com.idea2strategy.backend.domain.strategy.Strategy;
 import com.idea2strategy.backend.domain.strategy.StrategyDocument;
+import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,10 +35,15 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
 
     @Override
     @Transactional
-    public boolean replaceDocument(StrategyDocument document, long expectedEditSequence) {
+    public StrategyDraftReplaceResult replaceDocument(
+            StrategyDocument document,
+            long expectedEditSequence,
+            UUID sessionId,
+            String leaseTokenDigest,
+            Instant now) {
         int updated = jdbcTemplate.update(
                 """
-                update strategy.strategy_documents
+                update strategy.strategy_documents as document
                    set semantic_document = cast(? as jsonb),
                        presentation_document = cast(? as jsonb),
                        semantic_schema_version = ?,
@@ -46,6 +54,14 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                        updated_at = ?
                  where strategy_id = ?
                    and edit_sequence = ?
+                   and exists (
+                       select 1
+                         from strategy.strategy_edit_leases lease
+                        where lease.strategy_id = document.strategy_id
+                          and lease.session_id = ?
+                          and lease.lease_token_digest = ?
+                          and lease.expires_at > ?
+                   )
                 """,
                 document.semanticDocument(),
                 document.presentationDocument(),
@@ -56,7 +72,19 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                 document.editSequence(),
                 document.updatedAt().atOffset(ZoneOffset.UTC),
                 document.strategyId(),
-                expectedEditSequence);
-        return updated == 1;
+                expectedEditSequence,
+                sessionId,
+                leaseTokenDigest,
+                now.atOffset(ZoneOffset.UTC));
+        if (updated == 1) {
+            return StrategyDraftReplaceResult.UPDATED;
+        }
+        Long currentEditSequence = jdbcTemplate.queryForObject(
+                "select edit_sequence from strategy.strategy_documents where strategy_id = ?",
+                Long.class,
+                document.strategyId());
+        return currentEditSequence != null && currentEditSequence == expectedEditSequence
+                ? StrategyDraftReplaceResult.INVALID_LEASE
+                : StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
     }
 }
