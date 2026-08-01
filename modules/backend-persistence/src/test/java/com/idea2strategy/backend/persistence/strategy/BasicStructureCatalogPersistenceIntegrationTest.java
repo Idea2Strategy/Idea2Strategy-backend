@@ -120,7 +120,7 @@ class BasicStructureCatalogPersistenceIntegrationTest {
         UUID packageId = UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         String document = StrategyDocumentJson.canonicalize(
                 "{\"mode\":\"BASIC\",\"kind\":\"" + kind + "\",\"container\":\"" + container + "\","
-                        + "\"instrumentIds\":[],\"blocks\":[{\"id\":\"indicator\","
+                        + "\"instrumentIds\":[],\"blocks\":[{\"id\":\"" + code + "-indicator\","
                         + "\"elementCode\":\"RSI\",\"parameters\":{\"period\":null}}],"
                         + "\"connections\":[]}");
         jdbcTemplate.update(
