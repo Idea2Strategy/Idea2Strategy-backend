@@ -113,6 +113,17 @@ class BotRunCommandPersistenceIntegrationTest {
                         WAITING_BOT_ID)
                 .toInstant())
                 .isEqualTo(ROOM_START);
+        assertThat(jdbc.queryForObject(
+                        "select due_at from bot.continuation_deadlines where bot_id = ?",
+                        java.time.OffsetDateTime.class,
+                        PERSONAL_BOT_ID)
+                .toInstant())
+                .isEqualTo(NOW.plusSeconds(30L * 24 * 60 * 60));
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from bot.continuation_deadlines where bot_id = ?",
+                        Integer.class,
+                        WAITING_BOT_ID))
+                .isZero();
         assertThat(adapter.issueOwned(PERSONAL_BOT_ID, UUID.randomUUID(), NOW)).isEmpty();
     }
 

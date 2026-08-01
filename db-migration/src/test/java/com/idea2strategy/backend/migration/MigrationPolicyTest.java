@@ -62,7 +62,8 @@ class MigrationPolicyTest {
         assertEquals(
                 List.of(
                         "V1__initial_schema.sql",
-                        "V20260801112341__backend_identity_email_auth.sql"),
+                        "V20260801112341__backend_identity_email_auth.sql",
+                        "V20260801153000__backend_bot_continuation_deadlines.sql"),
                 plan.orderedFileNames());
     }
 
