@@ -76,8 +76,10 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         var activePolicies = dsl.fetchOne(
                 "select 1 from trading.fee_policy_versions f "
                         + "join trading.buying_power_buffer_policy_versions b on b.id = ? "
-                        + "where f.id = ? and f.effective_from <= ? and (f.effective_to is null or f.effective_to > ?) "
-                        + "and b.effective_from <= ? and (b.effective_to is null or b.effective_to > ?)",
+                        + "where f.id = ? and f.effective_from <= ?::timestamptz "
+                        + "and (f.effective_to is null or f.effective_to > ?::timestamptz) "
+                        + "and b.effective_from <= ?::timestamptz "
+                        + "and (b.effective_to is null or b.effective_to > ?::timestamptz)",
                 config.buyingPowerBufferPolicyId(),
                 config.feePolicyId(),
                 releasedAt,
