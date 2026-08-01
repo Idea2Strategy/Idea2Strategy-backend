@@ -69,6 +69,10 @@ public final class Idea2StrategyCli {
         ApiClient api = new ApiClient(invocation.baseUrl());
         CredentialStore credentials = new CredentialStore(invocation.configDirectory());
         List<String> command = arguments.positionals();
+        if (command.equals(List.of("tool-contract"))) {
+            arguments.rejectUnknown();
+            return toolContract();
+        }
         if (command.equals(List.of("login"))) {
             return login(arguments, api, credentials, stdin);
         }
@@ -91,6 +95,19 @@ public final class Idea2StrategyCli {
             case "strategy.release" -> strategyRelease(arguments, api, token);
             default -> throw new IllegalStateException("Unmapped authenticated command");
         };
+    }
+
+    private static JsonNode toolContract() {
+        try (InputStream resource = Idea2StrategyCli.class.getResourceAsStream(
+                "/idea2strategy-ai-tool-contract.json")) {
+            if (resource == null) {
+                throw new IOException("Tool contract resource is missing");
+            }
+            return JSON.readTree(resource);
+        } catch (IOException exception) {
+            throw new CliFailure(70, "TOOL_CONTRACT_UNAVAILABLE",
+                    "The external AI tool contract could not be loaded");
+        }
     }
 
     private static JsonNode login(Arguments args, ApiClient api, CredentialStore credentials, InputStream stdin) {

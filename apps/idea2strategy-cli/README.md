@@ -22,6 +22,7 @@ $password | idea2strategy login --email user@example.com
 Supported commands:
 
 ```text
+tool-contract
 delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE
 delegation revoke --authorization-id ID
 strategy list [--limit 1..100] [--cursor CURSOR]
@@ -32,6 +33,12 @@ strategy edit apply --strategy-id ID --authorization-id ID --credential-id ID --
 strategy validate --strategy-id ID
 strategy release --strategy-id ID --validation-run-id ID
 ```
+
+External AI tools must call `tool-contract` first. The returned JSON describes the allowed Basic edit operations,
+forbidden capabilities, stable exit codes, and the required two-step edit flow. An AI tool must inspect the preview
+`diff`, retain its `previewHash`, and send that exact hash with the same operations when applying the reviewed change.
+The CLI rejects arbitrary code, external-data access, direct orders, unapproved delegation scopes, and apply requests
+that omit the reviewed preview hash.
 
 Every successful response is written to standard output as `{ "ok": true, "command": "...", "data": ... }`.
 Every error is written to standard error as `{ "ok": false, "command": "...", "error": ... }`.
