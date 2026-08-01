@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.PasswordPolicyException;
+import com.idea2strategy.backend.application.identity.PasswordResetRejectedException;
 import com.idea2strategy.backend.application.identity.VerificationRejectedException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -22,7 +23,7 @@ public class IdentityAuthExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("code", "AUTHENTICATION_REJECTED"));
     }
 
-    @ExceptionHandler({PasswordPolicyException.class, VerificationRejectedException.class, IllegalArgumentException.class})
+    @ExceptionHandler({PasswordPolicyException.class, PasswordResetRejectedException.class, VerificationRejectedException.class, IllegalArgumentException.class})
     ResponseEntity<Map<String, String>> invalid(RuntimeException exception) {
         return ResponseEntity.badRequest().body(Map.of("code", "INVALID_AUTHENTICATION_REQUEST"));
     }

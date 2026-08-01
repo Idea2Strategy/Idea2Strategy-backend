@@ -5,6 +5,7 @@ import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
 
 import com.idea2strategy.backend.application.identity.AccountLifecycleStatus;
+import com.idea2strategy.backend.application.identity.AccountRecoveryQueryPort;
 import com.idea2strategy.backend.application.identity.ActiveSession;
 import com.idea2strategy.backend.application.identity.EmailStatus;
 import com.idea2strategy.backend.application.identity.IdentityQueryPort;
@@ -13,6 +14,7 @@ import com.idea2strategy.backend.application.identity.OidcIdentityQueryPort;
 import com.idea2strategy.backend.application.identity.OidcLoginAccount;
 import com.idea2strategy.backend.application.identity.OidcProvider;
 import com.idea2strategy.backend.application.identity.PasswordLoginAccount;
+import com.idea2strategy.backend.application.identity.PasswordRecoveryAccount;
 import com.idea2strategy.backend.application.identity.RegistrationQueryPort;
 import com.idea2strategy.backend.application.identity.SessionQueryPort;
 import com.idea2strategy.backend.application.identity.StoredSession;
@@ -25,7 +27,11 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public class IdentityJooqQueryAdapter
-        implements IdentityQueryPort, RegistrationQueryPort, OidcIdentityQueryPort, SessionQueryPort {
+        implements IdentityQueryPort,
+                RegistrationQueryPort,
+                OidcIdentityQueryPort,
+                SessionQueryPort,
+                AccountRecoveryQueryPort {
     private final DSLContext dsl;
 
     public IdentityJooqQueryAdapter(DSLContext dsl) {
@@ -37,6 +43,61 @@ public class IdentityJooqQueryAdapter
         return dsl.fetchExists(dsl.selectOne()
                 .from(table(name("identity", "account_emails")))
                 .where(field(name("email_lookup_hmac"), String.class).eq(emailLookupHmac)));
+    }
+
+    @Override
+    public Optional<PasswordRecoveryAccount> findPasswordRecoveryByEmailLookup(String emailLookup) {
+        var emails = table(name("identity", "account_emails")).as("email");
+        var accounts = table(name("identity", "accounts")).as("account");
+        var identities = table(name("identity", "login_identities")).as("login");
+        var providers = table(name("identity", "auth_providers")).as("provider");
+        var credentials = table(name("identity", "password_credentials")).as("credential");
+        var security = table(name("identity", "account_security_states")).as("security");
+        var accountId = field(name("account", "id"), UUID.class);
+        var loginId = field(name("login", "id"), UUID.class);
+        var authEpoch = field(name("security", "auth_epoch"), Long.class);
+        var credentialVersion = field(name("credential", "credential_version"), Long.class);
+        return dsl.select(accountId, loginId, authEpoch, credentialVersion)
+                .from(emails)
+                .join(accounts).on(field(name("email", "account_id"), UUID.class).eq(accountId))
+                .join(identities).on(field(name("login", "account_id"), UUID.class).eq(accountId))
+                .join(providers).on(field(name("provider", "id"), Short.class)
+                        .eq(field(name("login", "provider_id"), Short.class)))
+                .join(credentials).on(field(name("credential", "login_identity_id"), UUID.class).eq(loginId))
+                .join(security).on(field(name("security", "account_id"), UUID.class).eq(accountId))
+                .where(field(name("email", "email_lookup_hmac"), String.class).eq(emailLookup)
+                        .and(field(name("email", "status")).cast(String.class).eq("VERIFIED"))
+                        .and(field(name("account", "lifecycle_status")).cast(String.class).eq("ACTIVE"))
+                        .and(field(name("login", "status")).cast(String.class).eq("ACTIVE"))
+                        .and(field(name("provider", "code"), String.class).eq("PASSWORD")))
+                .fetchOptional(record -> new PasswordRecoveryAccount(
+                        record.value1(), record.value2(), record.value3(), record.value4()));
+    }
+
+    @Override
+    public Optional<PasswordRecoveryAccount> findPasswordRecoveryByAccountId(UUID requestedAccountId) {
+        var accounts = table(name("identity", "accounts")).as("account");
+        var identities = table(name("identity", "login_identities")).as("login");
+        var providers = table(name("identity", "auth_providers")).as("provider");
+        var credentials = table(name("identity", "password_credentials")).as("credential");
+        var security = table(name("identity", "account_security_states")).as("security");
+        var accountId = field(name("account", "id"), UUID.class);
+        var loginId = field(name("login", "id"), UUID.class);
+        var authEpoch = field(name("security", "auth_epoch"), Long.class);
+        var credentialVersion = field(name("credential", "credential_version"), Long.class);
+        return dsl.select(accountId, loginId, authEpoch, credentialVersion)
+                .from(accounts)
+                .join(identities).on(field(name("login", "account_id"), UUID.class).eq(accountId))
+                .join(providers).on(field(name("provider", "id"), Short.class)
+                        .eq(field(name("login", "provider_id"), Short.class)))
+                .join(credentials).on(field(name("credential", "login_identity_id"), UUID.class).eq(loginId))
+                .join(security).on(field(name("security", "account_id"), UUID.class).eq(accountId))
+                .where(accountId.eq(requestedAccountId)
+                        .and(field(name("account", "lifecycle_status")).cast(String.class).eq("ACTIVE"))
+                        .and(field(name("login", "status")).cast(String.class).eq("ACTIVE"))
+                        .and(field(name("provider", "code"), String.class).eq("PASSWORD")))
+                .fetchOptional(record -> new PasswordRecoveryAccount(
+                        record.value1(), record.value2(), record.value3(), record.value4()));
     }
 
     @Override

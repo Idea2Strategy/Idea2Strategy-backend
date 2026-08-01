@@ -14,9 +14,14 @@ import com.idea2strategy.backend.application.identity.OidcAuthenticationService;
 import com.idea2strategy.backend.application.identity.OidcIdentityLinkingService;
 import com.idea2strategy.backend.application.identity.OidcLoginCommand;
 import com.idea2strategy.backend.application.identity.PasswordHash;
+import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
+import com.idea2strategy.backend.application.identity.PasswordResetRejectedException;
 import com.idea2strategy.backend.application.identity.ProtectedEmail;
 import com.idea2strategy.backend.application.identity.ProtectedOidcSubject;
 import com.idea2strategy.backend.application.identity.ResendVerificationCommand;
+import com.idea2strategy.backend.application.identity.RequestPasswordResetCommand;
+import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
+import com.idea2strategy.backend.application.identity.ResetPasswordCommand;
 import com.idea2strategy.backend.application.identity.SessionToken;
 import com.idea2strategy.backend.application.identity.SignupCommand;
 import com.idea2strategy.backend.application.identity.StartOidcLinkCommand;
@@ -28,6 +33,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
@@ -295,6 +302,156 @@ class IdentityPersistenceIntegrationTest {
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void concurrentPasswordResetConsumptionSucceedsExactlyOnceAndInvalidatesPriorAccess() throws Exception {
+        var registration = registrationService(new AtomicInteger());
+        var signup = registration.signup(new SignupCommand(
+                "recover-person@example.com",
+                "the original sufficiently long passphrase",
+                UUID.randomUUID(),
+                "192.0.2.0/24"));
+        registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
+        authenticationService().login(new LoginCommand(
+                "recover-person@example.com",
+                "the original sufficiently long passphrase",
+                "Before recovery",
+                UUID.randomUUID()));
+
+        var recovery = passwordRecoveryService();
+        var delivery = recovery.requestPasswordReset(new RequestPasswordResetCommand(
+                        "recover-person@example.com", UUID.randomUUID(), "192.0.2.0/24"))
+                .orElseThrow();
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> resetAfter(start, recovery, delivery.rawToken(),
+                    "the first replacement passphrase"));
+            var second = executor.submit(() -> resetAfter(start, recovery, delivery.rawToken(),
+                    "the second replacement passphrase"));
+            start.countDown();
+
+            assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
+        }
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "select credential_version from identity.password_credentials credential "
+                                + "join identity.login_identities login on login.id = credential.login_identity_id "
+                                + "where login.account_id = ?",
+                        Long.class,
+                        signup.accountId()))
+                .isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select auth_epoch from identity.account_security_states where account_id = ?",
+                        Long.class,
+                        signup.accountId()))
+                .isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.password_reset_requests where account_id = ? and consumed_at is not null",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+        assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
+                        "recover-person@example.com",
+                        "the original sufficiently long passphrase",
+                        "After recovery",
+                        UUID.randomUUID())))
+                .isInstanceOf(AuthenticationRejectedException.class);
+    }
+
+    @Test
+    void recoveryCodeReissueRevokesPreviousSetAndConcurrentConsumptionSucceedsOnce() throws Exception {
+        var registration = registrationService(new AtomicInteger());
+        var signup = registration.signup(new SignupCommand(
+                "codes-person@example.com",
+                "the original sufficiently long passphrase",
+                UUID.randomUUID(),
+                "192.0.2.0/24"));
+        registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
+        authenticationService().login(new LoginCommand(
+                "codes-person@example.com",
+                "the original sufficiently long passphrase",
+                "Before recovery",
+                UUID.randomUUID()));
+
+        var recovery = passwordRecoveryService();
+        var firstSet = recovery.issueRecoveryCodes(signup.accountId(), UUID.randomUUID());
+        var replacement = recovery.issueRecoveryCodes(signup.accountId(), UUID.randomUUID());
+        assertThat(firstSet.recoveryCodes()).hasSize(10);
+        assertThat(replacement.recoveryCodes()).hasSize(10).doesNotContainAnyElementsOf(firstSet.recoveryCodes());
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.recovery_code_sets where account_id = ? and revoked_at is not null",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+
+        var start = new CountDownLatch(1);
+        String code = replacement.recoveryCodes().getFirst();
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> recoverAfter(start, recovery, code, "first code replacement passphrase"));
+            var second = executor.submit(() -> recoverAfter(start, recovery, code, "second code replacement passphrase"));
+            start.countDown();
+            assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.recovery_codes where used_at is not null and recovery_code_set_id in "
+                                + "(select id from identity.recovery_code_sets where account_id = ?)",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from operations.notifications where account_id = ? and notification_type = 'ACCOUNT_RECOVERED'",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
+    }
+
+    private static boolean resetAfter(
+            CountDownLatch start, PasswordRecoveryService recovery, String rawToken, String newPassword)
+            throws InterruptedException {
+        start.await();
+        try {
+            recovery.resetPassword(new ResetPasswordCommand(rawToken, newPassword, UUID.randomUUID()));
+            return true;
+        } catch (PasswordResetRejectedException exception) {
+            return false;
+        }
+    }
+
+    private static boolean recoverAfter(
+            CountDownLatch start, PasswordRecoveryService recovery, String code, String newPassword)
+            throws InterruptedException {
+        start.await();
+        try {
+            recovery.recoverWithCode(new RecoverWithCodeCommand(
+                    "codes-person@example.com", code, newPassword, UUID.randomUUID()));
+            return true;
+        } catch (PasswordResetRejectedException exception) {
+            return false;
+        }
+    }
+
+    private PasswordRecoveryService passwordRecoveryService() {
+        var tokenSequence = new AtomicInteger();
+        return new PasswordRecoveryService(
+                queryAdapter,
+                commandAdapter,
+                raw -> "lookup:" + raw.trim().toLowerCase(),
+                new NistPasswordPolicy(List.of()),
+                raw -> new PasswordHash("hash:" + raw, "TEST", "{}"),
+                () -> {
+                    String raw = "raw-password-recovery-token-" + tokenSequence.incrementAndGet();
+                    return new com.idea2strategy.backend.application.identity.PasswordResetToken(
+                            raw, "digest:" + raw);
+                },
+                raw -> "digest:" + raw,
+                Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC),
+                java.time.Duration.ofMinutes(30));
     }
 
     private EmailRegistrationService registrationService(AtomicInteger tokenSequence) {

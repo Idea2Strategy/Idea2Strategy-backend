@@ -4,11 +4,18 @@ import com.idea2strategy.backend.application.identity.AuthenticationSession;
 import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.ActivateOidcLink;
+import com.idea2strategy.backend.application.identity.AccountRecoveryCommandPort;
 import com.idea2strategy.backend.application.identity.IdentityCommandPort;
 import com.idea2strategy.backend.application.identity.LoginFailure;
 import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
 import com.idea2strategy.backend.application.identity.PendingOidcLink;
+import com.idea2strategy.backend.application.identity.PendingPasswordReset;
+import com.idea2strategy.backend.application.identity.PasswordResetConsumption;
+import com.idea2strategy.backend.application.identity.PasswordResetOutcome;
+import com.idea2strategy.backend.application.identity.RecoveryCodeBatch;
+import com.idea2strategy.backend.application.identity.RecoveryCodeConsumption;
+import com.idea2strategy.backend.application.identity.RecoveryCodeOutcome;
 import com.idea2strategy.backend.application.identity.RegistrationCommandPort;
 import com.idea2strategy.backend.application.identity.SessionCommandPort;
 import com.idea2strategy.backend.application.identity.VerificationOutcome;
@@ -24,7 +31,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class IdentityJpaCommandAdapter
-        implements RegistrationCommandPort, IdentityCommandPort, OidcIdentityCommandPort, SessionCommandPort {
+        implements RegistrationCommandPort,
+                IdentityCommandPort,
+                OidcIdentityCommandPort,
+                SessionCommandPort,
+                AccountRecoveryCommandPort {
     private final EntityManager entityManager;
 
     public IdentityJpaCommandAdapter(EntityManager entityManager) {
@@ -571,6 +582,367 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
         insertAuthenticationTransitionEvent(command, now);
         return ((Number) row[2]).longValue() + 1;
+    }
+
+    @Override
+    @Transactional
+    public void issuePasswordReset(PendingPasswordReset reset) {
+        entityManager.createNativeQuery("select account_id from identity.account_security_states where account_id = :accountId for update")
+                .setParameter("accountId", reset.accountId())
+                .getSingleResult();
+        OffsetDateTime now = utc(reset.requestedAt());
+        entityManager.createNativeQuery("""
+                        update identity.password_reset_requests set revoked_at = :now
+                        where account_id = :accountId and consumed_at is null and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", reset.accountId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.password_reset_requests
+                            (id, account_id, login_identity_id, auth_epoch_at_issue,
+                             credential_version_at_issue, token_digest, digest_key_version,
+                             requested_at, expires_at, request_ip_prefix)
+                        values (:id, :accountId, :loginId, :authEpoch, :credentialVersion,
+                                :digest, 1, :requestedAt, :expiresAt, cast(:ipPrefix as inet))
+                        """)
+                .setParameter("id", reset.id())
+                .setParameter("accountId", reset.accountId())
+                .setParameter("loginId", reset.loginIdentityId())
+                .setParameter("authEpoch", reset.authEpoch())
+                .setParameter("credentialVersion", reset.credentialVersion())
+                .setParameter("digest", reset.tokenDigest())
+                .setParameter("requestedAt", now)
+                .setParameter("expiresAt", utc(reset.expiresAt()))
+                .setParameter("ipPrefix", reset.requestIpPrefix())
+                .executeUpdate();
+        insertAuthenticationEvent(
+                reset.accountId(),
+                "PASSWORD_RESET_REQUESTED",
+                reset.loginIdentityId(),
+                "ACCOUNT",
+                null,
+                reset.correlationId(),
+                "password-reset-request:" + reset.correlationId(),
+                now);
+    }
+
+    @Override
+    @Transactional
+    public PasswordResetOutcome consumePasswordReset(PasswordResetConsumption consumption) {
+        Object[] row;
+        try {
+            row = (Object[]) entityManager.createNativeQuery("""
+                            select request.id, request.account_id, request.login_identity_id,
+                                   request.auth_epoch_at_issue, request.credential_version_at_issue,
+                                   request.expires_at, request.consumed_at, request.revoked_at,
+                                   security.auth_epoch, credential.credential_version
+                            from identity.password_reset_requests request
+                            join identity.account_security_states security on security.account_id = request.account_id
+                            join identity.password_credentials credential
+                              on credential.login_identity_id = request.login_identity_id
+                            where request.token_digest = :digest
+                            for update of request, security, credential
+                            """)
+                    .setParameter("digest", consumption.tokenDigest())
+                    .getSingleResult();
+        } catch (NoResultException exception) {
+            return PasswordResetOutcome.NOT_FOUND;
+        }
+
+        UUID requestId = (UUID) row[0];
+        UUID accountId = (UUID) row[1];
+        UUID loginId = (UUID) row[2];
+        OffsetDateTime now = utc(consumption.consumedAt());
+        if (row[6] != null || row[7] != null) {
+            recordPasswordResetRejection(accountId, loginId, consumption, "ALREADY_USED", now);
+            return PasswordResetOutcome.ALREADY_USED;
+        }
+        if (!instant(row[5]).isAfter(consumption.consumedAt())) {
+            entityManager.createNativeQuery("update identity.password_reset_requests set failed_attempt_count = failed_attempt_count + 1 where id = :id")
+                    .setParameter("id", requestId)
+                    .executeUpdate();
+            recordPasswordResetRejection(accountId, loginId, consumption, "EXPIRED", now);
+            return PasswordResetOutcome.EXPIRED;
+        }
+        if (((Number) row[3]).longValue() != ((Number) row[8]).longValue()
+                || ((Number) row[4]).longValue() != ((Number) row[9]).longValue()) {
+            entityManager.createNativeQuery("update identity.password_reset_requests set revoked_at = :now where id = :id")
+                    .setParameter("now", now)
+                    .setParameter("id", requestId)
+                    .executeUpdate();
+            recordPasswordResetRejection(accountId, loginId, consumption, "STALE_CREDENTIAL", now);
+            return PasswordResetOutcome.STALE;
+        }
+
+        entityManager.createNativeQuery("""
+                        update identity.password_credentials
+                        set password_hash = :hash, hash_scheme = :scheme,
+                            hash_parameters = cast(:parameters as jsonb),
+                            credential_version = credential_version + 1,
+                            password_changed_at = :now, compromised_at = null
+                        where login_identity_id = :loginId
+                        """)
+                .setParameter("hash", consumption.passwordHash().encodedHash())
+                .setParameter("scheme", consumption.passwordHash().scheme())
+                .setParameter("parameters", consumption.passwordHash().parametersJson())
+                .setParameter("now", now)
+                .setParameter("loginId", loginId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.account_security_states
+                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        where account_id = :accountId
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        entityManager.createNativeQuery("update identity.password_reset_requests set consumed_at = :now where id = :id")
+                .setParameter("now", now)
+                .setParameter("id", requestId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.password_reset_requests set revoked_at = :now
+                        where account_id = :accountId and id <> :id
+                          and consumed_at is null and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", accountId)
+                .setParameter("id", requestId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.sessions
+                        set revoked_at = :now, revoke_reason_code = 'PASSWORD_RESET'
+                        where account_id = :accountId and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        insertAuthenticationEvent(
+                accountId,
+                "PASSWORD_CHANGED",
+                loginId,
+                "ACCOUNT",
+                "PASSWORD_RESET",
+                consumption.correlationId(),
+                "password-reset-consumed:" + requestId,
+                now);
+        insertSecurityNotification(accountId, "PASSWORD_CHANGED", consumption.correlationId(), now);
+        return PasswordResetOutcome.CHANGED;
+    }
+
+    @Override
+    @Transactional
+    public void replaceRecoveryCodes(RecoveryCodeBatch batch) {
+        entityManager.createNativeQuery("select account_id from identity.account_security_states where account_id = :accountId for update")
+                .setParameter("accountId", batch.accountId())
+                .getSingleResult();
+        OffsetDateTime now = utc(batch.issuedAt());
+        entityManager.createNativeQuery("""
+                        update identity.recovery_code_sets
+                        set revoked_at = :now, revoke_reason_code = 'REISSUED'
+                        where account_id = :accountId and purpose = 'ACCOUNT_RECOVERY' and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", batch.accountId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.recovery_code_sets (id, account_id, purpose, issued_at)
+                        values (:id, :accountId, 'ACCOUNT_RECOVERY', :now)
+                        """)
+                .setParameter("id", batch.id())
+                .setParameter("accountId", batch.accountId())
+                .setParameter("now", now)
+                .executeUpdate();
+        for (var code : batch.codes()) {
+            entityManager.createNativeQuery("""
+                            insert into identity.recovery_codes
+                                (id, recovery_code_set_id, code_digest, digest_key_version)
+                            values (:id, :setId, :digest, 1)
+                            """)
+                    .setParameter("id", code.id())
+                    .setParameter("setId", batch.id())
+                    .setParameter("digest", code.digest())
+                    .executeUpdate();
+        }
+        insertAuthenticationEvent(
+                batch.accountId(),
+                "RECOVERY_CODES_ISSUED",
+                null,
+                "ACCOUNT",
+                null,
+                batch.correlationId(),
+                "recovery-codes-issued:" + batch.id(),
+                now);
+        insertSecurityNotification(batch.accountId(), "RECOVERY_CODES_ISSUED", batch.correlationId(), now);
+    }
+
+    @Override
+    @Transactional
+    public RecoveryCodeOutcome consumeRecoveryCode(RecoveryCodeConsumption consumption) {
+        Object[] row;
+        try {
+            row = (Object[]) entityManager.createNativeQuery("""
+                            select code.id, code.used_at, code_set.revoked_at, login.id
+                            from identity.recovery_codes code
+                            join identity.recovery_code_sets code_set on code_set.id = code.recovery_code_set_id
+                            join identity.account_security_states security on security.account_id = code_set.account_id
+                            join identity.login_identities login on login.account_id = code_set.account_id
+                            join identity.auth_providers provider on provider.id = login.provider_id
+                            join identity.password_credentials credential on credential.login_identity_id = login.id
+                            where code_set.account_id = :accountId and code.code_digest = :digest
+                              and code_set.purpose = 'ACCOUNT_RECOVERY' and provider.code = 'PASSWORD'
+                            for update of code, code_set, security, credential
+                            """)
+                    .setParameter("accountId", consumption.accountId())
+                    .setParameter("digest", consumption.codeDigest())
+                    .getSingleResult();
+        } catch (NoResultException exception) {
+            return RecoveryCodeOutcome.NOT_FOUND;
+        }
+        UUID codeId = (UUID) row[0];
+        UUID loginId = (UUID) row[3];
+        OffsetDateTime now = utc(consumption.consumedAt());
+        if (row[2] != null) {
+            recordRecoveryCodeRejection(consumption, loginId, "REVOKED", now);
+            return RecoveryCodeOutcome.REVOKED;
+        }
+        if (row[1] != null) {
+            recordRecoveryCodeRejection(consumption, loginId, "ALREADY_USED", now);
+            return RecoveryCodeOutcome.ALREADY_USED;
+        }
+        entityManager.createNativeQuery("update identity.recovery_codes set used_at = :now where id = :id")
+                .setParameter("now", now)
+                .setParameter("id", codeId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.password_credentials
+                        set password_hash = :hash, hash_scheme = :scheme,
+                            hash_parameters = cast(:parameters as jsonb),
+                            credential_version = credential_version + 1,
+                            password_changed_at = :now, compromised_at = null
+                        where login_identity_id = :loginId
+                        """)
+                .setParameter("hash", consumption.passwordHash().encodedHash())
+                .setParameter("scheme", consumption.passwordHash().scheme())
+                .setParameter("parameters", consumption.passwordHash().parametersJson())
+                .setParameter("now", now)
+                .setParameter("loginId", loginId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.account_security_states
+                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        where account_id = :accountId
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", consumption.accountId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.sessions set revoked_at = :now, revoke_reason_code = 'RECOVERY_CODE_USED'
+                        where account_id = :accountId and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", consumption.accountId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.password_reset_requests set revoked_at = :now
+                        where account_id = :accountId and consumed_at is null and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", consumption.accountId())
+                .executeUpdate();
+        insertAuthenticationEvent(
+                consumption.accountId(),
+                "ACCOUNT_RECOVERED",
+                loginId,
+                "ACCOUNT",
+                "RECOVERY_CODE",
+                consumption.correlationId(),
+                "recovery-code-consumed:" + codeId,
+                now);
+        insertSecurityNotification(consumption.accountId(), "ACCOUNT_RECOVERED", consumption.correlationId(), now);
+        return RecoveryCodeOutcome.RECOVERED;
+    }
+
+    @Override
+    @Transactional
+    public void recordOidcRecoveryProof(
+            UUID accountId, UUID loginIdentityId, UUID correlationId, Instant verifiedAt) {
+        OffsetDateTime now = utc(verifiedAt);
+        Number linked = (Number) entityManager.createNativeQuery("""
+                        select count(*)
+                        from identity.login_identities login
+                        join identity.auth_providers provider on provider.id = login.provider_id
+                        where login.id = :loginId and login.account_id = :accountId
+                          and login.status = cast('ACTIVE' as identity.login_identity_status)
+                          and provider.provider_type = cast('OIDC' as identity.auth_provider_type)
+                          and provider.is_active = true
+                        """)
+                .setParameter("loginId", loginIdentityId)
+                .setParameter("accountId", accountId)
+                .getSingleResult();
+        if (linked.intValue() != 1) {
+            throw new AuthenticationRejectedException("OIDC identity is not linked");
+        }
+        insertAuthenticationEvent(
+                accountId,
+                "ACCOUNT_RECOVERY_PROOF_VERIFIED",
+                loginIdentityId,
+                "ACCOUNT",
+                "LINKED_OIDC",
+                correlationId,
+                "oidc-recovery-proof:" + correlationId,
+                now);
+        insertSecurityNotification(accountId, "ACCOUNT_RECOVERY_PROOF_VERIFIED", correlationId, now);
+    }
+
+    private void recordRecoveryCodeRejection(
+            RecoveryCodeConsumption consumption, UUID loginId, String reason, OffsetDateTime now) {
+        insertAuthenticationEvent(
+                consumption.accountId(),
+                "ACCOUNT_RECOVERY_REJECTED",
+                loginId,
+                "ACCOUNT",
+                reason,
+                consumption.correlationId(),
+                "recovery-code-rejected:" + consumption.correlationId(),
+                now);
+    }
+
+    private void recordPasswordResetRejection(
+            UUID accountId,
+            UUID loginId,
+            PasswordResetConsumption consumption,
+            String reason,
+            OffsetDateTime now) {
+        insertAuthenticationEvent(
+                accountId,
+                "PASSWORD_RESET_REJECTED",
+                loginId,
+                "ACCOUNT",
+                reason,
+                consumption.correlationId(),
+                "password-reset-rejected:" + consumption.correlationId(),
+                now);
+    }
+
+    private void insertSecurityNotification(
+            UUID accountId, String notificationType, UUID correlationId, OffsetDateTime now) {
+        entityManager.createNativeQuery("""
+                        insert into operations.notifications
+                            (id, account_id, notification_type, mandatory, locale, template_version,
+                             payload_document, idempotency_key, created_at)
+                        values (gen_random_uuid(), :accountId, :type, true, 'en-US', 'v1',
+                                jsonb_build_object('correlationId', cast(:correlationId as text)),
+                                :idempotencyKey, :now)
+                        on conflict (idempotency_key) do nothing
+                        """)
+                .setParameter("accountId", accountId)
+                .setParameter("type", notificationType)
+                .setParameter("correlationId", correlationId)
+                .setParameter("idempotencyKey", "security:" + notificationType + ":" + correlationId)
+                .setParameter("now", now)
+                .executeUpdate();
     }
 
     private void insertAuthenticationTransitionEvent(ActivateOidcLink command, OffsetDateTime occurredAt) {

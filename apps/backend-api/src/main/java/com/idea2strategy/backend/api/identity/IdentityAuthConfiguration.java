@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
 import com.idea2strategy.backend.application.identity.EmailRegistrationService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
+import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
 import java.time.Duration;
 import com.idea2strategy.backend.persistence.identity.IdentityAccountJpaEntity;
@@ -55,8 +56,46 @@ public class IdentityAuthConfiguration {
     }
 
     @Bean
+    HmacPasswordRecoveryTokens passwordRecoveryTokens(
+            @Value("${identity.crypto.recovery-hmac-key:${identity.crypto.verification-hmac-key}}") String key) {
+        return new HmacPasswordRecoveryTokens(decode(key));
+    }
+
+    @Bean
     VerificationDeliveryPort verificationDeliveryPort(ApplicationEventPublisher publisher) {
         return new ApplicationEventVerificationDelivery(publisher);
+    }
+
+    @Bean
+    PasswordResetDeliveryPort passwordResetDeliveryPort(ApplicationEventPublisher publisher) {
+        return new ApplicationEventPasswordResetDelivery(publisher);
+    }
+
+    @Bean
+    PasswordRecoveryService passwordRecoveryService(
+            IdentityJooqQueryAdapter queries,
+            IdentityJpaCommandAdapter commands,
+            AesGcmEmailProtector emailProtector,
+            Pbkdf2PasswordCodec passwordCodec,
+            HmacPasswordRecoveryTokens recoveryTokens,
+            Clock identityClock,
+            @Value("${identity.recovery.reset-lifetime:PT30M}") Duration resetLifetime,
+            @Value("${identity.recovery.code-count:10}") int recoveryCodeCount) {
+        return new PasswordRecoveryService(
+                queries,
+                commands,
+                emailProtector,
+                new NistPasswordPolicy(List.of(
+                        "passwordpassword",
+                        "password123456",
+                        "123456789012345",
+                        "qwertyuiopasdfg")),
+                passwordCodec,
+                recoveryTokens,
+                recoveryTokens,
+                identityClock,
+                resetLifetime,
+                recoveryCodeCount);
     }
 
     @Bean
