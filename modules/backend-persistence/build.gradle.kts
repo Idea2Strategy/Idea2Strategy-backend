@@ -25,3 +25,10 @@ sourceSets {
         resources.srcDir(project(":db-migration").file("src/main/resources"))
     }
 }
+
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
