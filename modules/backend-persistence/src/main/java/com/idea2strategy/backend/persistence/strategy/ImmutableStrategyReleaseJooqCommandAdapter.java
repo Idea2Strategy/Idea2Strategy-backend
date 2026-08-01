@@ -95,13 +95,14 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 "insert into bot.bots "
                         + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, created_at, "
                         + "execution_eligible_from, edit_sequence, updated_at) "
-                        + "values (?, ?, ?::strategy.strategy_mode, ?, ?::bot.lifecycle_status, ?, ?, ?, 0, ?)",
+                        + "values (?, ?, ?::strategy.strategy_mode, ?, ?::bot.lifecycle_status, "
+                        + "?::timestamptz, ?::timestamptz, ?::timestamptz, 0, ?::timestamptz)",
                 release.botId(), release.ownerAccountId(), "BASIC", release.name(), "RUNNING", at, at, at, at);
         dsl.execute(
                 "insert into bot.launch_snapshots "
                         + "(bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, semantic_hash, "
                         + "presentation_hash, snapshot_hash, created_at) "
-                        + "values (?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)",
+                        + "values (?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?::timestamptz)",
                 release.botId(), "basic-launch-snapshot.v1", release.semanticSnapshot(),
                 release.presentationSnapshot(), release.semanticHash(), release.presentationHash(),
                 release.snapshotHash(), at);
@@ -121,7 +122,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 "insert into bot.bot_partitions "
                         + "(id, bot_id, name, description, budget_cap_bps, position_x, position_y, "
                         + "configuration_hash, edit_sequence, created_at, updated_at) "
-                        + "values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                        + "values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?::timestamptz, ?::timestamptz)",
                 partition.id(), release.botId(), partition.name(), partition.description(), partition.budgetCapBps(),
                 BigDecimal.ZERO, BigDecimal.ZERO, partition.configurationHash(), at, at);
 
@@ -132,7 +133,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                             + "(id, partition_id, name, element_catalog_version_id, compiled_flow_plan_id, "
                             + "position_x, position_y, semantic_document, layout_document, layout_schema_version, "
                             + "semantic_hash, layout_hash, configuration_hash, edit_sequence, created_at, updated_at) "
-                            + "values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, 0, ?, ?)",
+                            + "values (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, 0, "
+                            + "?::timestamptz, ?::timestamptz)",
                     flow.id(), partition.id(), flow.name(), flow.elementCatalogVersionId(), flow.compiledFlowPlanId(),
                     x, BigDecimal.ZERO, flow.semanticDocument(), flow.layoutDocument(), "basic-flow-layout.v1",
                     flow.semanticHash(), flow.layoutHash(), flow.configurationHash(), at, at);
