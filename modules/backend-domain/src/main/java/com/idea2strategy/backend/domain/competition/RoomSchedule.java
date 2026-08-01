@@ -20,8 +20,8 @@ public record RoomSchedule(
         Objects.requireNonNull(evaluationEndsAt, "evaluationEndsAt");
         Objects.requireNonNull(finalizationDeadlineAt, "finalizationDeadlineAt");
         Objects.requireNonNull(timezoneName, "timezoneName");
-        if (timezoneName.isBlank()) {
-            throw new IllegalArgumentException("timezoneName must not be blank");
+        if (timezoneName.isBlank() || timezoneName.length() > 80) {
+            throw new IllegalArgumentException("timezoneName must contain 1..80 characters");
         }
         if (recruitmentOpensAt.isAfter(participationOpensAt)) {
             throw new IllegalArgumentException("recruitment must open before participation");
