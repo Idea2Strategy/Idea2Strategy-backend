@@ -1,0 +1,15 @@
+plugins {
+    application
+}
+
+dependencies {
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    implementation("com.fasterxml.jackson.core:jackson-databind")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+application {
+    applicationName = "idea2strategy"
+    mainClass = "com.idea2strategy.cli.Idea2StrategyCli"
+}
