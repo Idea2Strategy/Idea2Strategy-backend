@@ -22,10 +22,12 @@ class CentralFlywayIntegrationTest {
                 .locations("classpath:db/migration")
                 .load();
 
+        int pendingBeforeMigration = flyway.info().pending().length;
         var first = flyway.migrate();
         var second = flyway.migrate();
 
-        assertEquals(1, first.migrationsExecuted);
+        assertTrue(pendingBeforeMigration > 0);
+        assertEquals(pendingBeforeMigration, first.migrationsExecuted);
         assertEquals(0, second.migrationsExecuted);
         assertTrue(flyway.validateWithResult().validationSuccessful);
     }
