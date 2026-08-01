@@ -1,9 +1,14 @@
 package com.idea2strategy.backend.persistence.strategy;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandPort;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
+import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -13,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStrategyReleaseCommandPort {
     private final DSLContext dsl;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ImmutableStrategyReleaseJooqCommandAdapter(DSLContext dsl) {
         this.dsl = dsl;
@@ -22,9 +28,13 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
     @Transactional
     public ImmutableStrategyRelease saveOnce(
             ImmutableStrategyRelease release,
+            OfficialBacktestRequest backtestRequest,
             UUID validationRunId,
             long validatedEditSequence,
             String validatedSemanticHash) {
+        dsl.fetchOne(
+                "select pg_advisory_xact_lock(hashtextextended(?::text, 0))",
+                release.botId());
         var existing = dsl.fetchOne(
                 "select s.snapshot_hash, b.owner_account_id from bot.launch_snapshots s "
                         + "join bot.bots b on b.id = s.bot_id where s.bot_id = ?",
@@ -37,6 +47,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 throw new ImmutableStrategyReleaseRejectedException(
                         "Release id is already bound to different immutable content");
             }
+            saveOfficialBacktestOnce(release, backtestRequest);
             return release;
         }
 
@@ -155,6 +166,85 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                         flow.id(), requirement.instrumentId(), requirement.featureDefinitionId());
             }
         }
+        saveOfficialBacktestOnce(release, backtestRequest);
         return release;
+    }
+
+    private void saveOfficialBacktestOnce(
+            ImmutableStrategyRelease release,
+            OfficialBacktestRequest request) {
+        if (!release.botId().equals(request.botId())
+                || !request.expectedSnapshotHash().equals("sha256:" + release.snapshotHash())
+                || !request.assumptionsVersion().equals(release.launchConfiguration().accountingRulesVersion())) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest request does not match the immutable release");
+        }
+
+        String idempotencyKey = request.metadata().idempotencyKey();
+        boolean runExists = dsl.fetchOne(
+                "select 1 from backtest.runs where idempotency_key = ?", idempotencyKey) != null;
+        boolean outboxExists = dsl.fetchOne(
+                "select 1 from operations.outbox_messages where idempotency_key = ?", idempotencyKey) != null;
+        if (runExists && outboxExists) {
+            return;
+        }
+
+        var dataset = dsl.fetchOne(
+                "select period_start, period_end from market_data.dataset_manifests "
+                        + "where id = ? and status = 'AVAILABLE' and available_at is not null "
+                        + "and available_at <= ?::timestamptz for share",
+                request.datasetManifestId(), release.releasedAt().atOffset(ZoneOffset.UTC));
+        if (dataset == null) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest dataset must be available at the release instant");
+        }
+        OffsetDateTime periodStart = dataset.get("period_start", OffsetDateTime.class);
+        OffsetDateTime periodEnd = dataset.get("period_end", OffsetDateTime.class);
+        var config = release.launchConfiguration();
+        var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
+
+        dsl.execute(
+                "insert into backtest.runs "
+                        + "(id, bot_id, owner_account_id, configuration_hash, status, evaluation_start, "
+                        + "evaluation_end, initial_cash_amount, market_rules_version, accounting_rules_version, "
+                        + "precision_rules_version, fee_policy_id, slippage_rate_bps, "
+                        + "buying_power_buffer_policy_id, idempotency_key, queued_at) "
+                        + "values (?, ?, ?, ?, 'QUEUED', ?::date, ?::date, ?, ?, ?, ?, ?, 5, ?, ?, "
+                        + "?::timestamptz) on conflict (idempotency_key) do nothing",
+                request.runId(), release.botId(), release.ownerAccountId(), config.configurationHash(),
+                periodStart.toLocalDate(), periodEnd.toLocalDate(), config.initialCashAmount(),
+                config.brokerRulesVersion(), config.accountingRulesVersion(), config.precisionRulesVersion(),
+                config.feePolicyId(), config.buyingPowerBufferPolicyId(), idempotencyKey, queuedAt);
+
+        dsl.execute(
+                "insert into operations.outbox_messages "
+                        + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
+                        + "payload_document, idempotency_key, created_at) "
+                        + "values (?, 'strategy-bot', ?, 1, ?, ?, ?::jsonb, ?, ?::timestamptz) "
+                        + "on conflict (idempotency_key) do nothing",
+                request.metadata().messageId(), release.botId(), request.metadata().messageType(),
+                request.metadata().contractVersion(), payloadDocument(request), idempotencyKey, queuedAt);
+    }
+
+    private String payloadDocument(OfficialBacktestRequest request) {
+        ObjectNode root = objectMapper.createObjectNode();
+        ObjectNode metadata = root.putObject("metadata");
+        metadata.put("contractVersion", request.metadata().contractVersion());
+        metadata.put("messageType", request.metadata().messageType());
+        metadata.put("messageId", request.metadata().messageId().toString());
+        metadata.put("occurredAt", request.metadata().occurredAt().toString());
+        metadata.put("correlationId", request.metadata().correlationId().toString());
+        metadata.put("idempotencyKey", request.metadata().idempotencyKey());
+        root.put("botId", request.botId().toString());
+        root.put("expectedSnapshotHash", request.expectedSnapshotHash());
+        root.put("compiledPlanChecksum", request.compiledPlanChecksum());
+        root.put("datasetManifestId", request.datasetManifestId().toString());
+        root.put("assumptionsVersion", request.assumptionsVersion());
+        root.put("requestReason", request.requestReason());
+        try {
+            return objectMapper.writeValueAsString(root);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Official backtest request could not be serialized", exception);
+        }
     }
 }
