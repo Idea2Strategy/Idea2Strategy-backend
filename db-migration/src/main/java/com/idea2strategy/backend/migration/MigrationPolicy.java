@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
@@ -19,7 +20,7 @@ import java.util.regex.Pattern;
 
 public final class MigrationPolicy {
     public static final String BASELINE_FILE = "V1__initial_schema.sql";
-    public static final String BASELINE_SHA256 = "79c9bb70d6ba517fad9f85dd5ad129a5d99da2253c4ecd42248bb1b03df6f80e";
+    public static final String BASELINE_SHA256 = "333a39cb2fe1bb01e93b487e29a50c27ec9b9937cbef952974f385a9af9707ce";
 
     private static final Pattern TIMESTAMP_MIGRATION = Pattern.compile(
             "^V(?<version>\\d{14})__(?<owner>[a-z]+)_(?<description>[a-z0-9]+(?:_[a-z0-9]+)*)\\.sql$");
@@ -82,7 +83,10 @@ public final class MigrationPolicy {
     }
 
     private static void verifyBaselineChecksum(Path baseline) throws IOException {
-        var actual = sha256(Files.readAllBytes(baseline));
+        var normalized = Files.readString(baseline, StandardCharsets.UTF_8)
+                .replace("\r\n", "\n")
+                .getBytes(StandardCharsets.UTF_8);
+        var actual = sha256(normalized);
         if (!BASELINE_SHA256.equals(actual)) {
             throw new IllegalArgumentException(
                     "Applied baseline must not change; expected " + BASELINE_SHA256 + ", actual " + actual);
