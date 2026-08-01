@@ -24,7 +24,8 @@ public class CompetitionRoomRulesJpaEntity {
     @Column(name = "initial_cash_amount", nullable = false, precision = 24, scale = 8)
     private BigDecimal initialCashAmount;
 
-    @Column(name = "currency_code", nullable = false, length = 3)
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "currency_code", nullable = false, length = 3, columnDefinition = "char(3)")
     private String currencyCode;
 
     @Column(name = "bot_participation_limit", nullable = false)
