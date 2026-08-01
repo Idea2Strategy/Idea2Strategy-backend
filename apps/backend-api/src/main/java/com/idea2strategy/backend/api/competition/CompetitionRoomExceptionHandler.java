@@ -1,13 +1,24 @@
 package com.idea2strategy.backend.api.competition;
 
 import com.idea2strategy.backend.application.competition.ScoringTemplateNotFoundException;
+import com.idea2strategy.backend.application.competition.OperatorAuthorizationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(assignableTypes = CompetitionRoomController.class)
+@RestControllerAdvice(assignableTypes = {
+    CompetitionRoomController.class,
+    OfficialCompetitionRoomController.class
+})
 public class CompetitionRoomExceptionHandler {
+    @ExceptionHandler(OperatorAuthorizationException.class)
+    ProblemDetail operatorRequired(OperatorAuthorizationException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
+        problem.setTitle("Platform operator authorization required");
+        return problem;
+    }
+
     @ExceptionHandler(ScoringTemplateNotFoundException.class)
     ProblemDetail templateNotFound(ScoringTemplateNotFoundException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());

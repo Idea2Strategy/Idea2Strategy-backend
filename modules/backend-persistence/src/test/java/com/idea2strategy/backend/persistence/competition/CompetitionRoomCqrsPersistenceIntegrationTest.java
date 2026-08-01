@@ -31,6 +31,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(classes = CompetitionRoomCqrsPersistenceIntegrationTest.TestApplication.class)
 class CompetitionRoomCqrsPersistenceIntegrationTest {
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
+    private static final UUID OPERATOR_ID = UUID.fromString("10000000-0000-4000-8000-000000000002");
     private static final UUID ROOM_ID = UUID.fromString("50000000-0000-4000-8000-000000000001");
     private static final UUID SCORING_VERSION_ID = UUID.fromString("51000000-0000-4000-8000-000000000001");
     private static final UUID FEE_POLICY_ID = UUID.fromString("52000000-0000-4000-8000-000000000001");
@@ -68,9 +69,18 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         jdbcTemplate.update("delete from trading.fee_policy_versions where id = ?", FEE_POLICY_ID);
         jdbcTemplate.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_POLICY_ID);
         jdbcTemplate.update("delete from identity.accounts where id = ?", OWNER_ID);
+        jdbcTemplate.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbcTemplate.update(
                 "insert into identity.accounts (id, lifecycle_status, status_changed_at) values (?, 'ACTIVE', ?)",
                 OWNER_ID,
+                CREATED_AT.atOffset(ZoneOffset.UTC));
+        jdbcTemplate.update(
+                "insert into operations.operator_accounts "
+                        + "(id, external_identity_key_hmac, status, mfa_enrolled_at, last_mfa_verified_at, created_at) "
+                        + "values (?, 'operator-e06', 'ACTIVE', ?, ?, ?)",
+                OPERATOR_ID,
+                CREATED_AT.atOffset(ZoneOffset.UTC),
+                CREATED_AT.atOffset(ZoneOffset.UTC),
                 CREATED_AT.atOffset(ZoneOffset.UTC));
         jdbcTemplate.update(
                 "insert into competition.scoring_template_versions "
@@ -164,6 +174,61 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from competition.rooms where id = ?", Integer.class, ROOM_ID))
                 .isZero();
+    }
+
+    @Test
+    void savedOfficialRoomPreservesOperatorAndLockedRuleSnapshot() {
+        var schedule = new RoomSchedule(
+                CREATED_AT.plusSeconds(60),
+                CREATED_AT.plusSeconds(120),
+                CREATED_AT.plusSeconds(240),
+                CREATED_AT.plusSeconds(180),
+                CREATED_AT.plusSeconds(300),
+                CREATED_AT.plusSeconds(360),
+                "UTC");
+        var room = CompetitionRoom.platformLive(
+                ROOM_ID,
+                OPERATOR_ID,
+                "Official August room",
+                RoomAccessType.PUBLIC,
+                SCORING_VERSION_ID,
+                new BigDecimal("100000.00000000"),
+                100,
+                1,
+                "{\"minimumAccountAgeDays\":30}",
+                "{\"market\":\"US\"}",
+                "{\"minimumTrades\":5}",
+                FEE_POLICY_ID,
+                BUFFER_POLICY_ID,
+                "precision-2026-08",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                new LiveRoomRules("COUNT_UNTIL_END", 3600, 5),
+                schedule,
+                CREATED_AT);
+
+        commandAdapter.save(room);
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "select created_by_operator_id from competition.rooms where id = ?",
+                        UUID.class,
+                        ROOM_ID))
+                .isEqualTo(OPERATOR_ID);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select organizer_type::text from competition.rooms where id = ?",
+                        String.class,
+                        ROOM_ID))
+                .isEqualTo("PLATFORM");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select precision_rules_version from competition.room_rules where room_id = ?",
+                        String.class,
+                        ROOM_ID))
+                .isEqualTo("precision-2026-08");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select locked_at from competition.room_rules where room_id = ?",
+                        java.time.OffsetDateTime.class,
+                        ROOM_ID)
+                .toInstant())
+                .isEqualTo(CREATED_AT);
     }
 
     @SpringBootConfiguration
