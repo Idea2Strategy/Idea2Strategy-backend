@@ -12,6 +12,7 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation(testFixtures(project(":modules:backend-application")))
+    testImplementation(project(":modules:backend-messaging"))
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.flywaydb:flyway-core")
     testImplementation("org.flywaydb:flyway-database-postgresql")
