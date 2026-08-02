@@ -7,6 +7,7 @@ import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQue
 import com.idea2strategy.backend.application.competition.InvalidLeaderboardCursorException;
 import com.idea2strategy.backend.application.competition.LeaderboardAccessException;
 import com.idea2strategy.backend.application.competition.LeaderboardAuthenticationException;
+import com.idea2strategy.backend.application.competition.RoomLeaderboardQuery;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -37,6 +38,8 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     private static final UUID SCORING_ID = id(6);
     private static final UUID OLD_SNAPSHOT_ID = id(7);
     private static final UUID SNAPSHOT_ID = id(8);
+    private static final UUID FEE_POLICY_ID = id(60);
+    private static final UUID BUFFER_POLICY_ID = id(61);
     private static final Instant CUTOFF = Instant.parse("2026-08-02T05:00:00Z");
 
     @Container
@@ -55,6 +58,9 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     private AnonymousLeaderboardJooqAdapter adapter;
 
     @Autowired
+    private RoomLeaderboardJooqAdapter roomLeaderboardAdapter;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     @BeforeEach
@@ -65,8 +71,13 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         jdbc.update("delete from competition.room_events");
         jdbc.update("delete from performance.bot_snapshots");
         jdbc.update("delete from competition.participations");
+        jdbc.update("delete from competition.live_room_rules where room_id in (?, ?, ?)", ROOM_ID, EMPTY_ROOM_ID, SECRET_ROOM_ID);
+        jdbc.update("delete from competition.room_rules where room_id in (?, ?, ?)", ROOM_ID, EMPTY_ROOM_ID, SECRET_ROOM_ID);
+        jdbc.update("delete from competition.room_schedules where room_id in (?, ?, ?)", ROOM_ID, EMPTY_ROOM_ID, SECRET_ROOM_ID);
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from bot.bots");
+        jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_POLICY_ID);
+        jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_POLICY_ID);
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
         jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id in (?, ?, ?)", VIEWER_ID, OTHER_ID, OUTSIDER_ID);
@@ -79,6 +90,20 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
                         + "(id, template_code, version, rules_document, rules_hash, published_at) "
                         + "values (?, 'TOTAL_RETURN', 'v21', '{}'::jsonb, 'scoring-e21', ?)",
                 SCORING_ID, CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC));
+        jdbc.update(
+                "insert into trading.fee_policy_versions "
+                        + "(id, policy_code, version, fee_rate_bps, calculation_rules_version, "
+                        + "rules_hash, effective_from, published_at) "
+                        + "values (?, 'E29', 'v1', 20, 'v1', 'e29-fee', ?, ?)",
+                FEE_POLICY_ID, CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC),
+                CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC));
+        jdbc.update(
+                "insert into trading.buying_power_buffer_policy_versions "
+                        + "(id, policy_code, version, buffer_bps, rounding_rules_version, "
+                        + "rules_hash, effective_from, published_at) "
+                        + "values (?, 'E29', 'v1', 0, 'v1', 'e29-buffer', ?, ?)",
+                BUFFER_POLICY_ID, CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC),
+                CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC));
         seedRoom(ROOM_ID, "PUBLIC");
         seedRoom(EMPTY_ROOM_ID, "PUBLIC");
         seedRoom(SECRET_ROOM_ID, "SECRET");
@@ -224,6 +249,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     void usesFrozenFinalSecretGrantsInsteadOfMutableParticipationStatus() {
         seedSnapshot(SECRET_ROOM_ID, id(40), "FINAL", CUTOFF);
         seedBotParticipation(SECRET_ROOM_ID, VIEWER_ID, id(41), id(42), "secret-member", "REGISTERED");
+        seedRoomDetails(SECRET_ROOM_ID);
         jdbc.update(
                 "insert into competition.room_final_access_grants "
                         + "(room_id, account_id, snapshot_id, eligibility_basis, granted_at) "
@@ -235,11 +261,17 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
                 .isEqualTo(id(40));
         assertThat(adapter.queryOwned(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
                 .isEqualTo(id(40));
+        assertThat(roomLeaderboardAdapter.queryRoomLeaderboard(new RoomLeaderboardQuery(
+                SECRET_ROOM_ID, VIEWER_ID, null, null, null, 10, null, null, 10)).room().roomId())
+                .isEqualTo(SECRET_ROOM_ID);
         assertThatThrownBy(() -> adapter.query(query(SECRET_ROOM_ID, null, null, null, 10)))
                 .isInstanceOf(LeaderboardAuthenticationException.class);
         assertThatThrownBy(() -> adapter.query(query(SECRET_ROOM_ID, OUTSIDER_ID, null, null, 10)))
                 .isInstanceOf(LeaderboardAccessException.class);
         assertThatThrownBy(() -> adapter.queryOwned(query(SECRET_ROOM_ID, OUTSIDER_ID, null, null, 10)))
+                .isInstanceOf(LeaderboardAccessException.class);
+        assertThatThrownBy(() -> roomLeaderboardAdapter.queryRoomLeaderboard(new RoomLeaderboardQuery(
+                        SECRET_ROOM_ID, OUTSIDER_ID, null, null, null, 10, null, null, 10)))
                 .isInstanceOf(LeaderboardAccessException.class);
         jdbc.update(
                 "update competition.participations set status = 'WITHDRAWN', withdrawn_at = ? where id = ?",
@@ -326,6 +358,33 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).rows()).isEmpty();
     }
 
+    @Test
+    void combinesRoomViewerAndBothLeaderboardBlocksOnOneFinalSnapshot() {
+        seedLeaderboard();
+        seedRoomDetails(ROOM_ID);
+
+        var result = roomLeaderboardAdapter.queryRoomLeaderboard(new RoomLeaderboardQuery(
+                ROOM_ID, VIEWER_ID, null, null, null, 10, null, null, 10));
+
+        assertThat(result.room())
+                .satisfies(room -> {
+                    assertThat(room.roomId()).isEqualTo(ROOM_ID);
+                    assertThat(room.status()).isEqualTo("ENDED");
+                    assertThat(room.scoringTemplateVersionId()).isEqualTo(SCORING_ID);
+                });
+        assertThat(result.leaderboard().snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.ownedBots().snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(result.leaderboard().rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("alpha", "beta", "gamma");
+        assertThat(result.ownedBots().rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("alpha", "gamma");
+        assertThat(result.viewerParticipations())
+                .extracting(state -> state.anonymousAlias())
+                .containsExactly("alpha", "gamma");
+    }
+
     private void seedLeaderboard() {
         seedSnapshot(ROOM_ID, OLD_SNAPSHOT_ID, "PUBLISHED", CUTOFF.minusSeconds(60));
         seedSnapshot(ROOM_ID, SNAPSHOT_ID, "FINAL", CUTOFF);
@@ -392,6 +451,36 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
                 CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC), CUTOFF.atOffset(ZoneOffset.UTC));
     }
 
+    private void seedRoomDetails(UUID roomId) {
+        var at = CUTOFF.atOffset(ZoneOffset.UTC);
+        jdbc.update(
+                "insert into competition.room_schedules "
+                        + "(room_id, recruitment_opens_at, participation_opens_at, evaluation_starts_at, "
+                        + "participation_closes_at, evaluation_ends_at, finalization_deadline_at, timezone_name) "
+                        + "values (?, ?, ?, ?, ?, ?, ?, 'UTC')",
+                roomId, CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC),
+                CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC),
+                CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC),
+                CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC), at,
+                CUTOFF.plusSeconds(3600).atOffset(ZoneOffset.UTC));
+        jdbc.update(
+                "insert into competition.room_rules "
+                        + "(room_id, scoring_template_version_id, initial_cash_amount, currency_code, "
+                        + "bot_participation_limit, per_account_bot_limit, eligibility_document, "
+                        + "market_scope_document, scoring_parameters, fee_policy_id, slippage_rate_bps, "
+                        + "buying_power_buffer_policy_id, precision_rules_version, rules_hash, locked_at) "
+                        + "values (?, ?, 100000, 'USD', 10, 3, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, "
+                        + "?, 5, ?, "
+                        + "'1.0', 'integrated-rules', ?)",
+                roomId, SCORING_ID, FEE_POLICY_ID, BUFFER_POLICY_ID,
+                CUTOFF.minusSeconds(7200).atOffset(ZoneOffset.UTC));
+        jdbc.update(
+                "insert into competition.live_room_rules "
+                        + "(room_id, stopped_bot_slot_policy, minimum_operation_seconds, minimum_fill_count) "
+                        + "values (?, 'COUNT_UNTIL_END', 0, 0)",
+                roomId);
+    }
+
     private void seedSnapshot(UUID roomId, UUID snapshotId, String status, Instant cutoff) {
         jdbc.update(
                 "insert into competition.leaderboard_snapshots "
@@ -418,6 +507,6 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import(AnonymousLeaderboardJooqAdapter.class)
+    @Import({AnonymousLeaderboardJooqAdapter.class, RoomLeaderboardJooqAdapter.class})
     static class TestApplication {}
 }
