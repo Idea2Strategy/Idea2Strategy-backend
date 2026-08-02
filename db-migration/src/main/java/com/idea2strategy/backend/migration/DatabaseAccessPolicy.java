@@ -18,8 +18,13 @@ public final class DatabaseAccessPolicy {
             "\"?(?<schema>[a-z_][a-z0-9_]*)\"?\\s*\\.\\s*\"?(?<table>[a-z_][a-z0-9_]*)\"?";
     private static final List<Pattern> MUTATION_TARGETS = List.of(
             Pattern.compile(
-                    "(?is)\\b(?:CREATE\\s+TABLE|ALTER\\s+TABLE|INSERT\\s+INTO|UPDATE|DELETE\\s+FROM|"
-                            + "TRUNCATE(?:\\s+TABLE)?)\\s+(?:ONLY\\s+)?"
+                    "(?is)\\b(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM|TRUNCATE(?:\\s+TABLE)?)\\s+(?:ONLY\\s+)?"
+                            + QUALIFIED_TABLE),
+            Pattern.compile(
+                    "(?is)\\b(?:CREATE(?:\\s+OR\\s+REPLACE)?|ALTER|DROP)\\s+"
+                            + "(?:MATERIALIZED\\s+)?(?:TABLE|VIEW|TYPE|SEQUENCE)\\s+"
+                            + "(?:IF\\s+(?:NOT\\s+)?EXISTS\\s+)?"
+                            + "(?:ONLY\\s+)?"
                             + QUALIFIED_TABLE),
             Pattern.compile(
                     "(?is)\\bCREATE\\s+(?:UNIQUE\\s+)?INDEX\\b.*?\\bON\\s+" + QUALIFIED_TABLE));
@@ -77,10 +82,19 @@ public final class DatabaseAccessPolicy {
     }
 
     public static void verifyMigrationOwnership(MigrationOwner declaredOwner, String migrationSql) {
+        verifyMigrationOwnership(declaredOwner, null, migrationSql);
+    }
+
+    public static void verifyMigrationOwnership(
+            MigrationOwner declaredOwner, Set<String> declaredSchemas, String migrationSql) {
         for (var targetPattern : MUTATION_TARGETS) {
             var matcher = targetPattern.matcher(migrationSql);
             while (matcher.find()) {
                 var table = new QualifiedTable(matcher.group("schema"), matcher.group("table"));
+                if (declaredSchemas != null && !declaredSchemas.contains(table.schema())) {
+                    throw new IllegalArgumentException(
+                            "Migration mutates schema outside its contribution contract: " + table.schema());
+                }
                 var actualOwner = ownerFor(table);
                 if (actualOwner != declaredOwner) {
                     throw new IllegalArgumentException(

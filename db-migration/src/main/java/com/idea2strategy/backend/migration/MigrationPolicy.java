@@ -68,11 +68,7 @@ public final class MigrationPolicy {
             if (BASELINE_FILE.equals(fileName)) {
                 continue;
             }
-            var matcher = TIMESTAMP_MIGRATION.matcher(fileName);
-            if (!matcher.matches()) {
-                throw new IllegalArgumentException(
-                        "Post-baseline migration must use VyyyyMMddHHmmss__owner_description.sql: " + fileName);
-            }
+            var matcher = timestampMatcher(fileName);
 
             var version = matcher.group("version");
             try {
@@ -92,6 +88,19 @@ public final class MigrationPolicy {
         result.add(BASELINE_FILE);
         ordered.stream().map(OwnedMigration::fileName).forEach(result::add);
         return new MigrationPlan(result);
+    }
+
+    static MigrationOwner ownerFromFileName(String fileName) {
+        return MigrationOwner.fromKey(timestampMatcher(fileName).group("owner"));
+    }
+
+    private static java.util.regex.Matcher timestampMatcher(String fileName) {
+        var matcher = TIMESTAMP_MIGRATION.matcher(fileName);
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException(
+                    "Post-baseline migration must use VyyyyMMddHHmmss__owner_description.sql: " + fileName);
+        }
+        return matcher;
     }
 
     private static void verifyBaselineChecksum(Path baseline) throws IOException {

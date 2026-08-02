@@ -116,4 +116,27 @@ class DatabaseAccessPolicyTest {
                 MigrationOwner.BACKEND,
                 "INSERT INTO identity.auth_providers (id, code) VALUES (1, 'PASSWORD')");
     }
+
+    @Test
+    void enforcesOwnershipForTypesAndDestructiveSchemaObjects() {
+        DatabaseAccessPolicy.verifyMigrationOwnership(
+                MigrationOwner.TRADING,
+                "ALTER TYPE trading.reservation_event_type ADD VALUE 'PARTIALLY_CONSUMED'");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DatabaseAccessPolicy.verifyMigrationOwnership(
+                        MigrationOwner.PIPELINE,
+                        "ALTER TYPE trading.reservation_event_type ADD VALUE 'UNSAFE'"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DatabaseAccessPolicy.verifyMigrationOwnership(
+                        MigrationOwner.BACKEND,
+                        "DROP TABLE IF EXISTS trading.orders"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> DatabaseAccessPolicy.verifyMigrationOwnership(
+                        MigrationOwner.TRADING,
+                        "DROP VIEW IF EXISTS identity.active_accounts"));
+    }
 }
