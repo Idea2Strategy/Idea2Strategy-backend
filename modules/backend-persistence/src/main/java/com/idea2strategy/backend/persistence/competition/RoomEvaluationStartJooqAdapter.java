@@ -23,6 +23,7 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
     private static final String COMMAND_TYPE = "ROOM_EVALUATION_START_COMMAND";
     private static final String START_EVALUATION = "START_EVALUATION";
     private static final String SCHEDULE_VERSION = "room-schedule.v1";
+    private static final String LIVE_EVALUATION_INPUT_VERSION = "live-evaluation-input.v1";
     private static final String INITIAL_STATE_VERSION = "live-evaluation-initial-state.v1";
     private final DSLContext dsl;
 
@@ -37,10 +38,21 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
         var candidates = dsl.fetch(
                 "select p.id as participation_id, p.room_id, p.bot_id, r.competition_type::text, "
                         + "b.lifecycle_status::text as lifecycle_status, b.started_at, b.execution_eligible_from, "
-                        + "rr.initial_cash_amount as room_initial_cash, rr.fee_policy_id as room_fee_policy_id, "
+                        + "rr.initial_cash_amount as room_initial_cash, rr.currency_code as room_currency_code, "
+                        + "rr.fee_policy_id as room_fee_policy_id, "
                         + "rr.buying_power_buffer_policy_id as room_buffer_policy_id, "
                         + "rr.precision_rules_version as room_precision_rules_version, rr.slippage_rate_bps, "
-                        + "rr.rules_hash, rs.evaluation_starts_at, rs.evaluation_ends_at, "
+                        + "rr.rules_hash, rr.scoring_template_version_id, "
+                        + "rr.scoring_parameters::text as scoring_parameters, "
+                        + "stv.template_code as scoring_template_code, stv.version as scoring_template_version, "
+                        + "stv.rules_hash as scoring_template_rules_hash, "
+                        + "fp.policy_code as fee_policy_code, fp.version as fee_policy_version, "
+                        + "fp.fee_rate_bps, fp.calculation_rules_version as fee_calculation_rules_version, "
+                        + "fp.rules_hash as fee_policy_rules_hash, "
+                        + "bp.policy_code as buffer_policy_code, bp.version as buffer_policy_version, "
+                        + "bp.buffer_bps, bp.rounding_rules_version as buffer_rounding_rules_version, "
+                        + "bp.rules_hash as buffer_policy_rules_hash, "
+                        + "rs.evaluation_starts_at, rs.evaluation_ends_at, "
                         + "lc.initial_cash_amount as launch_initial_cash, lc.currency_code, "
                         + "lc.fee_policy_id as launch_fee_policy_id, "
                         + "lc.buying_power_buffer_policy_id as launch_buffer_policy_id, "
@@ -50,6 +62,10 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                         + "join competition.rooms r on r.id = p.room_id "
                         + "join competition.room_schedules rs on rs.room_id = r.id "
                         + "join competition.room_rules rr on rr.room_id = r.id "
+                        + "join competition.scoring_template_versions stv on stv.id = rr.scoring_template_version_id "
+                        + "join trading.fee_policy_versions fp on fp.id = rr.fee_policy_id "
+                        + "join trading.buying_power_buffer_policy_versions bp "
+                        + "on bp.id = rr.buying_power_buffer_policy_id "
                         + "join bot.bots b on b.id = p.bot_id "
                         + "join bot.launch_configurations lc on lc.bot_id = b.id "
                         + "join bot.launch_snapshots s on s.bot_id = b.id "
@@ -72,6 +88,12 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
         UUID roomId = candidate.get("room_id", UUID.class);
         UUID botId = candidate.get("bot_id", UUID.class);
         validateCandidate(candidate, botId);
+        boolean live = "LIVE_PAPER".equals(candidate.get("competition_type", String.class));
+        String liveEvaluationInputHash = null;
+        if (live) {
+            liveEvaluationInputHash = liveEvaluationInputHash(candidate, roomId);
+            validateRoomInputHash(roomId, liveEvaluationInputHash);
+        }
 
         String idempotencyKey = "room-evaluation-start:" + participationId;
         UUID botEventId = derivedId("bot-event", participationId);
@@ -87,9 +109,9 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                 observedAt, observedAt, roomId, participationId);
 
         UUID evaluationSegmentId;
-        if ("LIVE_PAPER".equals(candidate.get("competition_type", String.class))) {
+        if (live) {
             evaluationSegmentId = insertLiveEvaluationSegment(
-                    candidate, participationId, roomId, botId, botEventSequence);
+                    candidate, participationId, roomId, botId, botEventSequence, liveEvaluationInputHash);
         } else {
             evaluationSegmentId = derivedId("backtest-evaluation-segment.v1", participationId);
         }
@@ -131,13 +153,26 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                 officialStartsAt, participationId);
 
         int participationEventSequence = nextParticipationEventSequence(participationId);
-        dsl.execute(
-                "insert into competition.participation_events "
-                        + "(id, participation_id, event_sequence, event_type, occurred_at, payload_document) "
-                        + "values (?, ?, ?, 'EVALUATION_STARTED', ?::timestamptz, "
-                        + "jsonb_build_object('roomId', ?::text, 'botId', ?::text, 'initialCashAmount', ?::text))",
-                derivedId("participation-event", participationId), participationId, participationEventSequence,
-                observedAt, roomId, botId, initialCash.toPlainString());
+        if (live) {
+            dsl.execute(
+                    "insert into competition.participation_events "
+                            + "(id, participation_id, event_sequence, event_type, occurred_at, payload_document) "
+                            + "values (?, ?, ?, 'EVALUATION_STARTED', ?::timestamptz, "
+                            + "jsonb_build_object('roomId', ?::text, 'botId', ?::text, "
+                            + "'initialCashAmount', ?::text, 'liveEvaluationInputVersion', ?, "
+                            + "'liveEvaluationInputHash', ?))",
+                    derivedId("participation-event", participationId), participationId, participationEventSequence,
+                    observedAt, roomId, botId, initialCash.toPlainString(),
+                    LIVE_EVALUATION_INPUT_VERSION, liveEvaluationInputHash);
+        } else {
+            dsl.execute(
+                    "insert into competition.participation_events "
+                            + "(id, participation_id, event_sequence, event_type, occurred_at, payload_document) "
+                            + "values (?, ?, ?, 'EVALUATION_STARTED', ?::timestamptz, "
+                            + "jsonb_build_object('roomId', ?::text, 'botId', ?::text, 'initialCashAmount', ?::text))",
+                    derivedId("participation-event", participationId), participationId, participationEventSequence,
+                    observedAt, roomId, botId, initialCash.toPlainString());
+        }
         insertStartCommand(
                 candidate, participationId, roomId, botId, evaluationSegmentId,
                 observedAt);
@@ -148,7 +183,8 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             UUID participationId,
             UUID roomId,
             UUID botId,
-            long startEventSequence) {
+            long startEventSequence,
+            String liveEvaluationInputHash) {
         UUID segmentId = derivedId("live-evaluation-segment.v1", participationId);
         OffsetDateTime startsAt = candidate.get("evaluation_starts_at", OffsetDateTime.class);
         OffsetDateTime endsAt = candidate.get("evaluation_ends_at", OffsetDateTime.class);
@@ -156,7 +192,8 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             throw new IllegalStateException("Live evaluation segment must have a non-empty schedule window");
         }
         String initialStateHash = initialStateHash(
-                candidate, segmentId, participationId, roomId, botId, startsAt, endsAt, startEventSequence);
+                candidate, segmentId, participationId, roomId, botId, startEventSequence,
+                liveEvaluationInputHash);
         dsl.execute(
                 "insert into competition.live_evaluation_segments "
                         + "(id, participation_id, segment_type, starts_at, ends_at, start_event_sequence, "
@@ -173,7 +210,8 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
         }
         if (!candidate.get("room_initial_cash", BigDecimal.class)
                         .equals(candidate.get("launch_initial_cash", BigDecimal.class))
-                || !"USD".equals(candidate.get("currency_code", String.class).trim())
+                || !candidate.get("room_currency_code", String.class).trim()
+                        .equals(candidate.get("currency_code", String.class).trim())
                 || !candidate.get("room_fee_policy_id", UUID.class)
                         .equals(candidate.get("launch_fee_policy_id", UUID.class))
                 || !candidate.get("room_buffer_policy_id", UUID.class)
@@ -276,9 +314,8 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             UUID participationId,
             UUID roomId,
             UUID botId,
-            OffsetDateTime startsAt,
-            OffsetDateTime endsAt,
-            long startEventSequence) {
+            long startEventSequence,
+            String liveEvaluationInputHash) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digestField(digest, "stateVersion", INITIAL_STATE_VERSION);
@@ -286,33 +323,75 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             digestField(digest, "participationId", participationId.toString());
             digestField(digest, "roomId", roomId.toString());
             digestField(digest, "botId", botId.toString());
-            digestField(digest, "scheduleVersion", SCHEDULE_VERSION);
-            digestField(digest, "startsAt", startsAt.toInstant().toString());
-            digestField(digest, "endsAt", endsAt.toInstant().toString());
             digestField(digest, "startEventSequence", Long.toString(startEventSequence));
-            digestField(
-                    digest,
-                    "initialCashAmount",
-                    candidate.get("room_initial_cash", BigDecimal.class).toPlainString());
-            digestField(digest, "currencyCode", "USD");
-            digestField(digest, "rulesHash", candidate.get("rules_hash", String.class));
+            digestField(digest, "liveEvaluationInputHash", liveEvaluationInputHash);
             digestField(digest, "snapshotHash", candidate.get("snapshot_hash", String.class));
-            digestField(digest, "feePolicyId", candidate.get("room_fee_policy_id", UUID.class).toString());
-            digestField(
-                    digest,
-                    "buyingPowerBufferPolicyId",
-                    candidate.get("room_buffer_policy_id", UUID.class).toString());
-            digestField(
-                    digest,
-                    "precisionRulesVersion",
-                    candidate.get("room_precision_rules_version", String.class));
-            digestField(
-                    digest,
-                    "slippageRateBps",
-                    candidate.get("slippage_rate_bps", Integer.class).toString());
             return "sha256:" + HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private String liveEvaluationInputHash(Record candidate, UUID roomId) {
+        if (!"LIVE_PAPER".equals(candidate.get("competition_type", String.class))) {
+            throw new IllegalStateException("Official live evaluation input requires a LIVE_PAPER room");
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digestField(digest, "inputVersion", LIVE_EVALUATION_INPUT_VERSION);
+            digestField(digest, "roomId", roomId.toString());
+            digestField(digest, "evaluationStartsAt",
+                    candidate.get("evaluation_starts_at", OffsetDateTime.class).toInstant().toString());
+            digestField(digest, "evaluationEndsAt",
+                    candidate.get("evaluation_ends_at", OffsetDateTime.class).toInstant().toString());
+            digestField(digest, "currencyCode", candidate.get("room_currency_code", String.class).trim());
+            digestField(digest, "initialCashAmount",
+                    candidate.get("room_initial_cash", BigDecimal.class).toPlainString());
+            digestField(digest, "feePolicyId", candidate.get("room_fee_policy_id", UUID.class).toString());
+            digestField(digest, "feePolicyCode", candidate.get("fee_policy_code", String.class));
+            digestField(digest, "feePolicyVersion", candidate.get("fee_policy_version", String.class));
+            digestField(digest, "feeRateBps", candidate.get("fee_rate_bps", Integer.class).toString());
+            digestField(digest, "feeCalculationRulesVersion",
+                    candidate.get("fee_calculation_rules_version", String.class));
+            digestField(digest, "feePolicyRulesHash", candidate.get("fee_policy_rules_hash", String.class));
+            digestField(digest, "slippageRateBps", candidate.get("slippage_rate_bps", Integer.class).toString());
+            digestField(digest, "buyingPowerBufferPolicyId",
+                    candidate.get("room_buffer_policy_id", UUID.class).toString());
+            digestField(digest, "buyingPowerBufferPolicyCode",
+                    candidate.get("buffer_policy_code", String.class));
+            digestField(digest, "buyingPowerBufferPolicyVersion",
+                    candidate.get("buffer_policy_version", String.class));
+            digestField(digest, "buyingPowerBufferBps", candidate.get("buffer_bps", Integer.class).toString());
+            digestField(digest, "buyingPowerBufferRoundingRulesVersion",
+                    candidate.get("buffer_rounding_rules_version", String.class));
+            digestField(digest, "buyingPowerBufferRulesHash",
+                    candidate.get("buffer_policy_rules_hash", String.class));
+            digestField(digest, "precisionRulesVersion",
+                    candidate.get("room_precision_rules_version", String.class));
+            digestField(digest, "scoringTemplateVersionId",
+                    candidate.get("scoring_template_version_id", UUID.class).toString());
+            digestField(digest, "scoringTemplateCode", candidate.get("scoring_template_code", String.class));
+            digestField(digest, "scoringTemplateVersion", candidate.get("scoring_template_version", String.class));
+            digestField(digest, "scoringTemplateRulesHash",
+                    candidate.get("scoring_template_rules_hash", String.class));
+            digestField(digest, "scoringParameters", candidate.get("scoring_parameters", String.class));
+            digestField(digest, "roomRulesHash", candidate.get("rules_hash", String.class));
+            return "sha256:" + HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private void validateRoomInputHash(UUID roomId, String inputHash) {
+        var hashes = dsl.fetch(
+                "select distinct pe.payload_document ->> 'liveEvaluationInputHash' as input_hash "
+                        + "from competition.participation_events pe "
+                        + "join competition.participations p on p.id = pe.participation_id "
+                        + "where p.room_id = ? and pe.event_type = 'EVALUATION_STARTED' "
+                        + "and pe.payload_document ->> 'liveEvaluationInputHash' is not null",
+                roomId);
+        if (hashes.stream().anyMatch(record -> !inputHash.equals(record.get("input_hash", String.class)))) {
+            throw new IllegalStateException("Locked live evaluation input does not match prior participant evidence");
         }
     }
 
