@@ -59,6 +59,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802231000__backend_leaderboard_result_source_guard.sql",
                         "V20260802231100__backend_transactional_outbox.sql",
                         "V20260802231400__backend_operator_rbac.sql",
+                        "V20260802231500__backend_notification_delivery.sql",
                         "V20260802231600__backend_account_sanction_commands.sql"),
                 result.orderedFileNames());
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
