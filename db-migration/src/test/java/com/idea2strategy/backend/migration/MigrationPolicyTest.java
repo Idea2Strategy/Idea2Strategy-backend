@@ -80,6 +80,7 @@ class MigrationPolicyTest {
                         "V20260802231000__backend_leaderboard_result_source_guard.sql",
                         "V20260802231100__backend_transactional_outbox.sql",
                         "V20260802231200__backend_delegated_strategy_scope.sql",
+                        "V20260802231300__backend_user_case_contract.sql",
                         "V20260802231400__backend_operator_rbac.sql"),
                 plan.orderedFileNames());
     }
