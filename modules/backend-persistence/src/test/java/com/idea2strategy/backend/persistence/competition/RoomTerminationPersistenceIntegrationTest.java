@@ -91,9 +91,6 @@ class RoomTerminationPersistenceIntegrationTest {
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_POLICY_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_POLICY_ID);
         jdbc.update("delete from operations.operator_role_assignments where role_id = ?", ROLE_ID);
-        jdbc.update("delete from operations.role_permissions where role_id = ?", ROLE_ID);
-        jdbc.update("delete from operations.permissions where id in (?, ?)", READ_PERMISSION_ID, MANAGE_PERMISSION_ID);
-        jdbc.update("delete from operations.roles where id = ?", ROLE_ID);
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
@@ -108,21 +105,64 @@ class RoomTerminationPersistenceIntegrationTest {
                 OPERATOR_ID, utc(NOW.minusSeconds(60)), utc(NOW.minusSeconds(60)));
         jdbc.update(
                 "insert into operations.roles (id, code, hierarchy_rank, status) "
-                        + "values (?, 'E30_OPERATOR', 10, 'ACTIVE')",
+                        + "values (?, 'E30_OPERATOR', 10, 'ACTIVE') on conflict (id) do nothing",
                 ROLE_ID);
         jdbc.update(
                 "insert into operations.permissions (id, code, description, sensitivity) values "
                         + "(?, ?, 'Read official competition rooms', 'SENSITIVE'), "
-                        + "(?, ?, 'Manage official competition rooms', 'HIGH')",
+                        + "(?, ?, 'Manage official competition rooms', 'HIGH') on conflict (id) do nothing",
                 READ_PERMISSION_ID, OperatorRoomPermissions.READ,
                 MANAGE_PERMISSION_ID, OperatorRoomPermissions.MANAGE);
         jdbc.update(
-                "insert into operations.role_permissions (role_id, permission_id) values (?, ?), (?, ?)",
+                "insert into operations.role_permissions (role_id, permission_id) values (?, ?), (?, ?) "
+                        + "on conflict (role_id, permission_id) do nothing",
                 ROLE_ID, READ_PERMISSION_ID, ROLE_ID, MANAGE_PERMISSION_ID);
+        jdbc.update("""
+                insert into operations.rbac_catalog_versions
+                    (catalog_version, content_hash, status)
+                values ('e30-room-test-v1', ?, 'DRAFT')
+                on conflict (catalog_version) do nothing
+                """, "e".repeat(64));
+        jdbc.update("""
+                insert into operations.rbac_catalog_roles
+                    (catalog_version, role_id, hierarchy_rank, role_status)
+                select 'e30-room-test-v1', ?, 10, 'ACTIVE'
+                where not exists (
+                    select 1 from operations.rbac_catalog_roles
+                    where catalog_version = 'e30-room-test-v1' and role_id = ?)
+                """, ROLE_ID, ROLE_ID);
+        jdbc.update("""
+                insert into operations.rbac_catalog_permissions
+                    (catalog_version, permission_id, permission_status)
+                select 'e30-room-test-v1', id, 'ACTIVE'
+                from operations.permissions
+                where id in (?, ?)
+                  and not exists (
+                    select 1 from operations.rbac_catalog_permissions snapshot
+                    where snapshot.catalog_version = 'e30-room-test-v1'
+                      and snapshot.permission_id = operations.permissions.id)
+                """, READ_PERMISSION_ID, MANAGE_PERMISSION_ID);
+        jdbc.update("""
+                insert into operations.rbac_catalog_role_permissions
+                    (catalog_version, role_id, permission_id, delegable)
+                select 'e30-room-test-v1', ?, id, false
+                from operations.permissions
+                where id in (?, ?)
+                  and not exists (
+                    select 1 from operations.rbac_catalog_role_permissions snapshot
+                    where snapshot.catalog_version = 'e30-room-test-v1'
+                      and snapshot.role_id = ?
+                      and snapshot.permission_id = operations.permissions.id)
+                """, ROLE_ID, READ_PERMISSION_ID, MANAGE_PERMISSION_ID, ROLE_ID);
+        jdbc.update("""
+                update operations.rbac_catalog_versions
+                set status = 'ACTIVE', activated_at = clock_timestamp()
+                where catalog_version = 'e30-room-test-v1' and status = 'DRAFT'
+                """);
         jdbc.update(
                 "insert into operations.operator_role_assignments "
-                        + "(id, operator_account_id, role_id, granted_by_operator_id, granted_at) "
-                        + "values (?, ?, ?, ?, ?)",
+                        + "(id, operator_account_id, role_id, catalog_version, granted_by_operator_id, granted_at) "
+                        + "values (?, ?, ?, 'e30-room-test-v1', ?, ?)",
                 id(28), OPERATOR_ID, ROLE_ID, OPERATOR_ID, utc(NOW.minusSeconds(60)));
         jdbc.update(
                 "insert into competition.scoring_template_versions "
