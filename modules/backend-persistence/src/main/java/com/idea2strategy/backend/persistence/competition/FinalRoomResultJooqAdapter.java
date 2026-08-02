@@ -7,6 +7,8 @@ import com.idea2strategy.backend.application.competition.FinalRoomResultPort;
 import com.idea2strategy.backend.application.competition.FinalRoomResultWriteDecision;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -25,7 +27,8 @@ public class FinalRoomResultJooqAdapter implements FinalRoomResultPort {
     @Transactional
     public FinalRoomResultWriteDecision save(FinalRoomResult result) {
         Record room = dsl.fetchOne(
-                "select r.status::text as status, rs.evaluation_ends_at, "
+                "select r.status::text as status, r.access_type::text as access_type, "
+                        + "r.creator_account_id, rs.evaluation_ends_at, "
                         + "rr.scoring_template_version_id "
                         + "from competition.rooms r "
                         + "join competition.room_schedules rs on rs.room_id = r.id "
@@ -100,6 +103,31 @@ public class FinalRoomResultJooqAdapter implements FinalRoomResultPort {
                     entry.eligibilityReason() == null ? null : entry.eligibilityReason().name(), entry.score(),
                     entry.tieBreakDocument(), entry.calculationDocument());
         }
+        if ("SECRET".equals(room.get("access_type", String.class))) {
+            freezeSecretAccessGrants(result, room.get("creator_account_id", UUID.class));
+        }
         return FinalRoomResultWriteDecision.CREATED;
+    }
+
+    private void freezeSecretAccessGrants(FinalRoomResult result, UUID creatorAccountId) {
+        Map<UUID, String> grants = new LinkedHashMap<>();
+        if (creatorAccountId != null) {
+            grants.put(creatorAccountId, "CREATOR");
+        }
+        for (FinalLeaderboardEntry entry : result.entries()) {
+            Record owner = dsl.fetchOne(
+                    "select owner_account_id from competition.participations where id = ?",
+                    entry.participationId());
+            UUID ownerAccountId = owner.get("owner_account_id", UUID.class);
+            grants.putIfAbsent(ownerAccountId, "ACTIVE_PARTICIPANT");
+        }
+        for (var grant : grants.entrySet()) {
+            dsl.execute(
+                    "insert into competition.room_final_access_grants "
+                            + "(room_id, account_id, snapshot_id, eligibility_basis, granted_at) "
+                            + "values (?, ?, ?, ?, ?::timestamptz)",
+                    result.roomId(), grant.getKey(), result.snapshotId(), grant.getValue(),
+                    result.createdAt().atOffset(ZoneOffset.UTC));
+        }
     }
 }

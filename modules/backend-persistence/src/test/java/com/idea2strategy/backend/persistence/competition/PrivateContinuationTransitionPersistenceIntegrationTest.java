@@ -60,6 +60,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
         jdbc.update("delete from operations.outbox_messages");
         jdbc.update("delete from competition.participation_events");
         jdbc.update("delete from bot.continuation_deadlines");
+        jdbc.update("delete from competition.room_final_access_grants");
         jdbc.update("delete from competition.leaderboard_entries");
         jdbc.update("delete from competition.leaderboard_snapshots");
         jdbc.update("delete from performance.bot_snapshots");
@@ -74,7 +75,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
         jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
-        jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
+        jdbc.update("delete from identity.accounts where id in (?, ?)", OWNER_ID, CREATOR_ID);
         seedReadyCandidate();
     }
 
@@ -207,6 +208,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
         jdbc.update("delete from competition.leaderboard_entries");
         jdbc.update("delete from competition.leaderboard_snapshots");
         jdbc.update("update competition.participations set action_locked_at = null where id = ?", PARTICIPATION_ID);
+        jdbc.update("update competition.rooms set access_type = 'SECRET' where id = ?", ROOM_ID);
         var result = new FinalRoomResult(
                 FINAL_SNAPSHOT_ID, ROOM_ID, TEMPLATE_ID, CUTOFF, "sha256:result", ENDED_AT,
                 List.of(new FinalLeaderboardEntry(
@@ -220,6 +222,14 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
 
         assertThat(instant("select action_locked_at from competition.participations where id = ?", PARTICIPATION_ID))
                 .isEqualTo(CUTOFF);
+        assertThat(jdbc.queryForList(
+                        "select account_id, eligibility_basis from competition.room_final_access_grants "
+                                + "where room_id = ? order by eligibility_basis",
+                        ROOM_ID))
+                .extracting(row -> List.of(row.get("account_id"), row.get("eligibility_basis")))
+                .containsExactly(
+                        List.of(OWNER_ID, "ACTIVE_PARTICIPANT"),
+                        List.of(CREATOR_ID, "CREATOR"));
     }
 
     @Test
@@ -304,7 +314,9 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
 
     private void seedReadyCandidate() {
         Instant publishedAt = CUTOFF.minus(Duration.ofDays(1));
-        jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
+        jdbc.update(
+                "insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE'), (?, 'ACTIVE')",
+                OWNER_ID, CREATOR_ID);
         jdbc.update(
                 "insert into competition.scoring_template_versions "
                         + "(id, template_code, version, rules_document, rules_hash, published_at) "
@@ -325,7 +337,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
                         + "(id, competition_type, organizer_type, creator_account_id, name, access_type, "
                         + "status, created_at, ended_at) values (?, 'LIVE_PAPER', 'USER', ?, "
                         + "'Continuation room', 'PUBLIC', 'ENDED', ?, ?)",
-                ROOM_ID, OWNER_ID, utc(publishedAt), utc(ENDED_AT));
+                ROOM_ID, CREATOR_ID, utc(publishedAt), utc(ENDED_AT));
         jdbc.update(
                 "insert into competition.room_rules "
                         + "(room_id, scoring_template_version_id, initial_cash_amount, bot_participation_limit, "
@@ -415,6 +427,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
     private static final UUID FINAL_SNAPSHOT_ID = id(8);
     private static final UUID FEE_ID = id(9);
     private static final UUID BUFFER_ID = id(10);
+    private static final UUID CREATOR_ID = id(11);
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
