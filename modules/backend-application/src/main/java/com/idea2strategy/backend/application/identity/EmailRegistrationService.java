@@ -1,5 +1,7 @@
 package com.idea2strategy.backend.application.identity;
 
+import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
+import com.idea2strategy.backend.domain.identity.ThemePreference;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
@@ -15,6 +17,7 @@ public final class EmailRegistrationService {
     private final PasswordHasher passwordHasher;
     private final VerificationTokenIssuer tokenIssuer;
     private final VerificationTokenDigest tokenDigest;
+    private final AccountPreferenceDefaults preferenceDefaults;
     private final Clock clock;
 
     public EmailRegistrationService(
@@ -26,6 +29,28 @@ public final class EmailRegistrationService {
             VerificationTokenIssuer tokenIssuer,
             VerificationTokenDigest tokenDigest,
             Clock clock) {
+        this(
+                queryPort,
+                commandPort,
+                emailProtector,
+                passwordPolicy,
+                passwordHasher,
+                tokenIssuer,
+                tokenDigest,
+                new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM),
+                clock);
+    }
+
+    public EmailRegistrationService(
+            RegistrationQueryPort queryPort,
+            RegistrationCommandPort commandPort,
+            EmailProtector emailProtector,
+            PasswordPolicy passwordPolicy,
+            PasswordHasher passwordHasher,
+            VerificationTokenIssuer tokenIssuer,
+            VerificationTokenDigest tokenDigest,
+            AccountPreferenceDefaults preferenceDefaults,
+            Clock clock) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.emailProtector = Objects.requireNonNull(emailProtector, "emailProtector");
@@ -33,6 +58,7 @@ public final class EmailRegistrationService {
         this.passwordHasher = Objects.requireNonNull(passwordHasher, "passwordHasher");
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.tokenDigest = Objects.requireNonNull(tokenDigest, "tokenDigest");
+        this.preferenceDefaults = Objects.requireNonNull(preferenceDefaults, "preferenceDefaults");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -59,7 +85,8 @@ public final class EmailRegistrationService {
                 now,
                 expiresAt,
                 command.correlationId(),
-                command.requestIpPrefix()));
+                command.requestIpPrefix(),
+                preferenceDefaults.at(now)));
         return new SignupResult(accountId, token.rawToken(), expiresAt);
     }
 

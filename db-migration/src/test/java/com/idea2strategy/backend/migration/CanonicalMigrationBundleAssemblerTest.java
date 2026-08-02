@@ -41,6 +41,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V1__initial_schema.sql",
                         "V20260801112341__backend_identity_email_auth.sql",
                         "V20260801153000__backend_bot_continuation_deadlines.sql",
+                        "V20260802050054__backend_account_preferences_theme.sql",
                         "V20260802110000__pipeline_add_manifest_marker.sql",
                         "V20260802120000__trading_add_execution_marker.sql"),
                 result.orderedFileNames());
