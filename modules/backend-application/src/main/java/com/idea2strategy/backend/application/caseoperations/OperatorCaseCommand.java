@@ -1,6 +1,8 @@
 package com.idea2strategy.backend.application.caseoperations;
 
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionState;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -15,6 +17,9 @@ public record OperatorCaseCommand(
         String reasonCode,
         List<UUID> evidenceIds,
         UUID sanctionId,
+        AccountSanctionState.Type sanctionType,
+        Instant sanctionExpiresAt,
+        long expectedSanctionVersion,
         UUID correlationId,
         String idempotencyKey,
         String requestHash) {
@@ -45,6 +50,39 @@ public record OperatorCaseCommand(
         if (action != Action.APPLY_SANCTION && action != Action.RELEASE_SANCTION && sanctionId != null) {
             throw new IllegalArgumentException("sanctionId is not allowed for this action");
         }
+        if (expectedSanctionVersion < 0) {
+            throw new IllegalArgumentException("expectedSanctionVersion must not be negative");
+        }
+        if (action == Action.APPLY_SANCTION) {
+            Objects.requireNonNull(sanctionType, "sanctionType");
+            if (sanctionType == AccountSanctionState.Type.SUSPENSION && sanctionExpiresAt == null) {
+                throw new IllegalArgumentException("temporary sanctions require sanctionExpiresAt");
+            }
+            if (sanctionType == AccountSanctionState.Type.PERMANENT && sanctionExpiresAt != null) {
+                throw new IllegalArgumentException("permanent sanctions cannot expire");
+            }
+        } else if (sanctionType != null || sanctionExpiresAt != null) {
+            throw new IllegalArgumentException("only APPLY_SANCTION may define sanction type or expiry");
+        }
+    }
+
+    public OperatorCaseCommand(
+            Action action,
+            OperatorRequestContext requestContext,
+            UUID caseId,
+            long expectedVersion,
+            UUID assigneeOperatorId,
+            UUID requiredPermissionId,
+            String reasonCode,
+            List<UUID> evidenceIds,
+            UUID sanctionId,
+            UUID correlationId,
+            String idempotencyKey,
+            String requestHash) {
+        this(action, requestContext, caseId, expectedVersion, assigneeOperatorId, requiredPermissionId,
+                reasonCode, evidenceIds, sanctionId,
+                action == Action.APPLY_SANCTION ? AccountSanctionState.Type.PERMANENT : null,
+                null, 0, correlationId, idempotencyKey, requestHash);
     }
 
     private static void requireText(String value, String name) {

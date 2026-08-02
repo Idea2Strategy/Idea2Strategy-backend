@@ -159,12 +159,17 @@ public final class OperatorCaseCommandService {
         CaseSanctionCommandPort.Result result = sanctions.execute(new CaseSanctionCommandPort.Request(
                 operation,
                 command.sanctionId(),
+                state.caseView().accountId(),
                 command.caseId(),
                 command.expectedVersion(),
-                command.requestContext().operatorId(),
+                command.expectedSanctionVersion(),
+                command.requestContext(),
+                command.sanctionType(),
+                command.sanctionExpiresAt(),
                 command.reasonCode(),
                 command.correlationId(),
-                command.idempotencyKey()));
+                command.idempotencyKey(),
+                command.requestHash()));
         if (result.status() == CaseSanctionCommandPort.Result.Status.UNKNOWN) {
             return rejected(command, state, now, "SANCTION_RESULT_UNKNOWN", guard, null);
         }

@@ -1,5 +1,6 @@
 package com.idea2strategy.backend.api.caseoperations;
 
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionState;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseApiGuardCatalog;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseAuthenticationRejectedException;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseCommand;
@@ -22,6 +23,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.time.Instant;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -83,7 +85,8 @@ public class OperatorCaseController {
         OperatorCaseCommand command = new OperatorCaseCommand(
                 action, current(), caseId, request.expectedVersion(), request.assigneeOperatorId(),
                 guards.activeGuard().permissionFor(action), request.reasonCode(), evidence,
-                request.sanctionId(), correlation, idempotencyKey,
+                request.sanctionId(), request.sanctionType(), request.sanctionExpiresAt(),
+                request.expectedSanctionVersion(), correlation, idempotencyKey,
                 hash(action, caseId, request, evidence));
         OperatorCaseDecisionResult result = commands.execute(command);
         if (result.status() == OperatorCaseDecisionResult.Status.REJECTED) {
@@ -106,7 +109,10 @@ public class OperatorCaseController {
                 action.name(), caseId.toString(), Long.toString(request.expectedVersion()),
                 Objects.toString(request.assigneeOperatorId(), ""), request.reasonCode(),
                 String.join(",", new TreeSet<>(evidence.stream().map(UUID::toString).toList())),
-                Objects.toString(request.sanctionId(), ""));
+                Objects.toString(request.sanctionId(), ""),
+                Objects.toString(request.sanctionType(), ""),
+                Objects.toString(request.sanctionExpiresAt(), ""),
+                Long.toString(request.expectedSanctionVersion()));
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(material.getBytes(StandardCharsets.UTF_8)));
@@ -127,7 +133,10 @@ public class OperatorCaseController {
             UUID assigneeOperatorId,
             String reasonCode,
             List<UUID> evidenceIds,
-            UUID sanctionId) {}
+            UUID sanctionId,
+            AccountSanctionState.Type sanctionType,
+            Instant sanctionExpiresAt,
+            long expectedSanctionVersion) {}
 
     public record CommandResponse(
             OperatorCaseDecisionResult.Status status,
