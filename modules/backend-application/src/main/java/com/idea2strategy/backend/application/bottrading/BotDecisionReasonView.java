@@ -7,8 +7,9 @@ import java.util.UUID;
 /**
  * Why an intent was refused or cut down.
  *
- * <p>The canonical intent already records the decision and its reason code, and the requested
- * against final quantity is what makes a reduction legible rather than merely reported.
+ * <p>The requested against final quantity is what makes a reduction legible rather than merely
+ * reported. The time is the batch's, not the intent's: canonical puts no timestamp on an intent,
+ * because the decision becomes official when its batch is finalised.
  */
 public record BotDecisionReasonView(
         UUID intentId,
@@ -19,4 +20,4 @@ public record BotDecisionReasonView(
         String reasonCode,
         BigDecimal requestedQuantity,
         BigDecimal finalQuantity,
-        Instant decidedAt) {}
+        Instant batchFinalizedAt) {}
