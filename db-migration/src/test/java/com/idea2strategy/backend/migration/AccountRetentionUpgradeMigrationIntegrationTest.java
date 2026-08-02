@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.OffsetDateTime;
-import java.util.Set;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -18,12 +17,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @Testcontainers(disabledWithoutDocker = true)
 class AccountRetentionUpgradeMigrationIntegrationTest {
-    private static final Set<String> RETENTION_MIGRATIONS = Set.of(
-            "V20260802220000__backend_retention_category_split.sql",
-            "V20260802220100__trading_private_bot_runtime_cleanup.sql",
-            "V20260802220200__backend_retention_execution.sql",
-            "V20260802220300__backtest_competition_owner_anonymization.sql");
-
+    private static final String RETENTION_START_VERSION = "20260802220000";
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
 
@@ -35,7 +29,7 @@ class AccountRetentionUpgradeMigrationIntegrationTest {
         Path before132 = Files.createDirectories(temporaryDirectory.resolve("before-132"));
         try (var files = Files.list(central)) {
             for (Path source : files.filter(Files::isRegularFile).toList()) {
-                if (!RETENTION_MIGRATIONS.contains(source.getFileName().toString())) {
+                if (predatesRetentionUpgrade(source.getFileName().toString())) {
                     Files.copy(source, before132.resolve(source.getFileName()));
                 }
             }
@@ -61,7 +55,20 @@ class AccountRetentionUpgradeMigrationIntegrationTest {
                 where account_id = ? and data_category in (
                     'BOT_STRATEGY_PRIVATE_DATA', 'COMPETITION_RESULT_EVIDENCE')
                 """, afterEffective));
-        assertEquals(4, scalar("select count(*) from flyway_schema_history where version >= '20260802220000'"));
+        assertEquals(4, scalar("""
+                select count(*) from flyway_schema_history
+                where version between '20260802220000' and '20260802220300'
+                """));
+    }
+
+    private static boolean predatesRetentionUpgrade(String fileName) {
+        if (MigrationPolicy.BASELINE_FILE.equals(fileName)) {
+            return true;
+        }
+        int separator = fileName.indexOf("__");
+        return separator > 1
+                && fileName.startsWith("V")
+                && fileName.substring(1, separator).compareTo(RETENTION_START_VERSION) < 0;
     }
 
     private UUID seedHistoricalClosed(OffsetDateTime closedAt) throws Exception {

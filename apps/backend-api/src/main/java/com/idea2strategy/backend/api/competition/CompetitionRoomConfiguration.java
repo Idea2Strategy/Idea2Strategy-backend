@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.common.CurrentOperatorPrincipal;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQueryService;
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.OperatorRoomManagementService;
 import com.idea2strategy.backend.application.competition.OwnedBotComparisonQueryService;
 import com.idea2strategy.backend.application.competition.PlatformRoomInvalidationService;
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
@@ -25,6 +26,7 @@ import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.AnonymousLeaderboardJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.competition.OperatorRoomJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
@@ -51,6 +53,7 @@ import org.springframework.context.annotation.Import;
 @ConditionalOnBean(type = "org.jooq.DSLContext")
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
+    OperatorRoomJooqAdapter.class,
     AnonymousLeaderboardJooqAdapter.class,
     RoomConfigurationJooqAdapter.class,
     ScoringTemplateCatalogJooqQueryAdapter.class,
@@ -114,8 +117,25 @@ public class CompetitionRoomConfiguration {
     @Bean
     @ConditionalOnBean(CurrentOperatorPrincipal.class)
     PlatformRoomInvalidationService platformRoomInvalidationService(
-            RoomTerminationJooqAdapter adapter, CurrentOperatorPrincipal principal) {
-        return new PlatformRoomInvalidationService(adapter, principal, Clock.systemUTC());
+            RoomTerminationJooqAdapter adapter,
+            OperatorRoomJooqAdapter operatorRoomAdapter,
+            CurrentOperatorPrincipal principal) {
+        return new PlatformRoomInvalidationService(
+                adapter, operatorRoomAdapter, principal, Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentOperatorPrincipal.class)
+    OperatorRoomManagementService operatorRoomManagementService(
+            OperatorRoomJooqAdapter operatorRoomAdapter,
+            RoomTerminationJooqAdapter terminationAdapter,
+            CurrentOperatorPrincipal principal) {
+        return new OperatorRoomManagementService(
+                operatorRoomAdapter,
+                operatorRoomAdapter,
+                terminationAdapter,
+                principal,
+                Clock.systemUTC());
     }
 
     @Bean

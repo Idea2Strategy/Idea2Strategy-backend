@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     RoomInvitationController.class,
     RoomParticipationController.class,
     PlatformRoomInvalidationController.class,
+    OperatorRoomManagementController.class,
     RoomTerminationController.class,
     RoomConfigurationController.class,
     PostEvaluationChoiceController.class,

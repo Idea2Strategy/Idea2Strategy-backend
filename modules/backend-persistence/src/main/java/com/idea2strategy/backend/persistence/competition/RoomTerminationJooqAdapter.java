@@ -95,6 +95,36 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
 
     @Override
     @Transactional
+    public RoomTerminationResult cancelOfficial(
+            UUID roomId, UUID operatorId, String reasonCode, Instant occurredAt) {
+        Record room = dsl.fetchOne(
+                "select r.status::text as status, s.participation_opens_at "
+                        + "from competition.rooms r join competition.room_schedules s on s.room_id = r.id "
+                        + "join operations.operator_accounts oa on oa.id = ? and oa.status = 'ACTIVE' "
+                        + "where r.id = ? and r.organizer_type = 'PLATFORM'::competition.organizer_type "
+                        + "for update of r",
+                operatorId, roomId);
+        if (room == null) {
+            throw new RoomTerminationAccessException();
+        }
+        String status = room.get("status", String.class);
+        Instant submissionOpensAt = room.get("participation_opens_at", OffsetDateTime.class).toInstant();
+        if (!("DRAFT".equals(status) || "RECRUITING".equals(status))
+                || !occurredAt.isBefore(submissionOpensAt)) {
+            throw new RoomTerminationConflictException(
+                    "An official room can be cancelled only before submission opens");
+        }
+        dsl.execute(
+                "update competition.rooms set status = 'CANCELLED'::competition.room_status, "
+                        + "ended_at = ?::timestamptz where id = ?",
+                utc(occurredAt), roomId);
+        roomEvent(roomId, "ROOM_CANCELLED", "CANCELLED", reasonCode, operatorId, occurredAt);
+        int count = detachRoomParticipations(roomId, reasonCode, "ROOM_CANCELLED", false, occurredAt);
+        return new RoomTerminationResult(roomId, count, occurredAt);
+    }
+
+    @Override
+    @Transactional
     public RoomTerminationResult expelOwned(
             UUID roomId, UUID participationId, UUID creatorAccountId, Instant occurredAt) {
         Record room = dsl.fetchOne(
