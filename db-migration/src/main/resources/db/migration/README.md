@@ -72,7 +72,7 @@ After a successful deployment, older application versions can ignore the added c
 
 ## A17 transactional outbox proposal migration
 
-`V20260802220400__backend_transactional_outbox.sql` is the implementation candidate for isolated root proposal commit `52870121`. It adds a durable delivery head, append-only claim attempts, immutable replay lineage, and handler/message consumer receipts while keeping retry/lease numbers in versioned runtime configuration. Existing envelopes are backfilled without changing their payload or producer idempotency identity, and legacy writers remain compatible through a database-side envelope preparation trigger. This migration is not canonical or release-ready until the exact COM-A17 proposal is approved and integrated.
+`V20260802230050__backend_transactional_outbox.sql` is the implementation candidate for isolated root proposal commit `52870121`. It adds a durable delivery head, append-only claim attempts, immutable replay lineage, and handler/message consumer receipts while keeping retry/lease numbers in versioned runtime configuration. Existing envelopes are backfilled without changing their payload or producer idempotency identity, and legacy writers remain compatible through a database-side envelope preparation trigger. This migration is not canonical or release-ready until the exact COM-A17 proposal is approved and integrated.
 
 `V20260802230000__backend_operator_room_permissions.sql` installs the approved E30 room read/manage permission codes without granting either permission to a role. Existing codes must retain the approved sensitivity or migration fails closed; role membership remains an explicit audited operations decision.
 

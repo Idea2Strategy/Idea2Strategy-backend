@@ -10,7 +10,7 @@ class TransactionalOutboxMigrationContractTest {
     void pinsDurableClaimReplayAttemptAndReceiptSchema() throws Exception {
         String sql;
         try (var input = getClass().getClassLoader().getResourceAsStream(
-                "db/migration/V20260802220400__backend_transactional_outbox.sql")) {
+                "db/migration/V20260802230050__backend_transactional_outbox.sql")) {
             sql = new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
         for (String fragment : new String[] {
