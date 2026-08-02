@@ -50,7 +50,11 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802110000__pipeline_add_manifest_marker.sql",
                         "V20260802120000__trading_add_execution_marker.sql",
                         "V20260802194500__backend_final_leaderboard_unranked_entries.sql",
-                        "V20260802213500__backend_room_final_access_grants.sql"),
+                        "V20260802213500__backend_room_final_access_grants.sql",
+                        "V20260802220000__backend_retention_category_split.sql",
+                        "V20260802220100__trading_private_bot_runtime_cleanup.sql",
+                        "V20260802220200__backend_retention_execution.sql",
+                        "V20260802220300__backtest_competition_owner_anonymization.sql"),
                 result.orderedFileNames());
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));

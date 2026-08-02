@@ -10,6 +10,9 @@ import java.security.SecureRandom;
 import java.text.Normalizer;
 import java.util.Base64;
 import java.util.Locale;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import com.idea2strategy.backend.application.identity.IdentifierFingerprint;
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
@@ -21,10 +24,17 @@ public final class AesGcmEmailProtector implements EmailProtector, EmailLookup {
     private final byte[] lookupKey;
     private final short encryptionKeyVersion;
     private final short lookupKeyVersion;
+    private final Map<Short, byte[]> comparisonKeys;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AesGcmEmailProtector(
             byte[] encryptionKey, byte[] lookupKey, short encryptionKeyVersion, short lookupKeyVersion) {
+        this(encryptionKey, lookupKey, encryptionKeyVersion, lookupKeyVersion, Map.of());
+    }
+
+    public AesGcmEmailProtector(byte[] encryptionKey, byte[] lookupKey,
+                                short encryptionKeyVersion, short lookupKeyVersion,
+                                Map<Short, byte[]> previousLookupKeys) {
         if (encryptionKey.length != 32 || lookupKey.length < 32) {
             throw new IllegalArgumentException("Identity encryption and lookup keys must contain at least 256 bits");
         }
@@ -32,6 +42,15 @@ public final class AesGcmEmailProtector implements EmailProtector, EmailLookup {
         this.lookupKey = lookupKey.clone();
         this.encryptionKeyVersion = encryptionKeyVersion;
         this.lookupKeyVersion = lookupKeyVersion;
+        var keys = new LinkedHashMap<Short, byte[]>();
+        keys.put(lookupKeyVersion, lookupKey.clone());
+        previousLookupKeys.forEach((version, key) -> {
+            if (version == null || version < 1 || key == null || key.length < 32 || keys.containsKey(version)) {
+                throw new IllegalArgumentException("Every comparison lookup key needs a unique positive version and 256 bits");
+            }
+            keys.put(version, key.clone());
+        });
+        this.comparisonKeys = Map.copyOf(keys);
     }
 
     @Override
@@ -42,7 +61,10 @@ public final class AesGcmEmailProtector implements EmailProtector, EmailLookup {
                 encrypt(normalized),
                 hmac(normalized),
                 lookupKeyVersion,
-                encryptionKeyVersion);
+                encryptionKeyVersion,
+                comparisonKeys.entrySet().stream()
+                        .map(entry -> new IdentifierFingerprint(hmac(normalized, entry.getValue()), entry.getKey()))
+                        .toList());
     }
 
     @Override
@@ -68,9 +90,13 @@ public final class AesGcmEmailProtector implements EmailProtector, EmailLookup {
     }
 
     private String hmac(String normalized) {
+        return hmac(normalized, lookupKey);
+    }
+
+    private static String hmac(String normalized, byte[] key) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(lookupKey, "HmacSHA256"));
+            mac.init(new SecretKeySpec(key, "HmacSHA256"));
             return Base64.getUrlEncoder()
                     .withoutPadding()
                     .encodeToString(mac.doFinal(normalized.getBytes(StandardCharsets.UTF_8)));

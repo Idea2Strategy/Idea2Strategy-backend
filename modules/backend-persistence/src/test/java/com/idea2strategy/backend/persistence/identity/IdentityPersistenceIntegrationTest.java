@@ -19,6 +19,7 @@ import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.PasswordResetRejectedException;
 import com.idea2strategy.backend.application.identity.ProtectedEmail;
 import com.idea2strategy.backend.application.identity.ProtectedOidcSubject;
+import com.idea2strategy.backend.application.identity.IdentifierFingerprint;
 import com.idea2strategy.backend.application.identity.ResendVerificationCommand;
 import com.idea2strategy.backend.application.identity.RequestPasswordResetCommand;
 import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
@@ -36,6 +37,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
@@ -75,6 +77,37 @@ class IdentityPersistenceIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void signupFailsClosedWhenAnActiveBindingKeyVersionIsMissingAndAcceptsACompleteRing() {
+        var tokenSequence = new AtomicInteger();
+        registrationService(tokenSequence).signup(new SignupCommand(
+                "old-key-owner@example.com", "a sufficiently long passphrase",
+                UUID.randomUUID(), "192.0.2.0/24"));
+
+        var incomplete = registrationService(tokenSequence, raw -> {
+            String normalized = raw.trim().toLowerCase();
+            return new ProtectedEmail(normalized, "ciphertext-v2:" + normalized,
+                    "lookup-v2:" + normalized, (short) 2, (short) 2,
+                    List.of(new IdentifierFingerprint("lookup-v2:" + normalized, (short) 2)));
+        });
+        assertThatThrownBy(() -> incomplete.signup(new SignupCommand(
+                        "new-owner@example.com", "a sufficiently long passphrase",
+                        UUID.randomUUID(), "192.0.2.0/24")))
+                .isInstanceOf(DuplicateEmailException.class);
+
+        var complete = registrationService(tokenSequence, raw -> {
+            String normalized = raw.trim().toLowerCase();
+            return new ProtectedEmail(normalized, "ciphertext-v2:" + normalized,
+                    "lookup-v2:" + normalized, (short) 2, (short) 2,
+                    List.of(
+                            new IdentifierFingerprint("lookup-v2:" + normalized, (short) 2),
+                            new IdentifierFingerprint("lookup:" + normalized, (short) 1)));
+        });
+        assertThat(complete.signup(new SignupCommand(
+                "new-owner@example.com", "a sufficiently long passphrase",
+                UUID.randomUUID(), "192.0.2.0/24")).accountId()).isNotNull();
+    }
 
     @Test
     void signupVerificationAndLoginShareOneTransactionalIdentityModel() {
@@ -233,7 +266,7 @@ class IdentityPersistenceIntegrationTest {
         var linking = new OidcIdentityLinkingService(
                 queryAdapter,
                 commandAdapter,
-                ignored -> new ProtectedOidcSubject("hmac:external-subject", (short) 1),
+                ignored -> protectedExternalSubject(),
                 Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC));
         UUID pendingId = linking.start(new StartOidcLinkCommand(
                 signup.accountId(),
@@ -299,7 +332,7 @@ class IdentityPersistenceIntegrationTest {
         var oidcAuthentication = new OidcAuthenticationService(
                 queryAdapter,
                 commandAdapter,
-                ignored -> new ProtectedOidcSubject("hmac:external-subject", (short) 1),
+                ignored -> protectedExternalSubject(),
                 () -> new SessionToken("raw-oidc-session", "digest:raw-oidc-session"),
                 Clock.fixed(NOW.plusSeconds(180), ZoneOffset.UTC));
         var result = oidcAuthentication.login(new OidcLoginCommand(
@@ -498,18 +531,73 @@ class IdentityPersistenceIntegrationTest {
     }
 
     private EmailRegistrationService registrationService(AtomicInteger tokenSequence) {
+        return registrationService(tokenSequence, raw -> {
+            String normalized = raw.trim().toLowerCase();
+            return new ProtectedEmail(
+                    normalized,
+                    "ciphertext:" + normalized,
+                    "lookup:" + normalized,
+                    (short) 1,
+                    (short) 1);
+        });
+    }
+
+    @Test
+    void oidcLinkFailsClosedForMissingActiveBindingKeyVersionAndAcceptsProviderCompleteRing() {
+        jdbcTemplate.update("""
+                insert into identity.auth_providers
+                    (id, code, display_name, provider_type, issuer, is_active)
+                values (2, 'EXAMPLE', 'Example OIDC', cast('OIDC' as identity.auth_provider_type),
+                        'https://issuer.example', true)
+                on conflict (id) do nothing
+                """);
+        var registration = registrationService(new AtomicInteger());
+        var old = registration.signup(new SignupCommand(
+                "oidc-old-key@example.com", "a sufficiently long passphrase",
+                UUID.randomUUID(), "192.0.2.0/24"));
+        registration.verify(new VerifyEmailCommand(old.verificationToken(), UUID.randomUUID()));
+        jdbcTemplate.update("""
+                insert into identity.login_identities
+                    (id, account_id, provider_id, provider_subject_hmac, subject_key_version,
+                     status, created_at, linked_at, disabled_at, disabled_reason_code)
+                values (?, ?, 2, 'oidc-old-binding', 1, 'DISABLED', ?, ?, ?, 'TEST_OLD_KEY')
+                """, UUID.randomUUID(), old.accountId(), NOW.atOffset(ZoneOffset.UTC),
+                NOW.atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC));
+
+        var target = registration.signup(new SignupCommand(
+                "oidc-new-key@example.com", "a sufficiently long passphrase",
+                UUID.randomUUID(), "192.0.2.0/24"));
+        registration.verify(new VerifyEmailCommand(target.verificationToken(), UUID.randomUUID()));
+        UUID passwordLoginId = jdbcTemplate.queryForObject("""
+                select login.id from identity.login_identities login
+                join identity.auth_providers provider on provider.id = login.provider_id
+                where login.account_id = ? and provider.code = 'PASSWORD' and login.status = 'ACTIVE'
+                """, UUID.class, target.accountId());
+        var command = new StartOidcLinkCommand(target.accountId(), passwordLoginId, "EXAMPLE",
+                "https://issuer.example", "new-subject", "oidc-new-key@example.com", UUID.randomUUID());
+
+        var incomplete = new OidcIdentityLinkingService(queryAdapter, commandAdapter,
+                ignored -> new ProtectedOidcSubject("oidc-v2-new-subject", (short) 2),
+                Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC));
+        assertThatThrownBy(() -> incomplete.start(command))
+                .isInstanceOf(AuthenticationRejectedException.class)
+                .hasMessageContaining("key ring is incomplete");
+
+        var complete = new OidcIdentityLinkingService(queryAdapter, commandAdapter,
+                ignored -> new ProtectedOidcSubject("oidc-v2-new-subject", (short) 2,
+                        List.of(
+                                new IdentifierFingerprint("oidc-v2-new-subject", (short) 2),
+                                new IdentifierFingerprint("oidc-v1-new-subject", (short) 1))),
+                Clock.fixed(NOW.plusSeconds(120), ZoneOffset.UTC));
+        assertThat(complete.start(command)).isNotNull();
+    }
+
+    private EmailRegistrationService registrationService(
+            AtomicInteger tokenSequence, Function<String, ProtectedEmail> protector) {
         return new EmailRegistrationService(
                 queryAdapter,
                 commandAdapter,
-                raw -> {
-                    String normalized = raw.trim().toLowerCase();
-                    return new ProtectedEmail(
-                            normalized,
-                            "ciphertext:" + normalized,
-                            "lookup:" + normalized,
-                            (short) 1,
-                            (short) 1);
-                },
+                protector::apply,
                 new NistPasswordPolicy(List.of()),
                 raw -> new PasswordHash("hash:" + raw, "TEST", "{}"),
                 () -> {
@@ -518,6 +606,13 @@ class IdentityPersistenceIntegrationTest {
                 },
                 raw -> "digest:" + raw,
                 Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    private ProtectedOidcSubject protectedExternalSubject() {
+        return new ProtectedOidcSubject("hmac:external-subject", (short) 1,
+                List.of(
+                        new IdentifierFingerprint("hmac:external-subject", (short) 1),
+                        new IdentifierFingerprint("hmac-v2:external-subject", (short) 2)));
     }
 
     private EmailAuthenticationService authenticationService() {

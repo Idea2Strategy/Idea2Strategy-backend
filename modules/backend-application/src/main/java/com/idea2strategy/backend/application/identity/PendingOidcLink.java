@@ -3,6 +3,7 @@ package com.idea2strategy.backend.application.identity;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.List;
 
 public record PendingOidcLink(
         UUID id,
@@ -12,7 +13,8 @@ public record PendingOidcLink(
         String subjectHmac,
         short subjectKeyVersion,
         UUID correlationId,
-        Instant requestedAt) {
+        Instant requestedAt,
+        List<IdentifierFingerprint> comparisonFingerprints) {
     public PendingOidcLink {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(accountId, "accountId");
@@ -23,5 +25,14 @@ public record PendingOidcLink(
         if (providerId < 1 || subjectHmac.isBlank() || subjectKeyVersion < 1) {
             throw new IllegalArgumentException("Pending OIDC link fields must be present");
         }
+        comparisonFingerprints = List.copyOf(Objects.requireNonNull(comparisonFingerprints, "comparisonFingerprints"));
+    }
+
+    public PendingOidcLink(UUID id, UUID accountId, UUID reauthenticatedLoginIdentityId,
+                           short providerId, String subjectHmac, short subjectKeyVersion,
+                           UUID correlationId, Instant requestedAt) {
+        this(id, accountId, reauthenticatedLoginIdentityId, providerId, subjectHmac,
+                subjectKeyVersion, correlationId, requestedAt,
+                List.of(new IdentifierFingerprint(subjectHmac, subjectKeyVersion)));
     }
 }

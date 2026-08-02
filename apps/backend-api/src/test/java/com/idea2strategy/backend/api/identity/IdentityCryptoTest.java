@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class IdentityCryptoTest {
@@ -22,6 +23,17 @@ class IdentityCryptoTest {
         assertThat(first.ciphertext()).doesNotContain("person@example.com");
         assertThat(first.ciphertext()).isNotEqualTo(second.ciphertext());
         assertThat(first.lookupHmac()).isEqualTo(second.lookupHmac()).isEqualTo(protector.lookup("person@example.com"));
+    }
+
+    @Test
+    void protectsEmailAgainstCurrentAndPreviousLookupKeys() {
+        byte[] previous = "previous-email-lookup-key-32byte".getBytes(StandardCharsets.UTF_8);
+        var protector = new AesGcmEmailProtector(
+                ENCRYPTION_KEY, HMAC_KEY, (short) 2, (short) 2, Map.of((short) 1, previous));
+
+        assertThat(protector.protect("person@example.com").comparisonFingerprints())
+                .extracting(com.idea2strategy.backend.application.identity.IdentifierFingerprint::keyVersion)
+                .containsExactlyInAnyOrder((short) 2, (short) 1);
     }
 
     @Test

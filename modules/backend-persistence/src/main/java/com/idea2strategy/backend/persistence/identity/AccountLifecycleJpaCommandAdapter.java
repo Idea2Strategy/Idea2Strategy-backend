@@ -353,20 +353,25 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
     private String latestCompleteEffectivePolicy(Instant at) {
         @SuppressWarnings("unchecked")
         List<String> versions = entityManager.createNativeQuery("""
-                        select policy.version
-                        from identity.account_retention_policy_versions policy
-                        join identity.account_retention_policy_rules rule
-                          on rule.policy_version = policy.version
-                        where policy.effective_from <= :at and policy.approved_at <= :at
-                        group by policy.version, policy.effective_from
-                        having count(*) = cardinality(enum_range(NULL::identity.account_data_category))
-                           and count(distinct rule.data_category) =
-                               cardinality(enum_range(NULL::identity.account_data_category))
-                        order by policy.effective_from desc, policy.version desc limit 1
+                        with complete as (
+                            select policy.version, policy.effective_from
+                            from identity.account_retention_policy_versions policy
+                            join identity.account_retention_policy_rules rule
+                              on rule.policy_version = policy.version
+                            where policy.effective_from <= :at and policy.approved_at <= :at
+                            group by policy.version, policy.effective_from
+                            having count(*) = cardinality(enum_range(NULL::identity.account_data_category))
+                               and count(distinct rule.data_category) =
+                                   cardinality(enum_range(NULL::identity.account_data_category))
+                        ), latest as (
+                            select max(effective_from) effective_from from complete
+                        )
+                        select complete.version
+                        from complete join latest using (effective_from)
                         """)
                 .setParameter("at", utc(at))
                 .getResultList();
-        return versions.isEmpty() ? null : versions.getFirst();
+        return versions.size() == 1 ? versions.getFirst() : null;
     }
 
     private void createClosureArtifacts(
@@ -381,8 +386,8 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                     .setParameter("accountId", accountId)
                     .setParameter("eventId", eventId)
                     .executeUpdate();
-            if (inserted != 8) {
-                throw new IllegalStateException("Eight fail-closed retention evidence rows are required");
+            if (inserted != retentionCategoryCount()) {
+                throw new IllegalStateException("One fail-closed retention evidence row per category is required");
             }
         } else {
             int inserted = entityManager.createNativeQuery("""
@@ -403,8 +408,8 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                     .setParameter("closedAt", closedAt)
                     .setParameter("policyVersion", policyVersion)
                     .executeUpdate();
-            if (inserted != 8) {
-                throw new IllegalStateException("Approved retention policy must contain exactly eight rules");
+            if (inserted != retentionCategoryCount()) {
+                throw new IllegalStateException("Approved retention policy must contain exactly one rule per category");
             }
         }
         quarantineIdentifiers(accountId, eventId, closedAt);
@@ -416,7 +421,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                             (account_id, lifecycle_event_id, identifier_kind, provider_code,
                              identifier_fingerprint, fingerprint_key_version,
                              quarantined_at, reuse_eligible_at)
-                        select :accountId, :eventId, 'EMAIL', 'EMAIL', email_lookup_hmac,
+                        select :accountId, :eventId, 'EMAIL', 'PASSWORD', email_lookup_hmac,
                                email_lookup_key_version, cast(:closedAt as timestamptz),
                                cast(:closedAt as timestamptz) + interval '30 days'
                         from identity.account_emails
@@ -445,6 +450,12 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                 .setParameter("eventId", eventId)
                 .setParameter("closedAt", closedAt)
                 .executeUpdate();
+    }
+
+    private int retentionCategoryCount() {
+        return ((Number) entityManager.createNativeQuery(
+                        "select cardinality(enum_range(NULL::identity.account_data_category))")
+                .getSingleResult()).intValue();
     }
 
     private static boolean systemCommand(AccountLifecycleCommandType commandType) {

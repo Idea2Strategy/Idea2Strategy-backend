@@ -3,6 +3,7 @@ package com.idea2strategy.backend.application.identity;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.List;
 
 public record ActivateOidcLink(
         UUID accountId,
@@ -11,7 +12,8 @@ public record ActivateOidcLink(
         short providerId,
         String subjectHmac,
         UUID correlationId,
-        Instant activatedAt) {
+        Instant activatedAt,
+        List<IdentifierFingerprint> comparisonFingerprints) {
     public ActivateOidcLink {
         Objects.requireNonNull(accountId, "accountId");
         Objects.requireNonNull(reauthenticatedLoginIdentityId, "reauthenticatedLoginIdentityId");
@@ -25,5 +27,13 @@ public record ActivateOidcLink(
         if (providerId < 1 || subjectHmac.isBlank()) {
             throw new IllegalArgumentException("Verified OIDC identity must be present");
         }
+        comparisonFingerprints = List.copyOf(Objects.requireNonNull(comparisonFingerprints, "comparisonFingerprints"));
+    }
+
+    public ActivateOidcLink(UUID accountId, UUID reauthenticatedLoginIdentityId,
+                            UUID pendingLoginIdentityId, short providerId, String subjectHmac,
+                            UUID correlationId, Instant activatedAt) {
+        this(accountId, reauthenticatedLoginIdentityId, pendingLoginIdentityId, providerId,
+                subjectHmac, correlationId, activatedAt, List.of());
     }
 }
