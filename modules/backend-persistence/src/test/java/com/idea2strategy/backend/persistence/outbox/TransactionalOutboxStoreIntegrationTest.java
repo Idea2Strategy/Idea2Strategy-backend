@@ -52,8 +52,6 @@ class TransactionalOutboxStoreIntegrationTest {
         jdbc.update("delete from operations.audit_events where action_type = 'OPERATIONS_OUTBOX_REPLAY'");
         jdbc.update("delete from operations.role_permissions");
         jdbc.update("delete from operations.operator_role_assignments");
-        jdbc.update("delete from operations.permissions where code = 'OPERATIONS_OUTBOX_REPLAY'");
-        jdbc.update("delete from operations.roles where code = 'OUTBOX_OPERATOR'");
         jdbc.update("delete from operations.operator_accounts where external_identity_key_hmac like 'outbox-test-%'");
     }
 
@@ -152,6 +150,7 @@ class TransactionalOutboxStoreIntegrationTest {
         UUID operator = UUID.randomUUID();
         UUID role = UUID.randomUUID();
         UUID permission = UUID.randomUUID();
+        String catalog = "outbox-test-" + UUID.randomUUID();
         jdbc.update("""
                 insert into operations.operator_accounts
                     (id, external_identity_key_hmac, status, mfa_enrolled_at,
@@ -162,10 +161,35 @@ class TransactionalOutboxStoreIntegrationTest {
         jdbc.update("insert into operations.permissions (id, code, description, sensitivity) values (?, 'OPERATIONS_OUTBOX_REPLAY', 'Replay dead letters', 'HIGH')", permission);
         jdbc.update("insert into operations.role_permissions (role_id, permission_id) values (?, ?)", role, permission);
         jdbc.update("""
+                insert into operations.rbac_catalog_versions
+                    (catalog_version, content_hash, status)
+                values (?, ?, 'DRAFT')
+                """, catalog, UUID.randomUUID().toString().replace("-", "").repeat(2));
+        jdbc.update("""
+                insert into operations.rbac_catalog_roles
+                    (catalog_version, role_id, hierarchy_rank, role_status)
+                values (?, ?, 1, 'ACTIVE')
+                """, catalog, role);
+        jdbc.update("""
+                insert into operations.rbac_catalog_permissions
+                    (catalog_version, permission_id, permission_status)
+                values (?, ?, 'ACTIVE')
+                """, catalog, permission);
+        jdbc.update("""
+                insert into operations.rbac_catalog_role_permissions
+                    (catalog_version, role_id, permission_id, delegable)
+                values (?, ?, ?, false)
+                """, catalog, role, permission);
+        jdbc.update("""
+                update operations.rbac_catalog_versions
+                set status = 'ACTIVE', activated_at = clock_timestamp()
+                where catalog_version = ?
+                """, catalog);
+        jdbc.update("""
                 insert into operations.operator_role_assignments
-                    (operator_account_id, role_id, granted_by_operator_id, granted_at)
-                values (?, ?, ?, clock_timestamp())
-                """, operator, role, operator);
+                    (operator_account_id, role_id, catalog_version, granted_by_operator_id, granted_at)
+                values (?, ?, ?, ?, clock_timestamp())
+                """, operator, role, catalog, operator);
         return operator;
     }
 
