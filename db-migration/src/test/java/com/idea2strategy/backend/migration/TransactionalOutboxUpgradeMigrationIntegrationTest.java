@@ -16,7 +16,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @Testcontainers(disabledWithoutDocker = true)
 class TransactionalOutboxUpgradeMigrationIntegrationTest {
-    private static final String MIGRATION = "V20260802230050__backend_transactional_outbox.sql";
+    private static final String MIGRATION = "V20260802231100__backend_transactional_outbox.sql";
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
