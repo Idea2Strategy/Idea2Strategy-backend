@@ -118,7 +118,6 @@ public class IdentityJpaCommandAdapter
                 registration.requestedAt(),
                 registration.expiresAt(),
                 registration.requestIpPrefix());
-        insertLifecycleEvent(registration.accountId(), null, "PENDING_VERIFICATION", "SIGNUP_REQUESTED", now);
         insertAuthenticationEvent(
                 registration.accountId(),
                 "SIGNUP_REQUESTED",
@@ -196,16 +195,14 @@ public class IdentityJpaCommandAdapter
                 .setParameter("now", now)
                 .setParameter("loginId", loginId)
                 .executeUpdate();
-        entityManager.createNativeQuery("""
-                        update identity.accounts
-                        set lifecycle_status = cast('ACTIVE' as identity.account_lifecycle_status),
-                            status_changed_at = :now
-                        where id = :accountId
-                        """)
-                .setParameter("now", now)
-                .setParameter("accountId", accountId)
-                .executeUpdate();
-        insertLifecycleEvent(accountId, "PENDING_VERIFICATION", "ACTIVE", "EMAIL_VERIFIED", now);
+        transitionLifecycle(
+                accountId,
+                "PENDING_VERIFICATION",
+                "ACTIVE",
+                "EMAIL_VERIFIED",
+                correlationId,
+                "verify:" + correlationId,
+                now);
         insertAuthenticationEvent(
                 accountId,
                 "EMAIL_VERIFIED",
@@ -316,6 +313,15 @@ public class IdentityJpaCommandAdapter
                         """)
                 .setParameter("now", now)
                 .setParameter("loginId", success.loginIdentityId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.accounts
+                        set last_successful_auth_at = :now
+                        where id = :accountId
+                          and (last_successful_auth_at is null or last_successful_auth_at < :now)
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", success.accountId())
                 .executeUpdate();
         insertAuthenticationEvent(
                 success.accountId(),
@@ -998,22 +1004,52 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
     }
 
-    private void insertLifecycleEvent(
-            UUID accountId, String previousStatus, String newStatus, String reason, OffsetDateTime occurredAt) {
+    private void transitionLifecycle(
+            UUID accountId,
+            String previousStatus,
+            String newStatus,
+            String reason,
+            UUID correlationId,
+            String idempotencyKey,
+            OffsetDateTime occurredAt) {
+        UUID eventId = UUID.randomUUID();
         entityManager.createNativeQuery("""
                         insert into identity.account_lifecycle_events
-                            (id, account_id, event_sequence, previous_status, new_status, reason_code, occurred_at)
-                        values (gen_random_uuid(), :accountId,
-                                (select coalesce(max(event_sequence), 0) + 1
-                                 from identity.account_lifecycle_events where account_id = :accountId),
-                                cast(:previousStatus as identity.account_lifecycle_status),
-                                cast(:newStatus as identity.account_lifecycle_status), :reason, :occurredAt)
+                            (id, account_id, event_sequence, previous_event_id, lifecycle_version,
+                             previous_status, new_status, command_type, actor_type, actor_id,
+                             correlation_id, idempotency_key, request_hash, reason_code, occurred_at)
+                        select :eventId, account.id, account.lifecycle_version + 1,
+                               account.last_lifecycle_event_id, account.lifecycle_version + 1,
+                               cast(:previousStatus as identity.account_lifecycle_status),
+                               cast(:newStatus as identity.account_lifecycle_status), :reason,
+                               'ACCOUNT', account.id::text, :correlationId, :idempotencyKey,
+                               md5(:idempotencyKey) || md5(:idempotencyKey || ':2'), :reason, :occurredAt
+                        from identity.accounts account
+                        where account.id = :accountId
                         """)
+                .setParameter("eventId", eventId)
                 .setParameter("accountId", accountId)
                 .setParameter("previousStatus", previousStatus)
                 .setParameter("newStatus", newStatus)
                 .setParameter("reason", reason)
+                .setParameter("correlationId", correlationId)
+                .setParameter("idempotencyKey", idempotencyKey)
                 .setParameter("occurredAt", occurredAt)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.accounts
+                        set lifecycle_status = cast(:newStatus as identity.account_lifecycle_status),
+                            status_changed_at = :occurredAt,
+                            lifecycle_version = lifecycle_version + 1,
+                            last_lifecycle_event_id = :eventId
+                        where id = :accountId
+                          and lifecycle_status = cast(:previousStatus as identity.account_lifecycle_status)
+                        """)
+                .setParameter("newStatus", newStatus)
+                .setParameter("occurredAt", occurredAt)
+                .setParameter("eventId", eventId)
+                .setParameter("accountId", accountId)
+                .setParameter("previousStatus", previousStatus)
                 .executeUpdate();
     }
 

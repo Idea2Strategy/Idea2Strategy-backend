@@ -59,6 +59,7 @@ class PostEvaluationChoicePersistenceIntegrationTest {
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from bot.launch_snapshots");
         jdbc.update("delete from bot.bots");
+        jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id in (?, ?)", OWNER_ID, OTHER_OWNER_ID);
         jdbc.update(
                 "insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE'), (?, 'ACTIVE')",

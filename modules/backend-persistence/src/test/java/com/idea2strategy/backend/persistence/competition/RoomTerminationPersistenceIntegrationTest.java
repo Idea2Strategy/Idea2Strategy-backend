@@ -70,6 +70,7 @@ class RoomTerminationPersistenceIntegrationTest {
         jdbc.update("delete from bot.launch_snapshots");
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
+        jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
         jdbc.update("delete from identity.accounts where id = ?", PARTICIPANT_OWNER_ID);
         jdbc.update(

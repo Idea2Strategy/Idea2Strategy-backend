@@ -6,6 +6,12 @@ import com.idea2strategy.backend.application.competition.RoomBotProvisioningActi
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionFailure;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionContext;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionOutcome;
+import com.idea2strategy.backend.application.identity.AccountLifecycleAuthenticationMethod;
+import com.idea2strategy.backend.application.identity.AccountLifecycleAuthenticationProof;
+import com.idea2strategy.backend.application.identity.AccountLifecycleCommand;
+import com.idea2strategy.backend.application.identity.AccountLifecycleService;
+import com.idea2strategy.backend.persistence.identity.AccountLifecycleJpaCommandAdapter;
+import java.time.Clock;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionRequest;
 import com.idea2strategy.backend.application.competition.RoomSubmissionTiming;
 import java.time.Instant;
@@ -64,6 +70,9 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private AccountLifecycleJpaCommandAdapter lifecycleCommands;
+
     @BeforeEach
     void prepareReferences() {
         jdbc.update("delete from competition.participation_events");
@@ -77,11 +86,17 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
+        jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
+        jdbc.update("delete from identity.account_security_states where account_id in (?, ?, ?)", CREATOR_ID, OWNER_A, OWNER_B);
         jdbc.update("delete from identity.accounts where id in (?, ?, ?)", CREATOR_ID, OWNER_A, OWNER_B);
         var at = NOW.atOffset(ZoneOffset.UTC);
         for (UUID accountId : List.of(CREATOR_ID, OWNER_A, OWNER_B)) {
             jdbc.update(
                     "insert into identity.accounts (id, lifecycle_status, status_changed_at) values (?, 'ACTIVE', ?)",
+                    accountId,
+                    at);
+            jdbc.update(
+                    "insert into identity.account_security_states (account_id, auth_epoch, updated_at) values (?, 1, ?)",
                     accountId,
                     at);
         }
@@ -219,13 +234,17 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     @Test
     void rejectsIneligibleAccountClosedScheduleAndInvalidProvisioningWithoutPartialRows() {
         insertRoom(ROOM_A, 2, 2);
-        jdbc.update(
-                "update identity.accounts set lifecycle_status = 'CLOSING' where id = ?", OWNER_A);
+        var lifecycle = new AccountLifecycleService(
+                lifecycleCommands, (candidateCutoff, limit) -> List.of(), Clock.fixed(NOW, ZoneOffset.UTC));
+        var proof = new AccountLifecycleAuthenticationProof(
+                AccountLifecycleAuthenticationMethod.PASSWORD, NOW, true);
+        lifecycle.requestWithdrawal(new AccountLifecycleCommand(
+                OWNER_A, "participation-ineligible", "participation-ineligible", UUID.randomUUID(), proof));
         var inactive = adapter.admit(request(31, ROOM_A, OWNER_A, "bot-a"), provision(id(131), OWNER_A));
         assertThat(inactive.failure()).isEqualTo(RoomParticipationAdmissionFailure.ACCOUNT_INELIGIBLE);
 
-        jdbc.update(
-                "update identity.accounts set lifecycle_status = 'ACTIVE' where id = ?", OWNER_A);
+        lifecycle.cancelWithdrawal(new AccountLifecycleCommand(
+                OWNER_A, "participation-reactivate", "participation-reactivate", UUID.randomUUID(), proof));
         jdbc.update(
                 "update competition.room_schedules set participation_closes_at = ? where room_id = ?",
                 NOW.atOffset(ZoneOffset.UTC),
@@ -386,6 +405,6 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import(RoomParticipationAdmissionJooqAdapter.class)
+    @Import({RoomParticipationAdmissionJooqAdapter.class, AccountLifecycleJpaCommandAdapter.class})
     static class TestApplication {}
 }

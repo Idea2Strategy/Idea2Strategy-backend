@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.api.identity;
 
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
+import com.idea2strategy.backend.application.identity.AccountLifecycleRejectedException;
 import com.idea2strategy.backend.application.identity.AccountPreferencesNotFoundException;
 import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.PasswordPolicyException;
@@ -15,6 +16,28 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class IdentityAuthExceptionHandler {
+    @ExceptionHandler(LifecycleRequestRejectedException.class)
+    ResponseEntity<Map<String, String>> lifecycleRequest(LifecycleRequestRejectedException exception) {
+        HttpStatus status = switch (exception.code()) {
+            case "STEP_UP_REQUIRED" -> HttpStatus.FORBIDDEN;
+            case "ACCOUNT_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            default -> HttpStatus.CONFLICT;
+        };
+        return ResponseEntity.status(status).body(Map.of(
+                "code", exception.code(),
+                "correlation_id", exception.correlationId().toString()));
+    }
+
+    @ExceptionHandler(AccountLifecycleRejectedException.class)
+    ResponseEntity<Map<String, String>> lifecycle(AccountLifecycleRejectedException exception) {
+        HttpStatus status = switch (exception.code()) {
+            case "STEP_UP_REQUIRED" -> HttpStatus.FORBIDDEN;
+            case "ACCOUNT_NOT_FOUND" -> HttpStatus.NOT_FOUND;
+            default -> HttpStatus.CONFLICT;
+        };
+        return ResponseEntity.status(status).body(Map.of("code", exception.code()));
+    }
+
     @ExceptionHandler(AccountPreferencesNotFoundException.class)
     ResponseEntity<Map<String, String>> preferencesNotFound(AccountPreferencesNotFoundException exception) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("code", "ACCOUNT_PREFERENCES_NOT_FOUND"));

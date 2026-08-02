@@ -63,6 +63,7 @@ class LiveEvaluationEligibilityPersistenceIntegrationTest {
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_POLICY_ID);
+        jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
         jdbc.update(

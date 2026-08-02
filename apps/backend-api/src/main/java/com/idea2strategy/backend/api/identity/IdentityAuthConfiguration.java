@@ -3,6 +3,10 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
 import com.idea2strategy.backend.application.identity.EmailRegistrationService;
 import com.idea2strategy.backend.application.identity.AccountPreferencesService;
+import com.idea2strategy.backend.application.identity.AccountLifecycleCandidateQueryPort;
+import com.idea2strategy.backend.application.identity.AccountLifecycleCommandPort;
+import com.idea2strategy.backend.application.identity.AccountLifecycleService;
+import com.idea2strategy.backend.application.identity.LifecyclePasswordStepUpService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
 import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
@@ -13,6 +17,8 @@ import java.time.Duration;
 import com.idea2strategy.backend.persistence.identity.IdentityAccountJpaEntity;
 import com.idea2strategy.backend.persistence.identity.AccountPreferencesConsentJpaAdapter;
 import com.idea2strategy.backend.persistence.identity.AccountPreferencesConsentJooqAdapter;
+import com.idea2strategy.backend.persistence.identity.AccountLifecycleJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.identity.AccountLifecycleJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJpaCommandAdapter;
 import java.time.Clock;
@@ -34,6 +40,8 @@ import org.springframework.context.ApplicationEventPublisher;
 @Import({
         IdentityJooqQueryAdapter.class,
         IdentityJpaCommandAdapter.class,
+        AccountLifecycleJooqQueryAdapter.class,
+        AccountLifecycleJpaCommandAdapter.class,
         AccountPreferencesConsentJooqAdapter.class,
         AccountPreferencesConsentJpaAdapter.class
 })
@@ -164,6 +172,25 @@ public class IdentityAuthConfiguration {
             Clock identityClock,
             @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime) {
         return new SessionManagementService(queries, commands, identityClock, sessionTokens, sessionLifetime);
+    }
+
+    @Bean
+    AccountLifecycleService accountLifecycleService(
+            AccountLifecycleCommandPort commands,
+            AccountLifecycleCandidateQueryPort candidates,
+            Clock identityClock) {
+        return new AccountLifecycleService(commands, candidates, identityClock);
+    }
+
+    @Bean
+    LifecyclePasswordStepUpService lifecyclePasswordStepUpService(
+            IdentityJooqQueryAdapter queries,
+            IdentityJpaCommandAdapter commands,
+            Pbkdf2PasswordCodec passwordCodec,
+            AesGcmEmailProtector emailProtector,
+            Clock identityClock) {
+        return new LifecyclePasswordStepUpService(
+                queries, commands, passwordCodec, emailProtector, identityClock);
     }
 
     @Bean

@@ -72,6 +72,7 @@ class BotContinuationPersistenceIntegrationTest {
         jdbc.update("delete from bot.continuation_deadlines where bot_id = ?", BOT_ID);
         jdbc.update("delete from bot.bots where id = ?", BOT_ID);
         jdbc.update("delete from competition.rooms where id = ?", ROOM_ID);
+        jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
     }
 
