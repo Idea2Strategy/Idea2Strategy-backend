@@ -118,7 +118,8 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     void comparesEveryViewerOwnedBotWithoutRequiringACommonSymbolOrLeakingOtherBots() {
         seedLeaderboard();
         jdbc.update(
-                "update competition.leaderboard_entries set eligibility_status = 'INELIGIBLE_PRIVATE' "
+                "update competition.leaderboard_entries set eligibility_status = 'INELIGIBLE_PRIVATE', "
+                        + "eligibility_reason_code = 'COVERAGE_BELOW_MINIMUM', rank = null, score = null "
                         + "where snapshot_id = ? and participation_id = ?",
                 SNAPSHOT_ID, id(12));
 
@@ -132,11 +133,18 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
             assertThat(row.item().viewerEvidence().botId()).isIn(id(20), id(22));
         });
         assertThat(owned.rows().getLast().item().eligibilityStatus()).isEqualTo("INELIGIBLE_PRIVATE");
+        assertThat(owned.rows().getLast().item().rank()).isNull();
+        assertThat(owned.rows().getLast().item().score()).isNull();
     }
 
     @Test
     void keepsOwnedPaginationViewerScopedAndRejectsAnAnonymousLeaderboardCursor() {
         seedLeaderboard();
+        jdbc.update(
+                "update competition.leaderboard_entries set eligibility_status = 'INELIGIBLE_PRIVATE', "
+                        + "eligibility_reason_code = 'COVERAGE_BELOW_MINIMUM', rank = null, score = null "
+                        + "where snapshot_id = ? and participation_id = ?",
+                SNAPSHOT_ID, id(12));
         var first = adapter.queryOwned(query(ROOM_ID, VIEWER_ID, null, null, 1));
         var continued = adapter.queryOwned(query(
                 ROOM_ID, VIEWER_ID, SNAPSHOT_ID,

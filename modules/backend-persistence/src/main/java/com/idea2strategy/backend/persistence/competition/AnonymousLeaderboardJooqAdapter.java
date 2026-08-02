@@ -125,8 +125,9 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
                         + "('WITHDRAWN'::competition.participation_status, "
                         + "'EXPELLED'::competition.participation_status) and "
                         + "(le.eligibility_status = 'ELIGIBLE' or p.owner_account_id = ?) and "
-                        + "(?::int is null or le.rank > ? or (le.rank = ? and le.participation_id > ?)) "
-                        + "order by le.rank, le.participation_id limit ?",
+                        + "(?::int is null or coalesce(le.rank, 2147483647) > ? "
+                        + "or (coalesce(le.rank, 2147483647) = ? and le.participation_id > ?)) "
+                        + "order by le.rank nulls last, le.participation_id limit ?",
                 query.viewerAccountId(), query.viewerAccountId(), query.viewerAccountId(),
                 query.viewerAccountId(), query.viewerAccountId(), snapshotId,
                 query.viewerAccountId(), query.afterRank(), query.afterRank(), query.afterRank(), afterParticipationId,
@@ -176,8 +177,9 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
                         + "where le.snapshot_id = ? and p.owner_account_id = ? and p.status not in "
                         + "('WITHDRAWN'::competition.participation_status, "
                         + "'EXPELLED'::competition.participation_status) and "
-                        + "(?::int is null or le.rank > ? or (le.rank = ? and le.participation_id > ?)) "
-                        + "order by le.rank, le.participation_id limit ?",
+                        + "(?::int is null or coalesce(le.rank, 2147483647) > ? "
+                        + "or (coalesce(le.rank, 2147483647) = ? and le.participation_id > ?)) "
+                        + "order by le.rank nulls last, le.participation_id limit ?",
                 snapshotId, query.viewerAccountId(), query.afterRank(), query.afterRank(),
                 query.afterRank(), afterParticipationId, query.limit());
     }
@@ -213,12 +215,13 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
         var candidates = ownerScope == null
                 ? dsl.fetch(
                         "select le.participation_id from competition.leaderboard_entries le "
-                                + "where le.snapshot_id = ? and le.rank = ?",
+                                + "where le.snapshot_id = ? and coalesce(le.rank, 2147483647) = ?",
                         snapshotId, rank)
                 : dsl.fetch(
                         "select le.participation_id from competition.leaderboard_entries le "
                                 + "join competition.participations p on p.id = le.participation_id "
-                                + "where le.snapshot_id = ? and le.rank = ? and p.owner_account_id = ?",
+                                + "where le.snapshot_id = ? and coalesce(le.rank, 2147483647) = ? "
+                                + "and p.owner_account_id = ?",
                         snapshotId, rank, ownerScope);
         return candidates.stream()
                 .map(record -> record.get("participation_id", UUID.class))
@@ -253,12 +256,13 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
                         owned));
     }
 
-    private static String rowAnchor(UUID snapshotId, int rank, UUID participationId, UUID ownerScope) {
+    private static String rowAnchor(UUID snapshotId, Integer rank, UUID participationId, UUID ownerScope) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(snapshotId.toString().getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
-            digest.update(Integer.toString(rank).getBytes(StandardCharsets.UTF_8));
+            digest.update((rank == null || rank == Integer.MAX_VALUE ? "UNRANKED" : Integer.toString(rank))
+                    .getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
             digest.update(participationId.toString().getBytes(StandardCharsets.UTF_8));
             if (ownerScope != null) {

@@ -1,0 +1,95 @@
+package com.idea2strategy.backend.persistence.competition;
+
+import com.idea2strategy.backend.application.competition.FinalLeaderboardEntry;
+import com.idea2strategy.backend.application.competition.FinalRoomResult;
+import com.idea2strategy.backend.application.competition.FinalRoomResultConflictException;
+import com.idea2strategy.backend.application.competition.FinalRoomResultPort;
+import com.idea2strategy.backend.application.competition.FinalRoomResultWriteDecision;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.UUID;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+@Repository
+public class FinalRoomResultJooqAdapter implements FinalRoomResultPort {
+    private final DSLContext dsl;
+
+    public FinalRoomResultJooqAdapter(DSLContext dsl) {
+        this.dsl = dsl;
+    }
+
+    @Override
+    @Transactional
+    public FinalRoomResultWriteDecision save(FinalRoomResult result) {
+        Record room = dsl.fetchOne(
+                "select r.status::text as status, rs.evaluation_ends_at, "
+                        + "rr.scoring_template_version_id "
+                        + "from competition.rooms r "
+                        + "join competition.room_schedules rs on rs.room_id = r.id "
+                        + "join competition.room_rules rr on rr.room_id = r.id "
+                        + "where r.id = ? for update of r",
+                result.roomId());
+        if (room == null) {
+            throw new FinalRoomResultConflictException("room does not exist");
+        }
+        if (!"ENDED".equals(room.get("status", String.class))) {
+            throw new FinalRoomResultConflictException("room must be ended before final result publication");
+        }
+        OffsetDateTime cutoff = result.cutoffAt().atOffset(ZoneOffset.UTC);
+        if (!cutoff.toInstant().equals(room.get("evaluation_ends_at", OffsetDateTime.class).toInstant())
+                || !result.scoringTemplateVersionId().equals(
+                        room.get("scoring_template_version_id", UUID.class))) {
+            throw new FinalRoomResultConflictException("final result does not match the locked room rules");
+        }
+
+        Record existing = dsl.fetchOne(
+                "select id, result_hash, scoring_template_version_id, cutoff_at, "
+                        + "(select count(*) from competition.leaderboard_entries le "
+                        + "where le.snapshot_id = ls.id) as entry_count "
+                        + "from competition.leaderboard_snapshots ls "
+                        + "where ls.room_id = ? and ls.cutoff_at = ? for update",
+                result.roomId(), cutoff);
+        if (existing != null) {
+            boolean identical = result.snapshotId().equals(existing.get("id", UUID.class))
+                    && result.resultHash().equals(existing.get("result_hash", String.class))
+                    && result.scoringTemplateVersionId().equals(
+                            existing.get("scoring_template_version_id", UUID.class))
+                    && result.entries().size() == existing.get("entry_count", Integer.class);
+            if (identical) {
+                return FinalRoomResultWriteDecision.ALREADY_FINALIZED_IDENTICALLY;
+            }
+            throw new FinalRoomResultConflictException("a different final result already exists for the room");
+        }
+
+        for (FinalLeaderboardEntry entry : result.entries()) {
+            if (!Boolean.TRUE.equals(dsl.fetchValue(
+                    "select exists(select 1 from competition.participations "
+                            + "where id = ? and room_id = ?)",
+                    entry.participationId(), result.roomId()))) {
+                throw new FinalRoomResultConflictException("final result contains a foreign participation");
+            }
+        }
+
+        dsl.execute(
+                "insert into competition.leaderboard_snapshots "
+                        + "(id, room_id, scoring_template_version_id, cutoff_at, status, result_hash, created_at) "
+                        + "values (?, ?, ?, ?, 'FINAL'::competition.leaderboard_status, ?, ?)",
+                result.snapshotId(), result.roomId(), result.scoringTemplateVersionId(), cutoff,
+                result.resultHash(), result.createdAt().atOffset(ZoneOffset.UTC));
+        for (FinalLeaderboardEntry entry : result.entries()) {
+            dsl.execute(
+                    "insert into competition.leaderboard_entries "
+                            + "(snapshot_id, participation_id, performance_snapshot_id, rank, is_joint_rank, "
+                            + "eligibility_status, eligibility_reason_code, score, tie_break_document, "
+                            + "calculation_document) values (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)",
+                    result.snapshotId(), entry.participationId(), entry.performanceSnapshotId(), entry.rank(),
+                    entry.jointRank(), entry.eligibilityStatus(),
+                    entry.eligibilityReason() == null ? null : entry.eligibilityReason().name(), entry.score(),
+                    entry.tieBreakDocument(), entry.calculationDocument());
+        }
+        return FinalRoomResultWriteDecision.CREATED;
+    }
+}

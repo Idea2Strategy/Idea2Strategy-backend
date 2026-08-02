@@ -47,7 +47,8 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802060200__backend_account_lifecycle_command_receipts.sql",
                         "V20260802060300__backend_oidc_step_up_nonces.sql",
                         "V20260802110000__pipeline_add_manifest_marker.sql",
-                        "V20260802120000__trading_add_execution_marker.sql"),
+                        "V20260802120000__trading_add_execution_marker.sql",
+                        "V20260802194500__backend_final_leaderboard_unranked_entries.sql"),
                 result.orderedFileNames());
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));
