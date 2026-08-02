@@ -29,7 +29,7 @@ class TransactionalOutboxUpgradeMigrationIntegrationTest {
         Path beforeA17 = Files.createDirectories(temporaryDirectory.resolve("before-a17"));
         try (var files = Files.list(central)) {
             for (Path source : files.filter(Files::isRegularFile).toList()) {
-                if (predatesOutboxUpgrade(source.getFileName().toString())) {
+                if (source.getFileName().toString().compareTo(MIGRATION) < 0) {
                     Files.copy(source, beforeA17.resolve(source.getFileName()));
                 }
             }
@@ -47,18 +47,6 @@ class TransactionalOutboxUpgradeMigrationIntegrationTest {
         assertEquals("{\"legacy\": true}", scalar("select payload_document::text from operations.outbox_messages where id = ?", pending));
         assertEquals("operations.outbox_delivery_attempts", scalar("select to_regclass('operations.outbox_delivery_attempts')::text", null));
         assertEquals("operations.outbox_consumer_receipts", scalar("select to_regclass('operations.outbox_consumer_receipts')::text", null));
-    }
-
-    private static boolean predatesOutboxUpgrade(String fileName) {
-        if (MigrationPolicy.BASELINE_FILE.equals(fileName)) {
-            return true;
-        }
-        int separator = fileName.indexOf("__");
-        int migrationSeparator = MIGRATION.indexOf("__");
-        return separator > 1
-                && fileName.startsWith("V")
-                && fileName.substring(1, separator)
-                        .compareTo(MIGRATION.substring(1, migrationSeparator)) < 0;
     }
 
     private UUID insertLegacy(String key, boolean published) throws Exception {
