@@ -80,6 +80,8 @@ After a successful deployment, older application versions can ignore the added c
 
 `V20260802231600__backend_account_sanction_commands.sql` prepares A14 account sanction heads, stable appeal references, append-only history, due-expiry lookup, and immutable idempotency receipts. It preserves account, strategy, trading, audit, and case data and remains non-canonical until the A13/A17 parents and product contract are approved.
 
+`V20260802231700__backend_operator_case_workflow.sql` adds A20's versioned operator assignment projection, operator-only case event types, immutable command receipts, and queue indexes. It depends on the reviewed A13, A17, and A19 candidate migrations and remains non-release-ready until those canonical parents and A14 are integrated.
+
 These migrations are forward-only. If deployment fails, preserve their bytes, correct the environmental or data cause, and rerun after Flyway repair/validation. Do not drop lifecycle evidence, retention records, legal holds, or quarantine tombstones as rollback; restore the pre-deployment database backup only for a whole-release rollback, otherwise ship a new forward-fix migration.
 
 각 도메인 소유자가 자신의 변경을 새 migration으로 작성하고, 중앙 통합 담당자가 순서 충돌과 `db/schema.dbml` 일치를 검토합니다.
