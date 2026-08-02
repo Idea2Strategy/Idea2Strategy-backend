@@ -1,7 +1,10 @@
 package com.idea2strategy.backend.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
@@ -10,7 +13,14 @@ import org.springframework.boot.test.context.SpringBootTest;
                 + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
                 + "org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration")
 class BackendApiApplicationTest {
+    private final ApplicationContext context;
+
+    BackendApiApplicationTest(ApplicationContext context) {
+        this.context = context;
+    }
+
     @Test
     void contextLoads() {
+        assertThat(context.containsBean("accountSanctionJdbcAdapter")).isFalse();
     }
 }
