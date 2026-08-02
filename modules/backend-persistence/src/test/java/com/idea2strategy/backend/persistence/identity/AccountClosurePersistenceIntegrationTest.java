@@ -383,6 +383,25 @@ class AccountClosurePersistenceIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "select cast(status as text) from competition.participations where id = ?",
                 String.class, evaluating)).isEqualTo("EVALUATING");
+        jdbc.update("""
+                update competition.participations
+                set status = 'WITHDRAWN', withdrawn_at = ?
+                where id = ?
+                """, REQUESTED.atOffset(ZoneOffset.UTC), evaluating);
+        UUID activeBot = insertBot(accountId, "STOPPED");
+        UUID active = UUID.randomUUID();
+        jdbc.update("""
+                insert into competition.participations
+                    (id, room_id, bot_id, owner_account_id, anonymous_alias, status,
+                     joined_at, evaluation_started_at)
+                values (?, ?, ?, ?, 'active', 'ACTIVE', ?, ?)
+                """, active, roomId, activeBot, accountId,
+                REQUESTED.atOffset(ZoneOffset.UTC), REQUESTED.atOffset(ZoneOffset.UTC));
+        assertThat(probe.evaluate(accountId, UUID.randomUUID(), REQUESTED.plusSeconds(2)).status())
+                .isEqualTo(ClosureReadinessStatus.BLOCKED);
+        assertThat(jdbc.queryForObject(
+                "select cast(status as text) from competition.participations where id = ?",
+                String.class, active)).isEqualTo("ACTIVE");
     }
 
     @Test
@@ -491,10 +510,19 @@ class AccountClosurePersistenceIntegrationTest {
                 insert into competition.participations
                     (id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at)
                 values (?, ?, ?, ?, 'blocked', 'REGISTERED', ?)
-                """, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), accountId,
+                """, UUID.randomUUID(), UUID.randomUUID(), existingBotId, accountId,
                 REQUESTED.atOffset(ZoneOffset.UTC)))
                 .isInstanceOf(RuntimeException.class)
                 .hasStackTraceContaining("account is not ACTIVE");
+        UUID otherActiveAccount = activeAccount();
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into competition.participations
+                    (id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at)
+                values (?, ?, ?, ?, 'mismatch', 'REGISTERED', ?)
+                """, UUID.randomUUID(), UUID.randomUUID(), existingBotId, otherActiveAccount,
+                REQUESTED.atOffset(ZoneOffset.UTC)))
+                .isInstanceOf(RuntimeException.class)
+                .hasStackTraceContaining("participation owner does not match bot owner");
         assertThatThrownBy(() -> jdbc.update("""
                 insert into trading.orders
                     (id, bot_id, partition_id, instrument_id, order_key, side, order_type,

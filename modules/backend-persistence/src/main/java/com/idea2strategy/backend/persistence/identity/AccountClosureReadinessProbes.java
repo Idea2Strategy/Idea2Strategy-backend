@@ -99,13 +99,14 @@ class CompetitionAccountClosureReadinessProbe implements AccountClosureReadiness
     @Override
     @Transactional
     public ClosureReadiness evaluate(UUID accountId, UUID correlationId, Instant observedAt) {
-        int evaluating = dsl.fetchOne(
+        int active = dsl.fetchOne(
                 "select count(*) from competition.participations where owner_account_id = ? "
-                        + "and status = 'EVALUATING'::competition.participation_status", accountId)
+                        + "and status in ('ACTIVE'::competition.participation_status, "
+                        + "'EVALUATING'::competition.participation_status)", accountId)
                 .get(0, Integer.class);
-        if (evaluating > 0) {
+        if (active > 0) {
             return AccountClosureReadinessProbes.readiness(domain(), ClosureReadinessStatus.BLOCKED,
-                    "EVALUATION_FINALIZATION_REQUIRED", evaluating, observedAt);
+                    "ACTIVE_PARTICIPATION_FINALIZATION_REQUIRED", active, observedAt);
         }
         var registered = dsl.fetch(
                 "select id from competition.participations where owner_account_id = ? "

@@ -113,9 +113,25 @@ CREATE TRIGGER bot_account_creation_gate
 BEFORE INSERT ON bot.bots
 FOR EACH ROW EXECUTE FUNCTION identity.guard_owner_account_creation();
 
+CREATE FUNCTION identity.guard_competition_participation_creation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    actual_owner_account_id uuid;
+BEGIN
+    SELECT owner_account_id INTO actual_owner_account_id
+    FROM bot.bots WHERE id = NEW.bot_id FOR SHARE;
+    IF actual_owner_account_id IS NULL OR actual_owner_account_id <> NEW.owner_account_id THEN
+        RAISE EXCEPTION 'participation owner does not match bot owner' USING ERRCODE = '55000';
+    END IF;
+    PERFORM identity.require_active_account(
+        actual_owner_account_id, TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME);
+    RETURN NEW;
+END;
+$$;
+
 CREATE TRIGGER competition_participation_creation_gate
 BEFORE INSERT ON competition.participations
-FOR EACH ROW EXECUTE FUNCTION identity.guard_owner_account_creation();
+FOR EACH ROW EXECUTE FUNCTION identity.guard_competition_participation_creation();
 
 CREATE FUNCTION identity.guard_account_scoped_activation()
 RETURNS trigger LANGUAGE plpgsql AS $$
