@@ -11,6 +11,10 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +25,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -49,6 +55,7 @@ class RoomTerminationPersistenceIntegrationTest {
 
     @Autowired RoomTerminationJooqAdapter adapter;
     @Autowired JdbcTemplate jdbc;
+    @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void prepare() {
@@ -106,10 +113,25 @@ class RoomTerminationPersistenceIntegrationTest {
         assertThat(value("select lifecycle_status::text from bot.bots where id = ?", BOT_ID))
                 .isEqualTo("STOPPING");
         assertThat(value("select stop_reason_code from bot.bots where id = ?", BOT_ID))
-                .isEqualTo("ROOM_WITHDRAWAL:OWNER_STOPPED");
+                .isEqualTo("ROOM_WITHDRAWAL");
         assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_STOP_COMMAND'"))
                 .isEqualTo(1);
         assertThat(count("select count(*) from bot.continuation_deadlines")).isZero();
+    }
+
+    @Test
+    void acceptsTheMaximumAuditReasonWithoutOverflowingTheBotStopCode() {
+        seedRoom("EVALUATING", NOW.minusSeconds(3600), NOW.minusSeconds(1800));
+        seedParticipation(BOT_ID, PARTICIPATION_ID, "EVALUATING");
+        String reason = "R".repeat(80);
+
+        adapter.withdrawOwned(
+                ROOM_ID, PARTICIPATION_ID, OWNER_ID, ParticipationExitAction.STOP, reason, NOW);
+
+        assertThat(value("select stop_reason_code from bot.bots where id = ?", BOT_ID))
+                .isEqualTo("ROOM_WITHDRAWAL");
+        assertThat(value("select withdrawal_reason_code from competition.participations where id = ?", PARTICIPATION_ID))
+                .isEqualTo(reason);
     }
 
     @Test
@@ -145,14 +167,14 @@ class RoomTerminationPersistenceIntegrationTest {
         seedParticipation(BOT_ID, PARTICIPATION_ID, "EVALUATING");
         seedParticipation(secondBot, secondParticipation, "REGISTERED");
 
-        assertThat(adapter.invalidate(ROOM_ID, OPERATOR_ID, "LEDGER_INTEGRITY", NOW)
+        assertThat(adapter.invalidate(ROOM_ID, OPERATOR_ID, "OFFICIAL_LEDGER_INTEGRITY", NOW)
                         .participationsTerminated())
                 .isEqualTo(2);
 
         assertThat(value("select status::text from competition.rooms where id = ?", ROOM_ID))
                 .isEqualTo("INVALIDATED");
         assertThat(value("select invalidation_reason_code from competition.rooms where id = ?", ROOM_ID))
-                .isEqualTo("LEDGER_INTEGRITY");
+                .isEqualTo("OFFICIAL_LEDGER_INTEGRITY");
         assertThat(value("select status::text from competition.participations where id = ?", PARTICIPATION_ID))
                 .isEqualTo("EVALUATION_FAILED");
         assertThat(value("select status::text from competition.participations where id = ?", secondParticipation))
@@ -163,6 +185,65 @@ class RoomTerminationPersistenceIntegrationTest {
         assertThat(count("select count(*) from competition.participation_events "
                 + "where event_type = 'ROOM_INVALIDATED'"))
                 .isEqualTo(2);
+    }
+
+    @Test
+    void platformInvalidationPreservesAnAlreadyStoppingBot() {
+        UUID secondBot = id(6);
+        UUID secondParticipation = id(7);
+        seedRoom("EVALUATING", NOW.minusSeconds(3600), NOW.minusSeconds(1800));
+        seedParticipation(BOT_ID, PARTICIPATION_ID, "EVALUATING");
+        seedParticipation(secondBot, secondParticipation, "REGISTERED");
+        jdbc.update(
+                "update bot.bots set lifecycle_status = 'STOPPING'::bot.lifecycle_status, "
+                        + "stop_requested_at = ?, stop_reason_code = 'OWNER_STOPPED' where id = ?",
+                utc(NOW.minusSeconds(10)), BOT_ID);
+
+        assertThat(adapter.invalidate(ROOM_ID, OPERATOR_ID, "SYSTEM_SAFETY", NOW)
+                        .participationsTerminated())
+                .isEqualTo(2);
+        assertThat(value("select lifecycle_status::text from bot.bots where id = ?", BOT_ID))
+                .isEqualTo("STOPPING");
+        assertThat(count("select count(*) from bot.continuation_deadlines where bot_id = '" + BOT_ID + "'"))
+                .isZero();
+    }
+
+    @Test
+    void withdrawalSerializesBehindTheRoomEndTransition() throws Exception {
+        seedRoom("EVALUATING", NOW.minusSeconds(3600), NOW.minusSeconds(1800));
+        seedParticipation(BOT_ID, PARTICIPATION_ID, "EVALUATING");
+        var roomLocked = new CountDownLatch(1);
+        var releaseRoom = new CountDownLatch(1);
+        var transactions = new TransactionTemplate(transactionManager);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var ending = executor.submit(() -> transactions.executeWithoutResult(ignored -> {
+                jdbc.queryForObject("select id from competition.rooms where id = ? for update", UUID.class, ROOM_ID);
+                jdbc.update("update competition.rooms set status = 'ENDED'::competition.room_status where id = ?", ROOM_ID);
+                roomLocked.countDown();
+                try {
+                    releaseRoom.await();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(exception);
+                }
+            }));
+            assertThat(roomLocked.await(5, TimeUnit.SECONDS)).isTrue();
+            var withdrawal = executor.submit(() -> adapter.withdrawOwned(
+                    ROOM_ID, PARTICIPATION_ID, OWNER_ID, ParticipationExitAction.CONTINUE_PRIVATE,
+                    "TOO_LATE", NOW));
+
+            assertThat(withdrawal.isDone()).isFalse();
+            releaseRoom.countDown();
+            ending.get();
+            assertThatThrownBy(withdrawal::get)
+                    .isInstanceOf(ExecutionException.class)
+                    .hasRootCauseInstanceOf(com.idea2strategy.backend.application.competition.RoomTerminationAccessException.class);
+        } finally {
+            releaseRoom.countDown();
+        }
+        assertThat(value("select status::text from competition.participations where id = ?", PARTICIPATION_ID))
+                .isEqualTo("EVALUATING");
     }
 
     private void seedRoom(String status, Instant participationOpensAt, Instant evaluationStartsAt) {

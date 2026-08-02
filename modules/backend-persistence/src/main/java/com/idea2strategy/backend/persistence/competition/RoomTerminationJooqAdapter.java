@@ -35,13 +35,16 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
     public RoomTerminationResult withdrawOwned(
             UUID roomId, UUID participationId, UUID ownerAccountId, ParticipationExitAction action,
             String reasonCode, Instant occurredAt) {
+        String roomStatus = (String) dsl.fetchValue(
+                "select status::text from competition.rooms where id = ? for update", roomId);
+        if (!"RECRUITING".equals(roomStatus) && !"EVALUATING".equals(roomStatus)) {
+            throw new RoomTerminationAccessException();
+        }
         Record participation = dsl.fetchOne(
                 "select p.bot_id, p.status::text as status, b.lifecycle_status::text as bot_status "
-                        + "from competition.participations p join competition.rooms r on r.id = p.room_id "
-                        + "join bot.bots b on b.id = p.bot_id "
+                        + "from competition.participations p join bot.bots b on b.id = p.bot_id "
                         + "where p.id = ? and p.room_id = ? and p.owner_account_id = ? "
-                        + "and r.status in ('RECRUITING'::competition.room_status, "
-                        + "'EVALUATING'::competition.room_status) for update of p, b",
+                        + "for update of p, b",
                 participationId, roomId, ownerAccountId);
         if (participation == null) {
             throw new RoomTerminationAccessException();
@@ -53,7 +56,7 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
         UUID botId = participation.get("bot_id", UUID.class);
         withdraw(participationId, reasonCode, "PARTICIPATION_WITHDRAWN", occurredAt);
         if (action == ParticipationExitAction.STOP) {
-            stopPort.issueOwned(botId, ownerAccountId, "ROOM_WITHDRAWAL:" + reasonCode, occurredAt)
+            stopPort.issueOwned(botId, ownerAccountId, "ROOM_WITHDRAWAL", occurredAt)
                     .orElseThrow(RoomTerminationAccessException::new);
         } else {
             continuePrivate(botId, ownerAccountId, status, occurredAt);
@@ -145,9 +148,10 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
             } else {
                 withdraw(participationId, reasonCode, eventType, occurredAt);
             }
-            continuePrivate(
-                    participation.get("bot_id", UUID.class),
-                    participation.get("owner_account_id", UUID.class), status, occurredAt);
+            UUID botId = participation.get("bot_id", UUID.class);
+            if (isRunning(botId)) {
+                continuePrivate(botId, participation.get("owner_account_id", UUID.class), status, occurredAt);
+            }
         }
         return participations.size();
     }
@@ -161,9 +165,7 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
     }
 
     private void continuePrivate(UUID botId, UUID ownerAccountId, String priorStatus, Instant occurredAt) {
-        String lifecycle = (String) dsl.fetchValue(
-                "select lifecycle_status::text from bot.bots where id = ?", botId);
-        if (!"RUNNING".equals(lifecycle)) {
+        if (!isRunning(botId)) {
             throw new RoomTerminationConflictException("Only a running room bot can continue privately");
         }
         if ("REGISTERED".equals(priorStatus)) {
@@ -181,6 +183,11 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
                             + "renewal_sequence = 0, updated_at = excluded.updated_at",
                     botId, utc(occurredAt.plus(PRIVATE_CONTINUATION_PERIOD)), utc(occurredAt), utc(occurredAt));
         }
+    }
+
+    private boolean isRunning(UUID botId) {
+        return "RUNNING".equals(dsl.fetchValue(
+                "select lifecycle_status::text from bot.bots where id = ?", botId));
     }
 
     private void participationEvent(
