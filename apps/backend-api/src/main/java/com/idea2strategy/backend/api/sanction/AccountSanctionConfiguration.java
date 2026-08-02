@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration(proxyBeanMethods = false)
+@ConditionalOnBean(JdbcTemplate.class)
 public class AccountSanctionConfiguration {
     static final UUID APPLY_PERMISSION = UUID.fromString("40000000-0000-4000-8000-000000000004");
     static final UUID LIFT_PERMISSION = UUID.fromString("50000000-0000-4000-8000-000000000005");

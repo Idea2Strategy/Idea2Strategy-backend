@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.notification.NotificationChannel;
 import com.idea2strategy.backend.application.notification.NotificationQueryService;
+import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
 import com.idea2strategy.backend.application.notification.NotificationRequest;
 import com.idea2strategy.backend.application.notification.NotificationService;
 import com.idea2strategy.backend.application.notification.NotificationUnavailableException;
@@ -115,6 +116,28 @@ class NotificationPersistenceIntegrationTest {
                 "bot-event", "bot-hash", Map.of(), UUID.randomUUID()));
         assertThat(receipt.channels()).containsExactly(NotificationChannel.APP);
         assertThat(count("select count(*) from operations.outbox_messages")).isZero();
+    }
+
+    @Test
+    void preferenceManagementIsPolicyVersionedAndAccountOwned() {
+        UUID owner = account();
+        UUID other = account();
+        policy("BOT_UPDATE", "v1", false, "[\"APP\",\"EMAIL\"]");
+        var preferences = new NotificationPreferenceService(
+                adapter, adapter, Clock.fixed(Instant.parse("2026-08-02T15:00:00Z"), ZoneOffset.UTC));
+
+        preferences.replace(owner, "BOT_UPDATE", java.util.Set.of(NotificationChannel.APP));
+
+        assertThat(preferences.list(owner)).singleElement().satisfies(preference -> {
+            assertThat(preference.policyVersion()).isEqualTo("v1");
+            assertThat(preference.enabledChannels()).containsExactly(NotificationChannel.APP);
+        });
+        assertThat(preferences.list(other)).singleElement().satisfies(preference ->
+                assertThat(preference.enabledChannels()).containsExactly(NotificationChannel.APP));
+        assertThat(count("""
+                select count(*) from operations.notification_preferences
+                where account_id = ? and policy_version = 'v1'
+                """, owner)).isEqualTo(1);
     }
 
     @Test
