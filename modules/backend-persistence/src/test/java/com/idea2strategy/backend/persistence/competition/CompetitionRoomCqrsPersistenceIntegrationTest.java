@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.competition.RoomInvitationIssueRequest;
+import com.idea2strategy.backend.application.competition.RoomConfigurationUpdate;
+import com.idea2strategy.backend.application.competition.RoomConfigurationUpdateOutcome;
 import com.idea2strategy.backend.domain.competition.CompetitionRoom;
 import com.idea2strategy.backend.domain.competition.LiveRoomRules;
 import com.idea2strategy.backend.domain.competition.RoomAccessType;
@@ -13,6 +15,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,11 +71,18 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
     private RoomInvitationJooqAdapter invitationAdapter;
 
     @Autowired
+    private RoomConfigurationJooqAdapter configurationAdapter;
+
+    @Autowired
+    private RoomScheduleTransitionJooqAdapter transitionAdapter;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void prepareReferences() {
         jdbcTemplate.update("delete from competition.room_invitations");
+        jdbcTemplate.update("delete from competition.room_events");
         jdbcTemplate.update("delete from competition.room_schedules");
         jdbcTemplate.update("delete from competition.live_room_rules");
         jdbcTemplate.update("delete from competition.room_rules");
@@ -322,6 +333,196 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 .isEmpty();
     }
 
+    @Test
+    void draftOwnerCanAtomicallyReplaceRulesAndScheduleBeforeRecruitment() {
+        commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
+        var update = configurationUpdate(
+                RoomAccessType.PUBLIC, CREATED_AT.plusSeconds(30), CREATED_AT.plusSeconds(600));
+
+        assertThat(configurationAdapter.update(update)).isEqualTo(RoomConfigurationUpdateOutcome.UPDATED);
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "select name from competition.rooms where id = ?", String.class, ROOM_ID))
+                .isEqualTo("Updated room");
+        assertThat(jdbcTemplate.queryForMap(
+                        "select initial_cash_amount, bot_participation_limit, per_account_bot_limit, "
+                                + "scoring_parameters::text as scoring_parameters, rules_hash, locked_at "
+                                + "from competition.room_rules where room_id = ?",
+                        ROOM_ID))
+                .containsEntry("bot_participation_limit", 8)
+                .containsEntry("per_account_bot_limit", 2)
+                .containsEntry("rules_hash", "updated-rules-hash");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select recruitment_opens_at from competition.room_schedules where room_id = ?",
+                        java.time.OffsetDateTime.class,
+                        ROOM_ID).toInstant())
+                .isEqualTo(CREATED_AT.plusSeconds(600));
+    }
+
+    @Test
+    void failedConfigurationSnapshotRollsBackEveryTable() {
+        commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
+        var valid = configurationUpdate(
+                RoomAccessType.PUBLIC, CREATED_AT.plusSeconds(30), CREATED_AT.plusSeconds(600));
+        var invalid = new RoomConfigurationUpdate(
+                valid.roomId(),
+                valid.creatorAccountId(),
+                valid.name(),
+                valid.accessType(),
+                valid.scoringTemplateVersionId(),
+                valid.initialCashAmount(),
+                valid.botParticipationLimit(),
+                valid.perAccountBotLimit(),
+                valid.scoringParameters(),
+                UUID.fromString("52000000-0000-4000-8000-000000000099"),
+                valid.buyingPowerBufferPolicyId(),
+                valid.rulesHash(),
+                valid.liveRules(),
+                valid.schedule(),
+                valid.observedAt());
+
+        assertThatThrownBy(() -> configurationAdapter.update(invalid)).isInstanceOf(RuntimeException.class);
+
+        assertThat(roomName()).isEqualTo("Draft room");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select initial_cash_amount from competition.room_rules where room_id = ?",
+                        BigDecimal.class,
+                        ROOM_ID))
+                .isEqualByComparingTo("100000.00000000");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select recruitment_opens_at from competition.room_schedules where room_id = ?",
+                        java.time.OffsetDateTime.class,
+                        ROOM_ID).toInstant())
+                .isEqualTo(CREATED_AT.plusSeconds(60));
+    }
+
+    @Test
+    void accessTypeAndEveryConfigurationMutationAreRejectedAtRecruitmentBoundary() {
+        commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
+        String originalHash = jdbcTemplate.queryForObject(
+                "select rules_hash from competition.room_rules where room_id = ?", String.class, ROOM_ID);
+
+        assertThat(configurationAdapter.update(configurationUpdate(
+                        RoomAccessType.SECRET, CREATED_AT.plusSeconds(30), CREATED_AT.plusSeconds(600))))
+                .isEqualTo(RoomConfigurationUpdateOutcome.ACCESS_TYPE_IMMUTABLE);
+        assertThat(configurationAdapter.update(configurationUpdate(
+                        RoomAccessType.PUBLIC, CREATED_AT.plusSeconds(60), CREATED_AT.plusSeconds(600))))
+                .isEqualTo(RoomConfigurationUpdateOutcome.RECRUITMENT_LOCKED);
+        jdbcTemplate.update("update competition.rooms set status = 'RECRUITING' where id = ?", ROOM_ID);
+        assertThat(configurationAdapter.update(configurationUpdate(
+                        RoomAccessType.PUBLIC, CREATED_AT.plusSeconds(59), CREATED_AT.plusSeconds(600))))
+                .isEqualTo(RoomConfigurationUpdateOutcome.RECRUITMENT_LOCKED);
+
+        assertThat(jdbcTemplate.queryForObject(
+                        "select rules_hash from competition.room_rules where room_id = ?", String.class, ROOM_ID))
+                .isEqualTo(originalHash);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select name from competition.rooms where id = ?", String.class, ROOM_ID))
+                .isEqualTo("Draft room");
+    }
+
+    @Test
+    void proposedScheduleCannotMoveRecruitmentToTheObservedPast() {
+        commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
+        String originalHash = jdbcTemplate.queryForObject(
+                "select rules_hash from competition.room_rules where room_id = ?", String.class, ROOM_ID);
+
+        assertThat(configurationAdapter.update(configurationUpdate(
+                        RoomAccessType.PUBLIC, CREATED_AT.plusSeconds(30), CREATED_AT.plusSeconds(29))))
+                .isEqualTo(RoomConfigurationUpdateOutcome.RECRUITMENT_LOCKED);
+
+        assertThat(roomName()).isEqualTo("Draft room");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select rules_hash from competition.room_rules where room_id = ?", String.class, ROOM_ID))
+                .isEqualTo(originalHash);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select recruitment_opens_at from competition.room_schedules where room_id = ?",
+                        java.time.OffsetDateTime.class,
+                        ROOM_ID).toInstant())
+                .isEqualTo(CREATED_AT.plusSeconds(60));
+    }
+
+    @Test
+    void creationAdapterCannotBypassTheConfigurationLockBySavingAnExistingId() {
+        commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
+        jdbcTemplate.update("update competition.rooms set status = 'RECRUITING' where id = ?", ROOM_ID);
+
+        assertThatThrownBy(() -> commandAdapter.save(userRoom(
+                        ROOM_ID, "Bypass attempt", RoomAccessType.PUBLIC)))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(roomStatus()).isEqualTo("RECRUITING");
+        assertThat(roomName()).isEqualTo("Draft room");
+    }
+
+    @Test
+    void scheduleTransitionAndConfigurationUpdateSerializeToOneCoherentSnapshot() throws Exception {
+        commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
+        var gate = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var updateFuture = executor.submit(() -> {
+                gate.await();
+                return configurationAdapter.update(configurationUpdate(
+                        RoomAccessType.PUBLIC, CREATED_AT.plusSeconds(59), CREATED_AT.plusSeconds(600)));
+            });
+            var transitionFuture = executor.submit(() -> {
+                gate.await();
+                return transitionAdapter.advanceDue(CREATED_AT.plusSeconds(60), 10);
+            });
+            gate.countDown();
+            var outcome = updateFuture.get();
+            var transition = transitionFuture.get();
+
+            if (outcome == RoomConfigurationUpdateOutcome.UPDATED) {
+                assertThat(transition.transitionsApplied()).isZero();
+                assertThat(roomStatus()).isEqualTo("DRAFT");
+                assertThat(roomName()).isEqualTo("Updated room");
+            } else {
+                assertThat(outcome).isEqualTo(RoomConfigurationUpdateOutcome.RECRUITMENT_LOCKED);
+                assertThat(transition.transitionsApplied()).isEqualTo(1);
+                assertThat(roomStatus()).isEqualTo("RECRUITING");
+                assertThat(roomName()).isEqualTo("Draft room");
+            }
+        }
+    }
+
+    private RoomConfigurationUpdate configurationUpdate(
+            RoomAccessType accessType, Instant observedAt, Instant recruitmentAt) {
+        return new RoomConfigurationUpdate(
+                ROOM_ID,
+                OWNER_ID,
+                "Updated room",
+                accessType,
+                SCORING_VERSION_ID,
+                new BigDecimal("200000.00000000"),
+                8,
+                2,
+                "{\"minimumTrades\":10}",
+                FEE_POLICY_ID,
+                BUFFER_POLICY_ID,
+                "updated-rules-hash",
+                new LiveRoomRules("RETURN_ON_STOP", 7200, 10),
+                new RoomSchedule(
+                        recruitmentAt,
+                        recruitmentAt.plusSeconds(60),
+                        recruitmentAt.plusSeconds(180),
+                        recruitmentAt.plusSeconds(120),
+                        recruitmentAt.plusSeconds(240),
+                        recruitmentAt.plusSeconds(300),
+                        "UTC"),
+                observedAt);
+    }
+
+    private String roomStatus() {
+        return jdbcTemplate.queryForObject(
+                "select status::text from competition.rooms where id = ?", String.class, ROOM_ID);
+    }
+
+    private String roomName() {
+        return jdbcTemplate.queryForObject(
+                "select name from competition.rooms where id = ?", String.class, ROOM_ID);
+    }
+
     private static CompetitionRoom userRoom(UUID id, String name, RoomAccessType accessType) {
         return CompetitionRoom.userLive(
                 id,
@@ -355,7 +556,9 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         CompetitionRoomJpaCommandAdapter.class,
         CompetitionRoomJooqQueryAdapter.class,
         PublicRoomSearchJooqAdapter.class,
-        RoomInvitationJooqAdapter.class
+        RoomInvitationJooqAdapter.class,
+        RoomConfigurationJooqAdapter.class,
+        RoomScheduleTransitionJooqAdapter.class
     })
     static class TestApplication {}
 }

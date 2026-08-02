@@ -12,6 +12,7 @@ import com.idea2strategy.backend.application.competition.RoomParticipationAdmiss
 import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.UserRoomConfigurationService;
 import com.idea2strategy.backend.application.competition.UserRoomTerminationService;
 import com.idea2strategy.backend.application.strategy.BasicExecutionPlanCommandService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
@@ -19,6 +20,7 @@ import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCo
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomParticipationAdmissionJooqAdapter;
@@ -41,6 +43,7 @@ import org.springframework.context.annotation.Import;
 @ConditionalOnBean(type = "org.jooq.DSLContext")
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
+    RoomConfigurationJooqAdapter.class,
     ScoringTemplateCatalogJooqQueryAdapter.class,
     PublicRoomSearchJooqAdapter.class,
     RoomInvitationJooqAdapter.class,
@@ -176,6 +179,20 @@ public class CompetitionRoomConfiguration {
                 principal,
                 Clock.systemUTC(),
                 UUID::randomUUID,
+                new ObjectMapper());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    UserRoomConfigurationService userRoomConfigurationService(
+            RoomConfigurationJooqAdapter configurationAdapter,
+            ScoringTemplateCatalogService scoringCatalog,
+            CurrentPrincipal principal) {
+        return new UserRoomConfigurationService(
+                configurationAdapter,
+                scoringCatalog,
+                principal,
+                Clock.systemUTC(),
                 new ObjectMapper());
     }
 

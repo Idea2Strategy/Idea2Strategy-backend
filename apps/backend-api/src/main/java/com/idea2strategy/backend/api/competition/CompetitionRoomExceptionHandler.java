@@ -1,6 +1,8 @@
 package com.idea2strategy.backend.api.competition;
 
 import com.idea2strategy.backend.application.competition.OperatorAuthorizationException;
+import com.idea2strategy.backend.application.competition.RoomConfigurationAccessException;
+import com.idea2strategy.backend.application.competition.RoomConfigurationConflictException;
 import com.idea2strategy.backend.application.competition.RoomInvitationAccessException;
 import com.idea2strategy.backend.application.competition.RoomInvitationUnavailableException;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionException;
@@ -22,9 +24,24 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     RoomInvitationController.class,
     RoomParticipationController.class,
     PlatformRoomInvalidationController.class,
-    RoomTerminationController.class
+    RoomTerminationController.class,
+    RoomConfigurationController.class
 })
 public class CompetitionRoomExceptionHandler {
+    @ExceptionHandler(RoomConfigurationAccessException.class)
+    ProblemDetail configurationAccessDenied(RoomConfigurationAccessException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
+        problem.setTitle("Room configuration access denied");
+        return problem;
+    }
+
+    @ExceptionHandler(RoomConfigurationConflictException.class)
+    ProblemDetail configurationConflict(RoomConfigurationConflictException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Room configuration rejected");
+        return problem;
+    }
+
     @ExceptionHandler(RoomTerminationAccessException.class)
     ProblemDetail terminationAccessDenied(RoomTerminationAccessException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
