@@ -42,6 +42,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID FEE_ID = id(6);
     private static final UUID BUFFER_ID = id(7);
     private static final UUID OPERATOR_ID = id(8);
+    private static final UUID SECOND_BOT_ID = id(9);
+    private static final UUID SECOND_PARTICIPATION_ID = id(10);
     private static final Instant EVALUATION_START = Instant.parse("2026-08-02T04:00:00Z");
     private static final Instant OBSERVED_AT = EVALUATION_START.plusSeconds(15);
 
@@ -239,6 +241,73 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     }
 
     @Test
+    void recordsOneCommonLiveInputHashForEveryBotAndBindsItIntoBotSpecificInitialState() {
+        seedLiveParticipation();
+        seedBotAndParticipation(
+                SECOND_BOT_ID, SECOND_PARTICIPATION_ID,
+                EVALUATION_START.atOffset(ZoneOffset.UTC));
+
+        assertThat(adapter.startEligible(OBSERVED_AT, 10).participantsStarted()).isEqualTo(2);
+
+        assertThat(jdbc.queryForList(
+                        "select payload_document ->> 'liveEvaluationInputVersion' as version, "
+                                + "payload_document ->> 'liveEvaluationInputHash' as input_hash "
+                                + "from competition.participation_events "
+                                + "where event_type = 'EVALUATION_STARTED' order by participation_id"))
+                .hasSize(2)
+                .allSatisfy(event -> {
+                    assertThat(event.get("version")).isEqualTo("live-evaluation-input.v1");
+                    assertThat(event.get("input_hash")).asString().matches("sha256:[0-9a-f]{64}");
+                })
+                .extracting(event -> event.get("input_hash"))
+                .containsOnly(jdbc.queryForObject(
+                        "select payload_document ->> 'liveEvaluationInputHash' "
+                                + "from competition.participation_events where participation_id = ?",
+                        String.class, PARTICIPATION_ID));
+        assertThat(jdbc.queryForList(
+                        "select initial_state_hash from competition.live_evaluation_segments order by participation_id",
+                        String.class))
+                .hasSize(2)
+                .doesNotHaveDuplicates();
+    }
+
+    @Test
+    void rejectsAChangedLockedInputBeforeStartingAnotherBotAndRollsBackThatAttempt() {
+        seedLiveParticipation();
+
+        assertThat(adapter.startEligible(OBSERVED_AT, 1).participantsStarted()).isEqualTo(1);
+        String lockedHash = jdbc.queryForObject(
+                "select payload_document ->> 'liveEvaluationInputHash' "
+                        + "from competition.participation_events where participation_id = ?",
+                String.class, PARTICIPATION_ID);
+        seedBotAndParticipation(
+                SECOND_BOT_ID, SECOND_PARTICIPATION_ID,
+                EVALUATION_START.atOffset(ZoneOffset.UTC));
+        jdbc.update(
+                "update competition.room_rules set scoring_parameters = '{\"weight\":2}'::jsonb, "
+                        + "rules_hash = 'rules-e17-changed' where room_id = ?",
+                ROOM_ID);
+
+        assertThatThrownBy(() -> adapter.startEligible(OBSERVED_AT.plusSeconds(1), 10))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .hasStackTraceContaining("live evaluation input does not match");
+
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.participations where id = ?",
+                        String.class, SECOND_PARTICIPATION_ID))
+                .isEqualTo("REGISTERED");
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from competition.live_evaluation_segments where participation_id = ?",
+                        Integer.class, SECOND_PARTICIPATION_ID))
+                .isZero();
+        assertThat(jdbc.queryForObject(
+                        "select payload_document ->> 'liveEvaluationInputHash' "
+                                + "from competition.participation_events where participation_id = ?",
+                        String.class, PARTICIPATION_ID))
+                .isEqualTo(lockedHash);
+    }
+
+    @Test
     void startsLateBacktestSubmissionFromItsActualAdmissionTime() throws Exception {
         Instant admittedAt = EVALUATION_START.plusSeconds(5);
         seedBacktestParticipation(admittedAt);
@@ -268,6 +337,11 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         assertThat(command.evaluationStartsAt()).isEqualTo(EVALUATION_START);
         assertThat(command.evaluationEndsAt()).isEqualTo(EVALUATION_START.plusSeconds(2 * 60 * 60));
         assertThat(command.effectiveAt()).isEqualTo(admittedAt);
+        assertThat(jdbc.queryForObject(
+                        "select jsonb_exists(payload_document, 'liveEvaluationInputHash') "
+                                + "from competition.participation_events where participation_id = ?",
+                        Boolean.class, PARTICIPATION_ID))
+                .isFalse();
     }
 
     @Test
@@ -397,31 +471,36 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     }
 
     private void seedBotAndParticipation(java.time.OffsetDateTime at) {
+        seedBotAndParticipation(BOT_ID, PARTICIPATION_ID, at);
+    }
+
+    private void seedBotAndParticipation(
+            UUID botId, UUID participationId, java.time.OffsetDateTime at) {
         jdbc.update(
                 "insert into bot.bots "
                         + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, created_at, "
                         + "execution_eligible_from, edit_sequence, updated_at) "
                         + "values (?, ?, 'BASIC', 'E11 Bot', 'RUNNING', ?, ?, ?, 0, ?)",
-                BOT_ID, OWNER_ID, at.minusHours(1), at.minusHours(1), at, at.minusHours(1));
+                botId, OWNER_ID, at.minusHours(1), at.minusHours(1), at, at.minusHours(1));
         jdbc.update(
                 "insert into bot.launch_snapshots "
                         + "(bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, semantic_hash, "
                         + "presentation_hash, snapshot_hash, created_at) "
                         + "values (?, 'basic-launch-snapshot.v1', '{}'::jsonb, '{}'::jsonb, 'semantic-e11', "
                         + "'presentation-e11', 'snapshot-e11', ?)",
-                BOT_ID, at.minusHours(1));
+                botId, at.minusHours(1));
         jdbc.update(
                 "insert into bot.launch_configurations "
                         + "(bot_id, initial_cash_amount, currency_code, broker_rules_version, accounting_rules_version, "
                         + "precision_rules_version, fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, "
                         + "candidate_conflict_policy, configuration_hash) "
                         + "values (?, 100000, 'USD', 'v1', 'v1', 'v1', ?, 5, ?, '{}'::jsonb, 'config-e11')",
-                BOT_ID, FEE_ID, BUFFER_ID);
+                botId, FEE_ID, BUFFER_ID);
         jdbc.update(
                 "insert into competition.participations "
                         + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at) "
-                        + "values (?, ?, ?, ?, 'e11-bot', 'REGISTERED', ?)",
-                PARTICIPATION_ID, ROOM_ID, BOT_ID, OWNER_ID, at.minusHours(1));
+                        + "values (?, ?, ?, ?, ?, 'REGISTERED', ?)",
+                participationId, ROOM_ID, botId, OWNER_ID, "e11-bot-" + participationId, at.minusHours(1));
     }
 
     private static UUID id(int suffix) {
