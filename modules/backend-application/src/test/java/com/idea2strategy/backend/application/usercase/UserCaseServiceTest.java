@@ -15,6 +15,7 @@ class UserCaseServiceTest {
     private static final UUID ACCOUNT = UUID.fromString("10000000-0000-4000-8000-000000000019");
     private static final UUID CASE = UUID.fromString("20000000-0000-4000-8000-000000000019");
     private static final UUID EVIDENCE = UUID.fromString("30000000-0000-4000-8000-000000000019");
+    private static final UUID SOURCE = UUID.fromString("40000000-0000-4000-8000-000000000019");
     private static final Instant NOW = Instant.parse("2026-08-02T14:00:00Z");
 
     @Test
@@ -53,7 +54,7 @@ class UserCaseServiceTest {
         var store = new StubStore(new UserCaseStore.CommandResult(
                 UserCaseStore.CommandResult.Outcome.APPLIED, expected));
         var supplement = new UserCaseSupplementCommand(
-                ACCOUNT, CASE, 2, List.of(EVIDENCE), "supplement-1", "hash-2", UUID.randomUUID());
+                ACCOUNT, CASE, 2, List.of(evidence()), "supplement-1", "hash-2", UUID.randomUUID());
 
         assertThat(service(store).supplement(supplement)).isEqualTo(expected);
         assertThat(store.lastSupplement).isEqualTo(supplement);
@@ -66,8 +67,12 @@ class UserCaseServiceTest {
 
     private UserCaseCommand command() {
         return new UserCaseCommand(
-                ACCOUNT, UserCaseType.APPEAL, "Appeal", "Evidence attached", List.of(EVIDENCE),
+                ACCOUNT, UserCaseType.APPEAL, "Appeal", "Evidence attached", List.of(evidence()),
                 "submit-1", "hash-1", UUID.randomUUID());
+    }
+
+    private UserCaseEvidenceReference evidence() {
+        return new UserCaseEvidenceReference(EVIDENCE, "BACKTEST_RUN", SOURCE);
     }
 
     private UserCaseView view(UserCaseStatus status, long version) {

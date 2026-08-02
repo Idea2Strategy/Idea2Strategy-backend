@@ -9,7 +9,7 @@ public record UserCaseCommand(
         UserCaseType type,
         String subject,
         String description,
-        List<UUID> evidenceObjectIds,
+        List<UserCaseEvidenceReference> evidenceReferences,
         String idempotencyKey,
         String requestHash,
         UUID correlationId) {
@@ -18,7 +18,7 @@ public record UserCaseCommand(
         Objects.requireNonNull(type, "type");
         subject = requireText(subject, "subject");
         description = requireText(description, "description");
-        evidenceObjectIds = List.copyOf(Objects.requireNonNull(evidenceObjectIds, "evidenceObjectIds"));
+        evidenceReferences = List.copyOf(Objects.requireNonNull(evidenceReferences, "evidenceReferences"));
         idempotencyKey = requireText(idempotencyKey, "idempotencyKey");
         requestHash = requireText(requestHash, "requestHash");
         Objects.requireNonNull(correlationId, "correlationId");
