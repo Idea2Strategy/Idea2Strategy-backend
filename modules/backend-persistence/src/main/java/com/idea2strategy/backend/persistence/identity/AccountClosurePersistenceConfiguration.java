@@ -14,11 +14,6 @@ public class AccountClosurePersistenceConfiguration {
     }
 
     @Bean
-    AccountRetentionJpaStore accountRetentionJpaStore(jakarta.persistence.EntityManager entityManager) {
-        return new AccountRetentionJpaStore(entityManager);
-    }
-
-    @Bean
     AccountClosureReadinessProbe botAccountClosureReadinessProbe(DSLContext dsl, BotStopCommandPort stops) {
         return new BotAccountClosureReadinessProbe(dsl, stops);
     }

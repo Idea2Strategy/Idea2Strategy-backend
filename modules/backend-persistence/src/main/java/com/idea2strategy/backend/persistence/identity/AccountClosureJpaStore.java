@@ -44,36 +44,61 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
 
     @Override
     @Transactional
-    public void recordReadiness(UUID accountId, UUID correlationId, ClosureReadiness readiness) {
-        entityManager.createNativeQuery("""
+    public long beginAttempt(AccountClosureCandidate candidate, UUID correlationId, Instant startedAt) {
+        int inserted = entityManager.createNativeQuery("""
                         insert into identity.account_closure_runs
                             (correlation_id, account_id, lifecycle_version, cancellation_deadline_at,
-                             started_at, last_checked_at)
-                        select :correlationId, id, lifecycle_version, cancellation_deadline_at,
-                               :observedAt, :observedAt
+                             generation, started_at, last_checked_at)
+                        select :correlationId, id, lifecycle_version, cancellation_deadline_at, 1,
+                               :startedAt, :startedAt
                         from identity.accounts
                         where id = :accountId and lifecycle_status = 'CLOSING'
+                          and lifecycle_version = :lifecycleVersion
                         on conflict (correlation_id) do update
-                        set last_checked_at = excluded.last_checked_at
+                        set generation = identity.account_closure_runs.generation + 1,
+                            started_at = excluded.started_at,
+                            last_checked_at = excluded.last_checked_at
+                        where identity.account_closure_runs.account_id = excluded.account_id
+                          and identity.account_closure_runs.lifecycle_version = excluded.lifecycle_version
                         """)
                 .setParameter("correlationId", correlationId)
-                .setParameter("accountId", accountId)
-                .setParameter("observedAt", utc(readiness.observedAt()))
+                .setParameter("accountId", candidate.accountId())
+                .setParameter("lifecycleVersion", candidate.lifecycleVersion())
+                .setParameter("startedAt", utc(startedAt))
                 .executeUpdate();
-        entityManager.createNativeQuery("""
+        if (inserted != 1) {
+            throw new IllegalStateException("Account is no longer an eligible CLOSING generation");
+        }
+        return ((Number) entityManager.createNativeQuery("""
+                        select generation from identity.account_closure_runs
+                        where correlation_id = :correlationId
+                        """)
+                .setParameter("correlationId", correlationId)
+                .getSingleResult()).longValue();
+    }
+
+    @Override
+    @Transactional
+    public void recordReadiness(
+            UUID accountId, UUID correlationId, long generation, ClosureReadiness readiness) {
+        int recorded = entityManager.createNativeQuery("""
                         insert into identity.account_closure_readiness
-                            (correlation_id, account_id, domain, status, reason_code, evidence, observed_at)
-                        values (:correlationId, :accountId,
+                            (correlation_id, generation, account_id, domain, status, reason_code, evidence, observed_at)
+                        select :correlationId, :generation, :accountId,
                                 cast(:domain as identity.account_closure_domain),
                                 cast(:status as identity.account_closure_readiness_status),
-                                :reasonCode, cast(:evidence as jsonb), :observedAt)
-                        on conflict (correlation_id, domain) do update
+                                :reasonCode, cast(:evidence as jsonb), :observedAt
+                        from identity.account_closure_runs run
+                        where run.correlation_id = :correlationId and run.generation = :generation
+                          and run.account_id = :accountId
+                        on conflict (correlation_id, generation, domain) do update
                         set status = excluded.status,
                             reason_code = excluded.reason_code,
                             evidence = excluded.evidence,
                             observed_at = excluded.observed_at
                         """)
                 .setParameter("correlationId", correlationId)
+                .setParameter("generation", generation)
                 .setParameter("accountId", accountId)
                 .setParameter("domain", readiness.domain().name())
                 .setParameter("status", readiness.status().name())
@@ -81,6 +106,9 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
                 .setParameter("evidence", readiness.evidence())
                 .setParameter("observedAt", utc(readiness.observedAt()))
                 .executeUpdate();
+        if (recorded != 1) {
+            throw new IllegalStateException("Stale account closure readiness generation");
+        }
     }
 
     @Override
@@ -88,6 +116,7 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
     public boolean closeIfReady(
             AccountClosureCandidate candidate,
             UUID correlationId,
+            long generation,
             String idempotencyKey,
             Instant closedAt) {
         Object[] account;
@@ -112,10 +141,16 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
                         select count(*)
                         from identity.account_closure_readiness
                         where correlation_id = :correlationId
+                          and generation = :generation
                           and account_id = :accountId
-                          and status in ('FROZEN', 'SETTLED')
+                          and observed_at >= (
+                              select started_at from identity.account_closure_runs
+                              where correlation_id = :correlationId and generation = :generation)
+                          and ((domain = 'TRADING' and status = 'SETTLED')
+                               or (domain <> 'TRADING' and status = 'FROZEN'))
                         """)
                 .setParameter("correlationId", correlationId)
+                .setParameter("generation", generation)
                 .setParameter("accountId", candidate.accountId())
                 .getSingleResult();
         if (readyCount.intValue() != ClosureDomain.values().length) {
@@ -205,9 +240,16 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
     private String latestEffectivePolicy(Instant at) {
         @SuppressWarnings("unchecked")
         List<String> versions = entityManager.createNativeQuery("""
-                        select version from identity.account_retention_policy_versions
-                        where effective_from <= :at and approved_at <= :at
-                        order by effective_from desc, version desc limit 1
+                        select policy.version
+                        from identity.account_retention_policy_versions policy
+                        join identity.account_retention_policy_rules rule
+                          on rule.policy_version = policy.version
+                        where policy.effective_from <= :at and policy.approved_at <= :at
+                        group by policy.version, policy.effective_from
+                        having count(*) = cardinality(enum_range(NULL::identity.account_data_category))
+                           and count(distinct rule.data_category) =
+                               cardinality(enum_range(NULL::identity.account_data_category))
+                        order by policy.effective_from desc, policy.version desc limit 1
                         """)
                 .setParameter("at", utc(at))
                 .getResultList();

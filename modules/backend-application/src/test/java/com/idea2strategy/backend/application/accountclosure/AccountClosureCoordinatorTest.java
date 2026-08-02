@@ -77,12 +77,34 @@ class AccountClosureCoordinatorTest {
         assertThat(store.closeCalls).isZero();
     }
 
+    @Test
+    void rejectsSemanticallyWrongReadinessMappings() {
+        var store = new RecordingStore(new AccountClosureCandidate(ACCOUNT, DEADLINE, 2));
+        var probes = new ArrayList<AccountClosureReadinessProbe>(readyProbes());
+        probes.removeIf(probe -> probe.domain() == ClosureDomain.TRADING);
+        probes.add(new AccountClosureReadinessProbe() {
+            public ClosureDomain domain() { return ClosureDomain.TRADING; }
+            public ClosureReadiness evaluate(UUID accountId, UUID correlationId, Instant observedAt) {
+                return new ClosureReadiness(domain(), ClosureReadinessStatus.FROZEN, "WRONG_MAPPING", "{}", observedAt);
+            }
+        });
+
+        var result = new AccountClosureCoordinator(store, probes, store,
+                Clock.fixed(DEADLINE, ZoneOffset.UTC), Duration.ofHours(1)).run(10);
+
+        assertThat(result.closed()).isZero();
+        assertThat(store.closeCalls).isZero();
+    }
+
     private static List<AccountClosureReadinessProbe> readyProbes() {
         return java.util.Arrays.stream(ClosureDomain.values())
                 .<AccountClosureReadinessProbe>map(domain -> new AccountClosureReadinessProbe() {
                     public ClosureDomain domain() { return domain; }
                     public ClosureReadiness evaluate(UUID accountId, UUID correlationId, Instant observedAt) {
-                        return new ClosureReadiness(domain, ClosureReadinessStatus.FROZEN, "READY", "{}", observedAt);
+                        var status = domain == ClosureDomain.TRADING
+                                ? ClosureReadinessStatus.SETTLED
+                                : ClosureReadinessStatus.FROZEN;
+                        return new ClosureReadiness(domain, status, "READY", "{}", observedAt);
                     }
                 }).toList();
     }
@@ -96,10 +118,14 @@ class AccountClosureCoordinatorTest {
         private RecordingStore(AccountClosureCandidate candidate) { candidates.add(candidate); }
 
         public List<AccountClosureCandidate> findClosingCandidates(int limit) { return List.copyOf(candidates); }
-        public void recordReadiness(UUID accountId, UUID correlationId, ClosureReadiness readiness) {
+        public long beginAttempt(AccountClosureCandidate candidate, UUID correlationId, Instant startedAt) {
+            return 1;
+        }
+        public void recordReadiness(UUID accountId, UUID correlationId, long generation, ClosureReadiness readiness) {
             recorded.put(readiness.domain(), readiness);
         }
-        public boolean closeIfReady(AccountClosureCandidate candidate, UUID correlationId, String idempotencyKey, Instant closedAt) {
+        public boolean closeIfReady(AccountClosureCandidate candidate, UUID correlationId, long generation,
+                                    String idempotencyKey, Instant closedAt) {
             closeCalls++;
             candidates.clear();
             return true;

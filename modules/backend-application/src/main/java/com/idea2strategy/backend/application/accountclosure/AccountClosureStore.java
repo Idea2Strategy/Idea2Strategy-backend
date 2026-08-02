@@ -7,11 +7,14 @@ import java.util.UUID;
 public interface AccountClosureStore {
     List<AccountClosureCandidate> findClosingCandidates(int limit);
 
-    void recordReadiness(UUID accountId, UUID correlationId, ClosureReadiness readiness);
+    long beginAttempt(AccountClosureCandidate candidate, UUID correlationId, Instant startedAt);
+
+    void recordReadiness(UUID accountId, UUID correlationId, long generation, ClosureReadiness readiness);
 
     boolean closeIfReady(
             AccountClosureCandidate candidate,
             UUID correlationId,
+            long generation,
             String idempotencyKey,
             Instant closedAt);
 }

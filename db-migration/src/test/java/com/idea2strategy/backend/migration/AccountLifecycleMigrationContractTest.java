@@ -71,7 +71,7 @@ class AccountLifecycleMigrationContractTest {
     }
 
     @Test
-    void installsFailClosedClosureCoordinationAndApprovedRetentionDefaults() throws Exception {
+    void installsFailClosedClosureCoordinationAndNonCanonicalRetentionProposal() throws Exception {
         var sql = migration(CLOSURE_MIGRATION);
         DatabaseAccessPolicy.verifyMigrationOwnership(MigrationOwner.BACKEND, sql);
 
@@ -80,9 +80,12 @@ class AccountLifecycleMigrationContractTest {
         assertTrue(sql.contains("'BOT', 'TRADING', 'COMPETITION', 'NOTIFICATION', 'INTEGRATION'"));
         assertTrue(sql.contains("'FREEZE_REQUESTED', 'FROZEN', 'SETTLEMENT_REQUIRED', 'SETTLED', 'BLOCKED'"));
         assertTrue(sql.contains("CREATE TABLE operations.account_integrations"));
-        assertTrue(sql.contains("ALTER COLUMN email_lookup_hmac DROP NOT NULL"));
+        assertTrue(sql.contains("CREATE TABLE identity.account_retention_policy_proposals"));
+        assertTrue(sql.contains("canonical_status = 'PROPOSED'"));
         assertTrue(sql.contains("'A12-2026-08-02'"));
-        assertTrue(sql.contains("'kcrmin'"));
+        assertTrue(sql.contains("'user:kcrmin'"));
+        assertTrue(sql.contains("issuecomment-5156817219"));
+        assertTrue(sql.contains("\"generalOperationsLog\":{\"disposition\":\"DELETE\",\"days\":365}"));
     }
 
     private String migration(String path) throws Exception {

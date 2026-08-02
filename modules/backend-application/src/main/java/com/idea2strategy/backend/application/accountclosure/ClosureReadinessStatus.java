@@ -7,7 +7,7 @@ public enum ClosureReadinessStatus {
     SETTLED,
     BLOCKED;
 
-    public boolean allowsClosure() {
-        return this == FROZEN || this == SETTLED;
+    public boolean allowsClosure(ClosureDomain domain) {
+        return domain == ClosureDomain.TRADING ? this == SETTLED : this == FROZEN;
     }
 }

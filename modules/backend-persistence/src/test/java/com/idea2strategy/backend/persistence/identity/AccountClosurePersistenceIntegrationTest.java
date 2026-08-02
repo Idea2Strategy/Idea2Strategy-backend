@@ -70,18 +70,29 @@ class AccountClosurePersistenceIntegrationTest {
 
         var candidate = new AccountClosureCandidate(accountId, DEADLINE, 2);
         UUID correlationId = UUID.randomUUID();
+        long generation = closure.beginAttempt(candidate, correlationId, DEADLINE);
         for (var domain : ClosureDomain.values()) {
-            closure.recordReadiness(accountId, correlationId,
-                    new ClosureReadiness(domain, ClosureReadinessStatus.FROZEN, "READY", "{}", DEADLINE));
+            closure.recordReadiness(accountId, correlationId, generation,
+                    new ClosureReadiness(domain,
+                            domain == ClosureDomain.TRADING
+                                    ? ClosureReadinessStatus.SETTLED
+                                    : ClosureReadinessStatus.FROZEN,
+                            "READY", "{}", DEADLINE));
         }
 
-        assertThat(closure.closeIfReady(candidate, correlationId, "close:" + accountId, DEADLINE)).isTrue();
+        assertThat(closure.closeIfReady(candidate, correlationId, generation,
+                "close:" + accountId, DEADLINE)).isTrue();
         assertThat(jdbc.queryForObject(
                 "select cast(lifecycle_status as text) from identity.accounts where id = ?",
                 String.class, accountId)).isEqualTo("CLOSED");
         assertThat(jdbc.queryForObject(
                 "select count(*) from identity.account_retention_obligations where account_id = ?",
                 Integer.class, accountId)).isEqualTo(8);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_retention_obligations
+                where account_id = ? and status = 'FAILED'
+                  and failure_code = 'RETENTION_POLICY_MISSING'
+                """, Integer.class, accountId)).isEqualTo(8);
         assertThat(jdbc.queryForObject(
                 "select count(*) from identity.account_identifier_quarantines where account_id = ?",
                 Integer.class, accountId)).isEqualTo(1);

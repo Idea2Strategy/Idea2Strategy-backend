@@ -46,27 +46,44 @@ public final class AccountClosureCoordinator {
         int blocked = 0;
         for (var candidate : store.findClosingCandidates(limit)) {
             inspected++;
-            var correlationId = correlationId(candidate);
-            boolean ready = true;
-            for (var domain : ClosureDomain.values()) {
-                var readiness = evaluate(probes.get(domain), domain, candidate.accountId(), correlationId, now);
-                store.recordReadiness(candidate.accountId(), correlationId, readiness);
-                ready &= readiness.status().allowsClosure();
-            }
-            if (!ready) {
+            try {
+                var outcome = process(candidate, now);
+                closed += outcome.closed();
+                blocked += outcome.blocked();
+            } catch (RuntimeException failure) {
                 blocked++;
-                if (!now.isBefore(candidate.cancellationDeadlineAt().plus(timeout))) {
-                    alerts.raise(candidate.accountId(), correlationId, TIMEOUT_ALERT,
-                            "One or more closure domains are not ready", now);
+                try {
+                    alerts.raise(candidate.accountId(), correlationId(candidate),
+                            "ACCOUNT_CLOSURE_PROCESSING_FAILED", "Account-scoped attempt rolled back", now);
+                } catch (RuntimeException ignored) {
+                    // One broken account and even a broken alert sink must not starve the remaining accounts.
                 }
-                continue;
-            }
-            if (!now.isBefore(candidate.cancellationDeadlineAt())
-                    && store.closeIfReady(candidate, correlationId, idempotencyKey(candidate), now)) {
-                closed++;
             }
         }
         return new AccountClosureRunResult(inspected, closed, blocked);
+    }
+
+    private CandidateOutcome process(AccountClosureCandidate candidate, Instant now) {
+        var correlationId = correlationId(candidate);
+        var generation = store.beginAttempt(candidate, correlationId, now);
+        boolean ready = true;
+        for (var domain : ClosureDomain.values()) {
+            var readiness = evaluate(probes.get(domain), domain, candidate.accountId(), correlationId, now);
+            store.recordReadiness(candidate.accountId(), correlationId, generation, readiness);
+            ready &= readiness.status().allowsClosure(domain);
+        }
+        if (!ready) {
+            if (!now.isBefore(candidate.cancellationDeadlineAt().plus(timeout))) {
+                alerts.raise(candidate.accountId(), correlationId, TIMEOUT_ALERT,
+                        "One or more closure domains are not ready", now);
+            }
+            return new CandidateOutcome(0, 1);
+        }
+        if (!now.isBefore(candidate.cancellationDeadlineAt())
+                && store.closeIfReady(candidate, correlationId, generation, idempotencyKey(candidate), now)) {
+            return new CandidateOutcome(1, 0);
+        }
+        return new CandidateOutcome(0, 0);
     }
 
     private static ClosureReadiness evaluate(
@@ -117,4 +134,6 @@ public final class AccountClosureCoordinator {
         return "account-closure:" + candidate.accountId() + ":" + candidate.lifecycleVersion()
                 + ":" + candidate.cancellationDeadlineAt();
     }
+
+    private record CandidateOutcome(int closed, int blocked) {}
 }

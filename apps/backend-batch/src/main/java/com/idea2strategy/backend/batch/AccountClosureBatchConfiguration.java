@@ -2,10 +2,6 @@ package com.idea2strategy.backend.batch;
 
 import com.idea2strategy.backend.application.accountclosure.AccountClosureCoordinator;
 import com.idea2strategy.backend.application.accountclosure.AccountClosureReadinessProbe;
-import com.idea2strategy.backend.application.accountclosure.IdentifierQuarantinePort;
-import com.idea2strategy.backend.application.accountclosure.IdentifierQuarantineReleaseWorker;
-import com.idea2strategy.backend.application.accountclosure.RetentionDispositionWorker;
-import com.idea2strategy.backend.application.accountclosure.RetentionObligationPort;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.identity.AccountClosureJpaStore;
 import com.idea2strategy.backend.persistence.identity.AccountClosurePersistenceConfiguration;
@@ -25,7 +21,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @ConditionalOnProperty(
         name = "idea2strategy.batch.account-closure.enabled",
         havingValue = "true",
-        matchIfMissing = true)
+        matchIfMissing = false)
 @Import({AccountClosurePersistenceConfiguration.class, BotStopCommandJooqAdapter.class})
 class AccountClosureBatchConfiguration {
     @Bean
@@ -42,22 +38,9 @@ class AccountClosureBatchConfiguration {
     }
 
     @Bean
-    RetentionDispositionWorker retentionDispositionWorker(RetentionObligationPort port, Clock clock) {
-        return new RetentionDispositionWorker(port, clock);
-    }
-
-    @Bean
-    IdentifierQuarantineReleaseWorker identifierQuarantineReleaseWorker(
-            IdentifierQuarantinePort port, Clock clock) {
-        return new IdentifierQuarantineReleaseWorker(port, clock);
-    }
-
-    @Bean
     AccountClosureBatchRunner accountClosureBatchRunner(
             AccountClosureCoordinator coordinator,
-            RetentionDispositionWorker retention,
-            IdentifierQuarantineReleaseWorker quarantine,
             @Value("${idea2strategy.batch.account-closure.batch-size:100}") int batchSize) {
-        return new AccountClosureBatchRunner(coordinator, retention, quarantine, batchSize);
+        return new AccountClosureBatchRunner(coordinator, batchSize);
     }
 }
