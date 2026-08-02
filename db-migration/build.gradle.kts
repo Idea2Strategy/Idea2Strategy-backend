@@ -1,5 +1,10 @@
 plugins {
     `java-library`
+    application
+}
+
+application {
+    mainClass = "com.idea2strategy.backend.migration.MigrationBundleCli"
 }
 
 dependencies {
