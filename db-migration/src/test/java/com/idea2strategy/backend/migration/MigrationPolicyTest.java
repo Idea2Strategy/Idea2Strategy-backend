@@ -79,9 +79,11 @@ class MigrationPolicyTest {
                         "V20260802230000__backend_operator_room_permissions.sql",
                         "V20260802231000__backend_leaderboard_result_source_guard.sql",
                         "V20260802231100__backend_transactional_outbox.sql",
+                        "V20260802231300__backend_user_case_contract.sql",
                         "V20260802231400__backend_operator_rbac.sql",
                         "V20260802231500__backend_notification_delivery.sql",
-                        "V20260802231600__backend_account_sanction_commands.sql"),
+                        "V20260802231600__backend_account_sanction_commands.sql",
+                        "V20260802231700__backend_operator_case_workflow.sql"),
                 plan.orderedFileNames());
     }
 
