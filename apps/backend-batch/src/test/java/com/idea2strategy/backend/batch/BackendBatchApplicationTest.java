@@ -11,7 +11,8 @@ import org.springframework.boot.test.context.SpringBootTest;
     "idea2strategy.batch.expired-bot-stop.enabled=false",
     "idea2strategy.batch.account-dormancy.enabled=false",
     "idea2strategy.batch.room-schedule-transition.enabled=false",
-    "idea2strategy.batch.room-evaluation-start.enabled=false"
+    "idea2strategy.batch.room-evaluation-start.enabled=false",
+    "idea2strategy.batch.private-continuation-transition.enabled=false"
 })
 class BackendBatchApplicationTest {
     @Test
