@@ -2,36 +2,29 @@ package com.idea2strategy.backend.persistence.competition;
 
 import com.idea2strategy.backend.application.competition.CompetitionRoomCommandPort;
 import com.idea2strategy.backend.domain.competition.CompetitionRoom;
+import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class CompetitionRoomJpaCommandAdapter implements CompetitionRoomCommandPort {
-    private final CompetitionRoomSpringDataRepository roomRepository;
-    private final CompetitionRoomRulesSpringDataRepository rulesRepository;
-    private final CompetitionLiveRoomRulesSpringDataRepository liveRulesRepository;
-    private final CompetitionRoomScheduleSpringDataRepository scheduleRepository;
+    private final EntityManager entityManager;
 
-    public CompetitionRoomJpaCommandAdapter(
-            CompetitionRoomSpringDataRepository roomRepository,
-            CompetitionRoomRulesSpringDataRepository rulesRepository,
-            CompetitionLiveRoomRulesSpringDataRepository liveRulesRepository,
-            CompetitionRoomScheduleSpringDataRepository scheduleRepository) {
-        this.roomRepository = roomRepository;
-        this.rulesRepository = rulesRepository;
-        this.liveRulesRepository = liveRulesRepository;
-        this.scheduleRepository = scheduleRepository;
+    public CompetitionRoomJpaCommandAdapter(EntityManager entityManager) {
+        this.entityManager = entityManager;
     }
 
     @Override
     @Transactional
     public void save(CompetitionRoom room) {
-        roomRepository.saveAndFlush(CompetitionRoomJpaEntity.from(room));
-        rulesRepository.save(CompetitionRoomRulesJpaEntity.from(room));
+        // This port creates a new aggregate only. persist() makes duplicate ids fail instead of
+        // silently merging a stale aggregate over the guarded configuration-update path.
+        entityManager.persist(CompetitionRoomJpaEntity.from(room));
+        entityManager.persist(CompetitionRoomRulesJpaEntity.from(room));
         if (room.liveRules() != null) {
-            liveRulesRepository.save(CompetitionLiveRoomRulesJpaEntity.from(room));
+            entityManager.persist(CompetitionLiveRoomRulesJpaEntity.from(room));
         }
-        scheduleRepository.save(CompetitionRoomScheduleJpaEntity.from(room));
-        scheduleRepository.flush();
+        entityManager.persist(CompetitionRoomScheduleJpaEntity.from(room));
+        entityManager.flush();
     }
 }
