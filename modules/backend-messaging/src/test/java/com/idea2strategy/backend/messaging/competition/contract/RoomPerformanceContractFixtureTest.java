@@ -93,7 +93,27 @@ class RoomPerformanceContractFixtureTest {
         );
         assertTrue(commands.stream().allMatch(command -> command.roomId().equals(schedule.roomId())));
         assertTrue(commands.stream().allMatch(command -> command.scheduleVersion().equals(schedule.scheduleVersion())));
+        assertTrue(commands.stream().allMatch(command -> command.evaluationStartsAt().equals(schedule.evaluationStartsAt())));
+        assertTrue(commands.stream().allMatch(command -> command.evaluationEndsAt().equals(schedule.evaluationEndsAt())));
         assertTrue(commands.stream().allMatch(command -> !command.idempotencyKey().isBlank()));
+    }
+
+    @Test
+    void rejectsInvalidEvaluationCommandBoundaries() {
+        RoomScheduleFixture schedule = RoomContractFixtures.publicLiveRoomSchedule();
+        RoomEvaluationCommandFixture valid = RoomContractFixtures.evaluationCommands(schedule).get(1);
+
+        assertThrows(IllegalArgumentException.class, () -> new RoomEvaluationCommandFixture(
+            valid.contractVersion(), valid.commandId(), valid.type(), valid.roomId(),
+            valid.participationId(), valid.botId(), valid.evaluationSegmentId(), valid.scheduleVersion(),
+            valid.evaluationStartsAt(), valid.evaluationStartsAt(), valid.effectiveAt(), valid.idempotencyKey()
+        ));
+        assertThrows(IllegalArgumentException.class, () -> new RoomEvaluationCommandFixture(
+            valid.contractVersion(), valid.commandId(), valid.type(), valid.roomId(),
+            valid.participationId(), valid.botId(), valid.evaluationSegmentId(), valid.scheduleVersion(),
+            valid.evaluationStartsAt(), valid.evaluationEndsAt(),
+            valid.evaluationStartsAt().minusSeconds(1), valid.idempotencyKey()
+        ));
     }
 
     @Test
