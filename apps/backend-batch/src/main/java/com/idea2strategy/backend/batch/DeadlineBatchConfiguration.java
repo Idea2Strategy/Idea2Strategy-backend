@@ -1,0 +1,93 @@
+package com.idea2strategy.backend.batch;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionCommandService;
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionAuthorizationPort;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort;
+import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator;
+import com.idea2strategy.backend.persistence.notification.EmailDeliveryGateway;
+import com.idea2strategy.backend.persistence.notification.NotificationEmailWorker;
+import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
+import com.idea2strategy.backend.persistence.sanction.AccountSanctionJdbcAdapter;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+@Configuration(proxyBeanMethods = false)
+public class DeadlineBatchConfiguration {
+    private static final UUID APPLY_PERMISSION = UUID.fromString("40000000-0000-4000-8000-000000000004");
+    private static final UUID LIFT_PERMISSION = UUID.fromString("50000000-0000-4000-8000-000000000005");
+
+    @Bean
+    @ConditionalOnBean(JdbcTemplate.class)
+    SanctionExpiryBatchCategoryPort sanctionExpiryBatchCategoryPort(
+            JdbcTemplate jdbc, ObjectMapper json) {
+        AccountSanctionJdbcAdapter adapter = new AccountSanctionJdbcAdapter(jdbc, json);
+        AccountSanctionAuthorizationPort rejectManualAuthorization = (context, permission, evaluatedAt) ->
+                new AccountSanctionAuthorizationPort.Decision(
+                        false, "BATCH_MANUAL_SANCTION_FORBIDDEN", null,
+                        Set.of(), Set.of(), false, false);
+        AccountSanctionCommandService commands = new AccountSanctionCommandService(
+                adapter, rejectManualAuthorization, adapter, adapter,
+                APPLY_PERMISSION, LIFT_PERMISSION, new DatabaseClock(jdbc));
+        return new SanctionExpiryBatchCategoryPort(adapter, commands, jdbc);
+    }
+
+    @Bean
+    @ConditionalOnBean(EmailDeliveryGateway.class)
+    NotificationDeliveryBatchCategoryPort notificationDeliveryBatchCategoryPort(
+            JdbcTemplate jdbc,
+            ObjectMapper json,
+            EmailDeliveryGateway gateway,
+            @Value("${batch.notification.maximum-attempts:5}") int maximumAttempts,
+            @Value("${batch.notification.retry-delay:PT1M}") Duration retryDelay) {
+        TransactionalOutboxStore outbox = new TransactionalOutboxStore(jdbc);
+        NotificationEmailWorker worker = new NotificationEmailWorker(jdbc, json, outbox, gateway);
+        return new NotificationDeliveryBatchCategoryPort(outbox, worker, maximumAttempts, retryDelay, jdbc);
+    }
+
+    @Bean
+    @ConditionalOnBean(JdbcTemplate.class)
+    BatchEvidenceJdbcAdapter batchEvidenceJdbcAdapter(JdbcTemplate jdbc, ObjectMapper json) {
+        return new BatchEvidenceJdbcAdapter(jdbc, json);
+    }
+
+    @Bean
+    @ConditionalOnBean(BatchEvidenceJdbcAdapter.class)
+    DeadlineBatchOrchestrator deadlineBatchOrchestrator(
+            List<BatchCategoryPort> ports,
+            BatchEvidenceJdbcAdapter evidence,
+            @Value("${batch.runtime.maximum-size:100}") int maximumBatchSize) {
+        return new DeadlineBatchOrchestrator(ports, evidence, evidence, maximumBatchSize);
+    }
+
+    private static final class DatabaseClock extends Clock {
+        private final JdbcTemplate jdbc;
+
+        private DatabaseClock(JdbcTemplate jdbc) {
+            this.jdbc = jdbc;
+        }
+
+        @Override public ZoneId getZone() { return ZoneId.of("UTC"); }
+
+        @Override public Clock withZone(ZoneId zone) {
+            if (!getZone().equals(zone)) throw new IllegalArgumentException("batch clock is fixed to UTC");
+            return this;
+        }
+
+        @Override public Instant instant() {
+            return Objects.requireNonNull(
+                    jdbc.queryForObject("select clock_timestamp()", java.sql.Timestamp.class)).toInstant();
+        }
+    }
+}

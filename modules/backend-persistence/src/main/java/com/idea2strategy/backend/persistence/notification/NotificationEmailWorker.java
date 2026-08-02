@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class NotificationEmailWorker {
+    public enum DeliveryDisposition { COMPLETED, RETRY, DEAD_LETTER }
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final TransactionalOutboxStore outbox;
@@ -28,7 +29,7 @@ public class NotificationEmailWorker {
         this.gateway = gateway;
     }
 
-    public void deliver(
+    public DeliveryDisposition deliver(
             ClaimedMessage message, String runtimePolicyVersion,
             int maximumAttempts, Duration retryDelay) {
         if (!"notification".equals(message.ownerDomain())
@@ -56,14 +57,17 @@ public class NotificationEmailWorker {
         if (result.outcome() == EmailDeliveryGateway.DeliveryResult.Outcome.SENT) {
             finish(attemptId, "SUCCEEDED", completedAt, result.providerMessageKey(), null, null);
             outbox.acknowledge(message.messageId(), message.claimToken(), result.providerMessageKey());
+            return DeliveryDisposition.COMPLETED;
         } else if (result.outcome() == EmailDeliveryGateway.DeliveryResult.Outcome.RETRYABLE_FAILURE
                 && message.attemptNumber() < maximumAttempts) {
             Instant next = completedAt.plus(retryDelay);
             finish(attemptId, "FAILED", completedAt, null, result.failureCode(), next);
             outbox.retry(message.messageId(), message.claimToken(), result.failureCode(), next);
+            return DeliveryDisposition.RETRY;
         } else {
             finish(attemptId, "FAILED", completedAt, null, result.failureCode(), null);
             outbox.deadLetter(message.messageId(), message.claimToken(), result.failureCode());
+            return DeliveryDisposition.DEAD_LETTER;
         }
     }
 
