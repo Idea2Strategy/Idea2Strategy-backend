@@ -58,6 +58,16 @@ Flyway must execute only the resulting output directory. Application startup mus
 
 After a successful deployment, older application versions can ignore the added column. Do not drop `theme_preference` or its enum as a rollback because that would destroy saved account preferences. Recover with a new timestamped forward-fix migration, or restore the pre-deployment backup only when the entire deployment must be reverted.
 
+## A12 account lifecycle migrations
+
+`V20260802060000__backend_account_lifecycle_dormant_status.sql` adds `DORMANT` in its own committed Flyway migration. PostgreSQL does not allow the new enum value to be referenced safely by DDL in the transaction that first adds it.
+
+`V20260802060100__backend_account_lifecycle_contract.sql` upgrades and backfills lifecycle evidence, installs the current-projection/head guard, and adds immutable retention policy versions/rules, fail-closed obligations, legal holds, and 30-day keyed-HMAC identifier quarantines. It deliberately seeds no retention policy: deployment must install an actually approved policy through an independently reviewed forward migration or controlled administration path. Until then, destructive retention work records `RETENTION_POLICY_MISSING` and remains blocked.
+
+`V20260802060200__backend_account_lifecycle_command_receipts.sql` adds immutable completed-command receipts. A receipt binds the account, command type, idempotency key, and request hash to the original HTTP-style status, response code/document, and optional same-account lifecycle event. This permits exact retries without weakening the append-only lifecycle event contract.
+
+Both migrations are forward-only. If deployment fails, preserve their bytes, correct the environmental or data cause, and rerun after Flyway repair/validation. Do not drop lifecycle evidence, retention records, legal holds, or quarantine tombstones as rollback; restore the pre-deployment database backup only for a whole-release rollback, otherwise ship a new forward-fix migration.
+
 각 도메인 소유자가 자신의 변경을 새 migration으로 작성하고, 중앙 통합 담당자가 순서 충돌과 `db/schema.dbml` 일치를 검토합니다.
 
 적용된 migration 파일은 수정하지 않습니다. 실제 최초 migration은 DBML과 migration 계획을 함께 검토한 PR에서 추가합니다.

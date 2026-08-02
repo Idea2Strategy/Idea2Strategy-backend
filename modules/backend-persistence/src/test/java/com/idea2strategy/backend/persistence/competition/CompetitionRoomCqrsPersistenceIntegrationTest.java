@@ -90,6 +90,7 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         jdbcTemplate.update("delete from competition.scoring_template_versions where id = ?", SCORING_VERSION_ID);
         jdbcTemplate.update("delete from trading.fee_policy_versions where id = ?", FEE_POLICY_ID);
         jdbcTemplate.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_POLICY_ID);
+        jdbcTemplate.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbcTemplate.update("delete from identity.accounts where id = ?", OWNER_ID);
         jdbcTemplate.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbcTemplate.update(

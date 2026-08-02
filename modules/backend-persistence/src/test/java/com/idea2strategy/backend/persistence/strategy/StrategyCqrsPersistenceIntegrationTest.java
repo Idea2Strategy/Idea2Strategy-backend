@@ -60,6 +60,8 @@ class StrategyCqrsPersistenceIntegrationTest {
     @BeforeEach
     void prepareOwner() {
         jdbcTemplate.update("delete from strategy.strategies");
+        jdbcTemplate.execute(
+                "truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbcTemplate.update("delete from identity.accounts where id = ?", OWNER_ID);
         jdbcTemplate.update(
                 "insert into identity.accounts (id, lifecycle_status, status_changed_at) "

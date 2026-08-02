@@ -79,6 +79,8 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         jdbcTemplate.update("delete from strategy.strategies");
         jdbcTemplate.update("delete from identity.sessions where id in (?, ?)", SESSION_ID, SECOND_SESSION_ID);
         jdbcTemplate.update("delete from identity.login_identities where id = ?", LOGIN_ID);
+        jdbcTemplate.execute(
+                "truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbcTemplate.update("delete from identity.accounts where id = ?", OWNER_ID);
         jdbcTemplate.update(
                 """

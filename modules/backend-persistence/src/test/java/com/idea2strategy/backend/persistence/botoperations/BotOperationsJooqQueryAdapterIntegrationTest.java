@@ -51,6 +51,7 @@ class BotOperationsJooqQueryAdapterIntegrationTest {
     void prepareData() {
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from bot.bots");
+        jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id in (?, ?)", OWNER_ID, OTHER_OWNER_ID);
         insertAccount(OWNER_ID);
         insertAccount(OTHER_OWNER_ID);

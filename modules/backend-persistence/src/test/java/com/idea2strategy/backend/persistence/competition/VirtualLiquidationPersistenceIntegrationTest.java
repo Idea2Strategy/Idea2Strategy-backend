@@ -76,6 +76,7 @@ class VirtualLiquidationPersistenceIntegrationTest {
         jdbc.update("delete from competition.scoring_template_versions where id = ?", TEMPLATE_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
+        jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
 
         var publishedAt = START.minusSeconds(3600).atOffset(ZoneOffset.UTC);

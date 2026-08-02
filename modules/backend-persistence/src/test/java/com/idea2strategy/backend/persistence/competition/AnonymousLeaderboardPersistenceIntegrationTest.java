@@ -30,6 +30,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     private static final UUID VIEWER_ID = id(1);
     private static final UUID OTHER_ID = id(2);
     private static final UUID OUTSIDER_ID = id(50);
+    private static final UUID INACTIVE_ID = id(51);
     private static final UUID ROOM_ID = id(3);
     private static final UUID EMPTY_ROOM_ID = id(4);
     private static final UUID SECRET_ROOM_ID = id(5);
@@ -66,6 +67,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
+        jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id in (?, ?, ?)", VIEWER_ID, OTHER_ID, OUTSIDER_ID);
         jdbc.update(
                 "insert into identity.accounts (id, lifecycle_status) "
@@ -241,8 +243,11 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     @Test
     void rejectsInactiveAccountsInvalidCursorsAndCursorsFromAnotherRoom() {
         seedLeaderboard();
-        jdbc.update("update identity.accounts set lifecycle_status = 'CLOSING' where id = ?", OUTSIDER_ID);
-        assertThatThrownBy(() -> adapter.query(query(ROOM_ID, OUTSIDER_ID, null, null, 10)))
+        jdbc.update(
+                "insert into identity.accounts (id, lifecycle_status, dormant_at) values (?, 'DORMANT', ?)",
+                INACTIVE_ID,
+                CUTOFF.atOffset(ZoneOffset.UTC));
+        assertThatThrownBy(() -> adapter.query(query(ROOM_ID, INACTIVE_ID, null, null, 10)))
                 .isInstanceOf(LeaderboardAuthenticationException.class);
         assertThatThrownBy(() -> adapter.query(query(
                         ROOM_ID, VIEWER_ID, SNAPSHOT_ID,

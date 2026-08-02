@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
             + "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration,"
             + "org.springframework.boot.jooq.autoconfigure.JooqAutoConfiguration",
     "idea2strategy.batch.expired-bot-stop.enabled=false",
+    "idea2strategy.batch.account-dormancy.enabled=false",
     "idea2strategy.batch.room-schedule-transition.enabled=false",
     "idea2strategy.batch.room-evaluation-start.enabled=false"
 })

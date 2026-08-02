@@ -69,6 +69,8 @@ class StrategyLibraryPersistenceIntegrationTest {
         jdbc.update("delete from strategy.element_catalog_versions where id = ?", CATALOG_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
+        jdbc.execute(
+                "truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id in (?, ?)", OWNER_ID, OTHER_OWNER_ID);
 
         var now = NOW.atOffset(ZoneOffset.UTC);
