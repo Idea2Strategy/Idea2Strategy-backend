@@ -50,7 +50,7 @@ public class FinalRoomResultJooqAdapter implements FinalRoomResultPort {
                         + "(select count(*) from competition.leaderboard_entries le "
                         + "where le.snapshot_id = ls.id) as entry_count "
                         + "from competition.leaderboard_snapshots ls "
-                        + "where ls.room_id = ? and ls.cutoff_at = ? for update",
+                        + "where ls.room_id = ? and ls.cutoff_at = ?::timestamptz for update",
                 result.roomId(), cutoff);
         if (existing != null) {
             boolean identical = result.snapshotId().equals(existing.get("id", UUID.class))
@@ -65,21 +65,31 @@ public class FinalRoomResultJooqAdapter implements FinalRoomResultPort {
         }
 
         for (FinalLeaderboardEntry entry : result.entries()) {
-            if (!Boolean.TRUE.equals(dsl.fetchValue(
-                    "select exists(select 1 from competition.participations "
-                            + "where id = ? and room_id = ?)",
-                    entry.participationId(), result.roomId()))) {
+            Record participation = dsl.fetchOne(
+                    "select status::text as status from competition.participations "
+                            + "where id = ? and room_id = ? for update",
+                    entry.participationId(), result.roomId());
+            if (participation == null) {
                 throw new FinalRoomResultConflictException("final result contains a foreign participation");
+            }
+            String status = participation.get("status", String.class);
+            if (!"COMPLETED".equals(status) && !"EVALUATION_FAILED".equals(status)) {
+                throw new FinalRoomResultConflictException("final result requires terminal participations");
             }
         }
 
         dsl.execute(
                 "insert into competition.leaderboard_snapshots "
                         + "(id, room_id, scoring_template_version_id, cutoff_at, status, result_hash, created_at) "
-                        + "values (?, ?, ?, ?, 'FINAL'::competition.leaderboard_status, ?, ?)",
+                        + "values (?, ?, ?, ?::timestamptz, 'FINAL'::competition.leaderboard_status, "
+                        + "?, ?::timestamptz)",
                 result.snapshotId(), result.roomId(), result.scoringTemplateVersionId(), cutoff,
                 result.resultHash(), result.createdAt().atOffset(ZoneOffset.UTC));
         for (FinalLeaderboardEntry entry : result.entries()) {
+            dsl.execute(
+                    "update competition.participations set action_locked_at = "
+                            + "coalesce(action_locked_at, ?::timestamptz) where id = ?",
+                    cutoff, entry.participationId());
             dsl.execute(
                     "insert into competition.leaderboard_entries "
                             + "(snapshot_id, participation_id, performance_snapshot_id, rank, is_joint_rank, "
