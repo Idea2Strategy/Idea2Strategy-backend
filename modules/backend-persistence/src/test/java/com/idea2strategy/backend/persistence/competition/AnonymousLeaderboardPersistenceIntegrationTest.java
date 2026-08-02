@@ -40,6 +40,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     private static final UUID SNAPSHOT_ID = id(8);
     private static final UUID FEE_POLICY_ID = id(60);
     private static final UUID BUFFER_POLICY_ID = id(61);
+    private static final UUID OPERATOR_ID = id(62);
     private static final Instant CUTOFF = Instant.parse("2026-08-02T05:00:00Z");
 
     @Container
@@ -65,6 +66,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
 
     @BeforeEach
     void prepare() {
+        jdbc.update("delete from identity.account_sanctions where applied_by_operator_id = ?", OPERATOR_ID);
         jdbc.update("delete from competition.room_final_access_grants");
         jdbc.update("delete from competition.leaderboard_entries");
         jdbc.update("delete from competition.leaderboard_snapshots");
@@ -81,10 +83,17 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
         jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id in (?, ?, ?)", VIEWER_ID, OTHER_ID, OUTSIDER_ID);
+        jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update(
                 "insert into identity.accounts (id, lifecycle_status) "
                         + "values (?, 'ACTIVE'), (?, 'ACTIVE'), (?, 'ACTIVE')",
                 VIEWER_ID, OTHER_ID, OUTSIDER_ID);
+        jdbc.update(
+                "insert into operations.operator_accounts "
+                        + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
+                        + "values (?, 'leaderboard-sanction-operator', 'ACTIVE', ?, ?)",
+                OPERATOR_ID, CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC),
+                CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC));
         jdbc.update(
                 "insert into competition.scoring_template_versions "
                         + "(id, template_code, version, rules_document, rules_hash, published_at) "
@@ -246,6 +255,59 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     }
 
     @Test
+    void overlaysEffectiveSanctionsWithoutMutatingFinalEvidenceAndReexposesAtTheExpiryBoundary() {
+        seedLeaderboard();
+        int entryCount = jdbc.queryForObject(
+                "select count(*) from competition.leaderboard_entries where snapshot_id = ?",
+                Integer.class, SNAPSHOT_ID);
+        seedSanction(VIEWER_ID, "SUSPENSION");
+        seedSanction(OTHER_ID, "PERMANENT");
+
+        var integrated = roomLeaderboardAdapter.queryRoomLeaderboard(new RoomLeaderboardQuery(
+                ROOM_ID, VIEWER_ID, null, null, null, 10, null, null, 10));
+
+        assertThat(integrated.leaderboard().rows()).isEmpty();
+        assertThat(integrated.ownedBots().rows()).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from competition.leaderboard_entries where snapshot_id = ?",
+                Integer.class, SNAPSHOT_ID)).isEqualTo(entryCount);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from competition.leaderboard_snapshots where id = ?",
+                Integer.class, SNAPSHOT_ID)).isOne();
+
+        jdbc.update(
+                "update identity.account_sanctions set status = 'LIFTED', status_changed_at = current_timestamp "
+                        + "where account_id = ?",
+                VIEWER_ID);
+        jdbc.update(
+                "update identity.account_sanctions set expires_at = current_timestamp "
+                        + "where account_id = ?",
+                OTHER_ID);
+
+        assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("alpha", "beta", "gamma");
+        assertThat(adapter.queryOwned(query(ROOM_ID, VIEWER_ID, null, null, 10)).rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("alpha", "gamma");
+    }
+
+    @Test
+    void resolvesAnIssuedAnchorFromImmutableMembershipAfterItsOwnerIsSanctioned() {
+        seedLeaderboard();
+        String issuedAnchor = adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10))
+                .rows().getFirst().cursorAnchor();
+        seedSanction(VIEWER_ID, "SUSPENSION");
+
+        var continued = adapter.query(query(
+                ROOM_ID, VIEWER_ID, SNAPSHOT_ID, new Cursor(1, issuedAnchor), 10));
+
+        assertThat(continued.rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("beta");
+    }
+
+    @Test
     void usesFrozenFinalSecretGrantsInsteadOfMutableParticipationStatus() {
         seedSnapshot(SECRET_ROOM_ID, id(40), "FINAL", CUTOFF);
         seedBotParticipation(SECRET_ROOM_ID, VIEWER_ID, id(41), id(42), "secret-member", "REGISTERED");
@@ -391,6 +453,17 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         seedEntry(VIEWER_ID, id(20), id(10), id(30), "alpha", 1, true, "OWNER_ONLY_REASON");
         seedEntry(OTHER_ID, id(21), id(11), id(31), "beta", 1, true, "PRIVATE_OTHER_REASON");
         seedEntry(VIEWER_ID, id(22), id(12), id(32), "gamma", 2, false, null);
+    }
+
+    private void seedSanction(UUID accountId, String sanctionType) {
+        jdbc.update(
+                "insert into identity.account_sanctions "
+                        + "(id, account_id, sanction_type, status, reason_code, applied_by_operator_id, "
+                        + "applied_at, effective_at, status_changed_at) "
+                        + "values (?, ?, ?, 'ACTIVE'::identity.sanction_status, 'LEADERBOARD_VISIBILITY', "
+                        + "?, current_timestamp - interval '2 minutes', "
+                        + "current_timestamp - interval '1 minute', current_timestamp - interval '1 minute')",
+                UUID.randomUUID(), accountId, sanctionType, OPERATOR_ID);
     }
 
     private void seedEntry(
