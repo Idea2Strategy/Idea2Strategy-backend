@@ -14,6 +14,8 @@ public record BotOrderView(
         UUID orderId,
         UUID partitionId,
         UUID instrumentId,
+        String symbol,
+        String currentSymbol,
         String side,
         String orderType,
         String timeInForce,

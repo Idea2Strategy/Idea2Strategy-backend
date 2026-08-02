@@ -42,8 +42,8 @@ class BotTradingControllerTest {
             public Optional<List<BotOrderView>> findOwnedOrders(UUID botId, UUID owner, int limit) {
                 lastLimit = limit;
                 return Optional.of(List.of(new BotOrderView(
-                        ORDER, null, null, "BUY", "MARKET", "DAY", new BigDecimal("3"),
-                        new BigDecimal("3"), BigDecimal.ZERO, "FILLED", AT)));
+                        ORDER, null, null, "OLDT", "NEWT", "BUY", "MARKET", "DAY",
+                        new BigDecimal("3"), new BigDecimal("3"), BigDecimal.ZERO, "FILLED", AT)));
             }
 
             @Override
@@ -86,7 +86,9 @@ class BotTradingControllerTest {
         mvc.perform(get("/api/v1/bots/{botId}/orders", BOT))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].orderId").value(ORDER.toString()))
-                .andExpect(jsonPath("$[0].status").value("FILLED"));
+                .andExpect(jsonPath("$[0].status").value("FILLED"))
+                .andExpect(jsonPath("$[0].symbol").value("OLDT"))
+                .andExpect(jsonPath("$[0].currentSymbol").value("NEWT"));
     }
 
     @Test
