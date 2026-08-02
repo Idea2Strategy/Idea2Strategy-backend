@@ -280,7 +280,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
                         + "where account_id = ?",
                 VIEWER_ID);
         jdbc.update(
-                "update identity.account_sanctions set expires_at = current_timestamp "
+                "update identity.account_sanctions set status = 'LIFTED', status_changed_at = current_timestamp "
                         + "where account_id = ?",
                 OTHER_ID);
 
@@ -459,11 +459,13 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         jdbc.update(
                 "insert into identity.account_sanctions "
                         + "(id, account_id, sanction_type, status, reason_code, applied_by_operator_id, "
-                        + "applied_at, effective_at, status_changed_at) "
+                        + "applied_at, effective_at, expires_at, status_changed_at) "
                         + "values (?, ?, ?, 'ACTIVE'::identity.sanction_status, 'LEADERBOARD_VISIBILITY', "
                         + "?, current_timestamp - interval '2 minutes', "
-                        + "current_timestamp - interval '1 minute', current_timestamp - interval '1 minute')",
-                UUID.randomUUID(), accountId, sanctionType, OPERATOR_ID);
+                        + "current_timestamp - interval '1 minute', "
+                        + "case when ? = 'SUSPENSION' then current_timestamp + interval '1 day' else null end, "
+                        + "current_timestamp - interval '1 minute')",
+                UUID.randomUUID(), accountId, sanctionType, OPERATOR_ID, sanctionType);
     }
 
     private void seedEntry(
