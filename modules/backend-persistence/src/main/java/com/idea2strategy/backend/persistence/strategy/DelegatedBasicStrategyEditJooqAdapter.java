@@ -103,14 +103,27 @@ public class DelegatedBasicStrategyEditJooqAdapter
                         + "join identity.accounts account on account.id = a.account_id "
                         + "join identity.account_security_states security on security.account_id = account.id "
                         + "join strategy.strategies strategy on strategy.owner_account_id = account.id "
+                        + "left join identity.delegated_authorization_strategy_targets target "
+                        + "on target.authorization_id = a.id and target.strategy_id = strategy.id "
+                        + "left join identity.delegated_strategy_derivations derivation "
+                        + "on derivation.authorization_id = a.id and derivation.result_strategy_id = strategy.id "
                         + "where a.id = ? and c.id = ? and a.account_id = ? and strategy.id = ? "
                         + "and sc.scope_code = ?::identity.delegated_scope "
                         + "and a.status = 'ACTIVE' and a.revoked_at is null "
                         + "and (a.expiry_mode <> 'AT_TIME' or a.expires_at > ?::timestamptz) "
                         + "and a.auth_epoch_at_grant = security.auth_epoch "
                         + "and account.lifecycle_status = 'ACTIVE' "
+                        + "and not exists (select 1 from identity.account_sanctions sanction "
+                        + "where sanction.account_id = account.id and sanction.status = 'ACTIVE') "
                         + "and c.credential_type = 'ACCESS_TOKEN' and c.revoked_at is null "
-                        + "and c.expires_at > ?::timestamptz",
+                        + "and c.expires_at > ?::timestamptz "
+                        + "and strategy.mode = 'BASIC' and strategy.archived_at is null and strategy.deleted_at is null "
+                        + "and ((target.authorization_id is not null "
+                        + "and target.owner_account_id_at_grant = strategy.owner_account_id "
+                        + "and target.strategy_access_epoch_at_grant = strategy.delegated_access_epoch) "
+                        + "or (derivation.authorization_id is not null "
+                        + "and derivation.owner_account_id_at_creation = strategy.owner_account_id "
+                        + "and derivation.strategy_access_epoch_at_creation = strategy.delegated_access_epoch))",
                 editor.authorizationId(), editor.credentialId(), editor.accountId(), strategyId, scope.name(),
                 at.atOffset(ZoneOffset.UTC), at.atOffset(ZoneOffset.UTC)) != null;
     }
