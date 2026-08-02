@@ -3,12 +3,39 @@ package com.idea2strategy.backend.application.journey;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.idea2strategy.backend.application.batch.BatchCategory;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort.ClaimPage;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort.ClaimRequest;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort.Cursor;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort.ItemResult;
+import com.idea2strategy.backend.application.batch.BatchCategoryPort.WorkItem;
+import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator;
+import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator.RunCommand;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationCommand;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationCommandPort;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationCommandType;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationDecision;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationExecution;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationIdempotencyException;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationMutation;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationResult;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationScope;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationService;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationStatus;
+import com.idea2strategy.backend.application.delegation.DelegatedCredentialMaterial;
 import com.idea2strategy.backend.application.testing.AccountOperationsJourneyFixture;
 import com.idea2strategy.backend.application.testing.AccountOperationsJourneyFixture.FakeDomain;
 import com.idea2strategy.backend.application.testing.AccountOperationsJourneyFixture.JourneyRejectedException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -160,11 +187,48 @@ class AccountOperationsIndependentJourneyTest {
     }
 
     @Test
-    void exposesA15AndA21AsExplicitFollowUpGatesInsteadOfInventingBehavior() {
+    void appliesDelegatedAuthorizationAndRunsItsDeadlineBatchWithReplayEvidence() {
         var fixture = fixture();
+        fixture.registerAndVerify("signup-delegated", hash('a'), USER_CORRELATION);
+        fixture.login("login-delegated", hash('b'), USER_CORRELATION);
+        fixture.activateOperatorMfa();
 
-        assertThat(fixture.delegatedCredentialGate()).isEqualTo("A15_NOT_IN_STACK");
-        assertThat(fixture.deadlineBatchGate()).isEqualTo("A21_NOT_IN_STACK");
+        var delegatedCommand = new DelegatedAuthorizationCommand(
+                DelegatedAuthorizationCommandType.CREATE,
+                AccountOperationsJourneyFixture.ACCOUNT_ID,
+                uuid(31),
+                null,
+                0,
+                4,
+                "e2e-client",
+                uuid(32),
+                Set.of(DelegatedAuthorizationScope.STRATEGY_CREATE),
+                Set.of(AccountOperationsJourneyFixture.STRATEGY_INCIDENT_ID),
+                NOW.plus(Duration.ofHours(1)),
+                null,
+                "delegated-create",
+                hash('c'),
+                USER_CORRELATION);
+
+        DelegatedAuthorizationResult first = fixture.authorizeDelegatedStrategy(delegatedCommand);
+        DelegatedAuthorizationResult replay = fixture.authorizeDelegatedStrategy(delegatedCommand);
+        assertThat(first.status()).isEqualTo(DelegatedAuthorizationStatus.ACTIVE);
+        assertThat(first.authorizationVersion()).isEqualTo(1);
+        assertThat(first.rawCredential()).contains("raw-delegated-once");
+        assertThat(replay.rawCredential()).isEmpty();
+
+        var batchCommand = new RunCommand(
+                uuid(33), OPERATIONS_CORRELATION, "journey-worker", "policy-v1",
+                Duration.ofMinutes(1), 1, Set.of(BatchCategory.DELEGATED_TOKEN));
+        var firstBatch = fixture.runDeadlineBatch(batchCommand);
+        var replayBatch = fixture.runDeadlineBatch(batchCommand);
+
+        assertThat(firstBatch.completed()).isEqualTo(1);
+        assertThat(firstBatch.categoryFailures()).isZero();
+        assertThat(replayBatch.alreadyCompleted()).isEqualTo(1);
+        assertThat(fixture.snapshot().traces())
+                .anyMatch(trace -> trace.action().equals("DELEGATED_AUTHORIZATION_APPLIED"))
+                .anyMatch(trace -> trace.action().equals("DEADLINE_BATCH_COMPLETED"));
     }
 
     private static AccountOperationsJourneyFixture resolvedCaseFixture() {
@@ -193,8 +257,72 @@ class AccountOperationsIndependentJourneyTest {
         return new AccountOperationsJourneyFixture(
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Set.of(OPERATOR_PERMISSION),
-                () -> "A15_NOT_IN_STACK",
-                () -> "A21_NOT_IN_STACK");
+                delegatedAuthorizationService(),
+                deadlineBatchOrchestrator());
+    }
+
+    private static DelegatedAuthorizationService delegatedAuthorizationService() {
+        return new DelegatedAuthorizationService(
+                new JourneyDelegatedCommandPort(),
+                () -> new DelegatedCredentialMaterial("raw-delegated-once", "digest-only", (short) 1),
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                () -> uuid(34));
+    }
+
+    private static DeadlineBatchOrchestrator deadlineBatchOrchestrator() {
+        return new DeadlineBatchOrchestrator(
+                List.of(new JourneyDeadlinePort()),
+                ignored -> {},
+                ignored -> {},
+                1);
+    }
+
+    private static final class JourneyDelegatedCommandPort implements DelegatedAuthorizationCommandPort {
+        private final Map<String, Receipt> receipts = new HashMap<>();
+
+        @Override
+        public DelegatedAuthorizationExecution executeAtomically(
+                DelegatedAuthorizationCommand command,
+                Instant at,
+                DelegatedAuthorizationDecision decision) {
+            Receipt receipt = receipts.get(command.idempotencyKey());
+            if (receipt != null) {
+                if (!receipt.requestHash().equals(command.requestHash())) {
+                    throw new DelegatedAuthorizationIdempotencyException();
+                }
+                return new DelegatedAuthorizationExecution(receipt.result(), false);
+            }
+            DelegatedAuthorizationMutation mutation = decision.decide(Optional.empty());
+            DelegatedAuthorizationResult result = mutation.toStoredResult();
+            receipts.put(command.idempotencyKey(), new Receipt(command.requestHash(), result));
+            return new DelegatedAuthorizationExecution(result, true);
+        }
+
+        private record Receipt(String requestHash, DelegatedAuthorizationResult result) {}
+    }
+
+    private static final class JourneyDeadlinePort implements BatchCategoryPort {
+        private final Set<String> completed = new HashSet<>();
+
+        @Override
+        public BatchCategory category() {
+            return BatchCategory.DELEGATED_TOKEN;
+        }
+
+        @Override
+        public ClaimPage claimDue(ClaimRequest request) {
+            WorkItem item = new WorkItem(
+                    category(), "delegated-authorization-expiry", NOW.minusSeconds(1),
+                    "delegated-expiry-1", uuid(35), 1);
+            return new ClaimPage(NOW, List.of(item), new Cursor(NOW, item.itemId()));
+        }
+
+        @Override
+        public ItemResult execute(WorkItem item, UUID runId, UUID correlationId) {
+            return completed.add(item.idempotencyKey())
+                    ? ItemResult.completed()
+                    : ItemResult.alreadyCompleted();
+        }
     }
 
     private static String hash(char value) {

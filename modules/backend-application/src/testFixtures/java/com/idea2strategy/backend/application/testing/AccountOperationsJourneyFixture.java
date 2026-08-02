@@ -1,5 +1,9 @@
 package com.idea2strategy.backend.application.testing;
 
+import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationCommand;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationResult;
+import com.idea2strategy.backend.application.delegation.DelegatedAuthorizationService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -22,8 +26,8 @@ public final class AccountOperationsJourneyFixture {
     public static final UUID ROOM_INCIDENT_ID = uuid(13);
 
     private final Clock clock;
-    private final DelegatedCredentialGate delegatedCredentialGate;
-    private final DeadlineBatchGate deadlineBatchGate;
+    private final DelegatedAuthorizationService delegatedAuthorizationService;
+    private final DeadlineBatchOrchestrator deadlineBatchOrchestrator;
     private final Map<String, Receipt> receipts = new HashMap<>();
     private final Map<String, OutboxMessage> outbox = new LinkedHashMap<>();
     private final List<Trace> traces = new ArrayList<>();
@@ -46,12 +50,14 @@ public final class AccountOperationsJourneyFixture {
     public AccountOperationsJourneyFixture(
             Clock clock,
             Set<UUID> operatorPermissions,
-            DelegatedCredentialGate delegatedCredentialGate,
-            DeadlineBatchGate deadlineBatchGate) {
+            DelegatedAuthorizationService delegatedAuthorizationService,
+            DeadlineBatchOrchestrator deadlineBatchOrchestrator) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.operatorPermissions = Set.copyOf(operatorPermissions);
-        this.delegatedCredentialGate = Objects.requireNonNull(delegatedCredentialGate, "delegatedCredentialGate");
-        this.deadlineBatchGate = Objects.requireNonNull(deadlineBatchGate, "deadlineBatchGate");
+        this.delegatedAuthorizationService = Objects.requireNonNull(
+                delegatedAuthorizationService, "delegatedAuthorizationService");
+        this.deadlineBatchOrchestrator = Objects.requireNonNull(
+                deadlineBatchOrchestrator, "deadlineBatchOrchestrator");
     }
 
     public String registerAndVerify(String key, String requestHash, UUID correlationId) {
@@ -228,12 +234,20 @@ public final class AccountOperationsJourneyFixture {
         });
     }
 
-    public String delegatedCredentialGate() {
-        return delegatedCredentialGate.status();
+    public DelegatedAuthorizationResult authorizeDelegatedStrategy(DelegatedAuthorizationCommand command) {
+        require(sessionActive, "AUTHENTICATION_REQUIRED");
+        DelegatedAuthorizationResult result = delegatedAuthorizationService.execute(command);
+        trace(command.correlationId(), "DB", "DELEGATED_AUTHORIZATION_APPLIED");
+        audit(command.correlationId(), "DELEGATED_AUTHORIZATION_APPLIED", "NONE", result.status().name());
+        return result;
     }
 
-    public String deadlineBatchGate() {
-        return deadlineBatchGate.status();
+    public DeadlineBatchOrchestrator.RunSummary runDeadlineBatch(DeadlineBatchOrchestrator.RunCommand command) {
+        require(operatorMfa, "OPERATOR_MFA_REQUIRED");
+        DeadlineBatchOrchestrator.RunSummary summary = deadlineBatchOrchestrator.run(command);
+        trace(command.correlationId(), "WORKER", "DEADLINE_BATCH_COMPLETED");
+        audit(command.correlationId(), "DEADLINE_BATCH_COMPLETED", "PENDING", "RECORDED");
+        return summary;
     }
 
     public String caseDetail(UUID accountId, UUID caseId) {
@@ -297,14 +311,6 @@ public final class AccountOperationsJourneyFixture {
 
     private static UUID uuid(long suffix) {
         return UUID.fromString("40000000-0000-4000-8000-%012d".formatted(suffix));
-    }
-
-    public interface DelegatedCredentialGate {
-        String status();
-    }
-
-    public interface DeadlineBatchGate {
-        String status();
     }
 
     public enum FakeDomain {
