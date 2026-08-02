@@ -4,5 +4,6 @@ public enum AccountLifecycleCommandType {
     REQUEST_WITHDRAWAL,
     CANCEL_WITHDRAWAL,
     MARK_DORMANT,
-    REACTIVATE
+    REACTIVATE,
+    CLOSE
 }

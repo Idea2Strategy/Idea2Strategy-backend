@@ -94,7 +94,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM identity.accounts account
         WHERE account.id = target_account_id AND account.lifecycle_status = 'ACTIVE'
-        FOR KEY SHARE
+        FOR SHARE
     ) THEN
         RAISE EXCEPTION 'account is not ACTIVE for %', operation_name USING ERRCODE = '55000';
     END IF;
@@ -120,9 +120,14 @@ FOR EACH ROW EXECUTE FUNCTION identity.guard_owner_account_creation();
 CREATE FUNCTION identity.guard_account_scoped_activation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF (TG_TABLE_NAME = 'notification_preferences' AND NEW.enabled)
-       OR (TG_TABLE_NAME = 'account_integrations' AND NEW.status = 'ACTIVE') THEN
-        PERFORM identity.require_active_account(NEW.account_id, TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME);
+    IF TG_TABLE_NAME = 'notification_preferences' THEN
+        IF NEW.enabled THEN
+            PERFORM identity.require_active_account(NEW.account_id, TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME);
+        END IF;
+    ELSIF TG_TABLE_NAME = 'account_integrations' THEN
+        IF NEW.status = 'ACTIVE' THEN
+            PERFORM identity.require_active_account(NEW.account_id, TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME);
+        END IF;
     END IF;
     RETURN NEW;
 END;

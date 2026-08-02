@@ -5,6 +5,10 @@ import com.idea2strategy.backend.application.accountclosure.AccountClosureCandid
 import com.idea2strategy.backend.application.accountclosure.AccountClosureStore;
 import com.idea2strategy.backend.application.accountclosure.ClosureDomain;
 import com.idea2strategy.backend.application.accountclosure.ClosureReadiness;
+import com.idea2strategy.backend.application.identity.AccountLifecycleCommandPort;
+import com.idea2strategy.backend.application.identity.AccountLifecycleCommandType;
+import com.idea2strategy.backend.application.identity.AccountLifecycleMutation;
+import com.idea2strategy.backend.application.identity.AccountLifecycleStatus;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.NoResultException;
 import java.time.Instant;
@@ -18,9 +22,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class AccountClosureJpaStore implements AccountClosureStore, AccountClosureAlertPort {
     private final EntityManager entityManager;
+    private final AccountLifecycleCommandPort lifecycleCommands;
 
-    public AccountClosureJpaStore(EntityManager entityManager) {
+    public AccountClosureJpaStore(EntityManager entityManager, AccountLifecycleCommandPort lifecycleCommands) {
         this.entityManager = entityManager;
+        this.lifecycleCommands = lifecycleCommands;
     }
 
     @Override
@@ -157,56 +163,39 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
             return false;
         }
 
-        String policyVersion = latestEffectivePolicy(closedAt);
-        long nextVersion = version + 1;
-        UUID eventId = UUID.randomUUID();
         var closedAtUtc = utc(closedAt);
-        entityManager.createNativeQuery("""
-                        insert into identity.account_lifecycle_events
-                            (id, account_id, event_sequence, previous_event_id, lifecycle_version,
-                             previous_status, new_status, command_type, actor_type, actor_id,
-                             correlation_id, idempotency_key, request_hash, reason_code,
-                             retention_policy_version, occurred_at)
-                        values (:eventId, :accountId, :nextVersion, :previousEventId, :nextVersion,
-                                'CLOSING', 'CLOSED', 'ACCOUNT_CLOSED', 'SYSTEM', 'account-closure-coordinator',
-                                :correlationId, :idempotencyKey, md5(:idempotencyKey) || md5(:idempotencyKey || ':2'),
-                                'WITHDRAWAL_COMPLETED', :policyVersion, :closedAt)
-                        """)
-                .setParameter("eventId", eventId)
-                .setParameter("accountId", candidate.accountId())
-                .setParameter("nextVersion", nextVersion)
-                .setParameter("previousEventId", account[1])
-                .setParameter("correlationId", correlationId)
-                .setParameter("idempotencyKey", idempotencyKey)
-                .setParameter("policyVersion", policyVersion)
-                .setParameter("closedAt", closedAtUtc)
-                .executeUpdate();
-        int updated = entityManager.createNativeQuery("""
-                        update identity.accounts
-                        set lifecycle_status = 'CLOSED', status_changed_at = :closedAt,
-                            lifecycle_version = :nextVersion, last_lifecycle_event_id = :eventId,
-                            closed_at = :closedAt
-                        where id = :accountId and lifecycle_version = :previousVersion
-                          and lifecycle_status = 'CLOSING'
-                        """)
-                .setParameter("closedAt", closedAtUtc)
-                .setParameter("nextVersion", nextVersion)
-                .setParameter("eventId", eventId)
-                .setParameter("accountId", candidate.accountId())
-                .setParameter("previousVersion", version)
-                .executeUpdate();
-        if (updated != 1) {
-            throw new IllegalStateException("Account lifecycle projection changed concurrently");
+        var result = lifecycleCommands.executeAtomically(
+                candidate.accountId(),
+                AccountLifecycleCommandType.CLOSE,
+                idempotencyKey,
+                "closure-request:" + candidate.accountId() + ":" + candidate.lifecycleVersion()
+                        + ":" + candidate.cancellationDeadlineAt(),
+                correlationId,
+                snapshot -> {
+                    if (snapshot.status() != AccountLifecycleStatus.CLOSING
+                            || snapshot.version() != candidate.lifecycleVersion()
+                            || !candidate.cancellationDeadlineAt().equals(snapshot.cancellationDeadlineAt())
+                            || closedAt.isBefore(snapshot.cancellationDeadlineAt())) {
+                        throw new IllegalStateException("Account is no longer eligible for CLOSED");
+                    }
+                    return java.util.Optional.of(new AccountLifecycleMutation(
+                            AccountLifecycleStatus.CLOSED,
+                            closedAt,
+                            snapshot.closingPreviousStatus(),
+                            snapshot.withdrawalRequestedAt(),
+                            snapshot.cancellationDeadlineAt(),
+                            "WITHDRAWAL_COMPLETED"));
+                });
+        if (result.status() != AccountLifecycleStatus.CLOSED) {
+            return false;
         }
-        createRetentionSnapshot(candidate.accountId(), eventId, policyVersion, closedAtUtc);
-        quarantineIdentifiers(candidate.accountId(), eventId, closedAtUtc);
-        revokeBindings(candidate.accountId(), closedAtUtc);
         entityManager.createNativeQuery("""
                         update identity.account_closure_runs set closed_at = :closedAt
-                        where correlation_id = :correlationId
+                        where correlation_id = :correlationId and generation = :generation
                         """)
                 .setParameter("closedAt", closedAtUtc)
                 .setParameter("correlationId", correlationId)
+                .setParameter("generation", generation)
                 .executeUpdate();
         return true;
     }
@@ -234,126 +223,6 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
                 .setParameter("code", code)
                 .setParameter("evidence", evidence)
                 .setParameter("occurredAt", utc(occurredAt))
-                .executeUpdate();
-    }
-
-    private String latestEffectivePolicy(Instant at) {
-        @SuppressWarnings("unchecked")
-        List<String> versions = entityManager.createNativeQuery("""
-                        select policy.version
-                        from identity.account_retention_policy_versions policy
-                        join identity.account_retention_policy_rules rule
-                          on rule.policy_version = policy.version
-                        where policy.effective_from <= :at and policy.approved_at <= :at
-                        group by policy.version, policy.effective_from
-                        having count(*) = cardinality(enum_range(NULL::identity.account_data_category))
-                           and count(distinct rule.data_category) =
-                               cardinality(enum_range(NULL::identity.account_data_category))
-                        order by policy.effective_from desc, policy.version desc limit 1
-                        """)
-                .setParameter("at", utc(at))
-                .getResultList();
-        return versions.isEmpty() ? null : versions.getFirst();
-    }
-
-    private void createRetentionSnapshot(
-            UUID accountId, UUID eventId, String policyVersion, OffsetDateTime closedAt) {
-        if (policyVersion == null) {
-            entityManager.createNativeQuery("""
-                            insert into identity.account_retention_obligations
-                                (account_id, lifecycle_event_id, data_category, status, failure_code)
-                            select :accountId, :eventId, category, 'FAILED', 'RETENTION_POLICY_MISSING'
-                            from unnest(enum_range(NULL::identity.account_data_category)) category
-                            """)
-                    .setParameter("accountId", accountId)
-                    .setParameter("eventId", eventId)
-                    .executeUpdate();
-            return;
-        }
-        entityManager.createNativeQuery("""
-                        insert into identity.account_retention_obligations
-                            (account_id, lifecycle_event_id, retention_policy_version, data_category,
-                             disposition, retention_days, retain_until, status)
-                        select :accountId, :eventId, rule.policy_version, category,
-                               rule.disposition, rule.retention_days,
-                               case when rule.retention_days is null then null
-                                    else cast(:closedAt as timestamptz) + make_interval(days => rule.retention_days) end,
-                               case when rule.policy_version is null then 'FAILED'::identity.retention_obligation_status
-                                    else 'PENDING'::identity.retention_obligation_status end
-                        from unnest(enum_range(NULL::identity.account_data_category)) category
-                        left join identity.account_retention_policy_rules rule
-                          on rule.policy_version = :policyVersion and rule.data_category = category
-                        """)
-                .setParameter("accountId", accountId)
-                .setParameter("eventId", eventId)
-                .setParameter("closedAt", closedAt)
-                .setParameter("policyVersion", policyVersion)
-                .executeUpdate();
-        // A partial policy must fail the whole close transaction, never produce an ambiguous obligation.
-        Number count = (Number) entityManager.createNativeQuery("""
-                        select count(*) from identity.account_retention_obligations
-                        where lifecycle_event_id = :eventId
-                        """)
-                .setParameter("eventId", eventId)
-                .getSingleResult();
-        if (count.intValue() != 8) {
-            throw new IllegalStateException("Approved retention policy is incomplete");
-        }
-    }
-
-    private void quarantineIdentifiers(UUID accountId, UUID eventId, OffsetDateTime closedAt) {
-        entityManager.createNativeQuery("""
-                        insert into identity.account_identifier_quarantines
-                            (account_id, lifecycle_event_id, identifier_kind, provider_code,
-                             identifier_fingerprint, fingerprint_key_version,
-                             quarantined_at, reuse_eligible_at)
-                        select :accountId, :eventId, 'EMAIL', 'EMAIL', email_lookup_hmac,
-                               email_lookup_key_version, cast(:closedAt as timestamptz),
-                               cast(:closedAt as timestamptz) + interval '30 days'
-                        from identity.account_emails
-                        where account_id = :accountId and email_lookup_hmac is not null
-                        on conflict do nothing
-                        """)
-                .setParameter("accountId", accountId)
-                .setParameter("eventId", eventId)
-                .setParameter("closedAt", closedAt)
-                .executeUpdate();
-        entityManager.createNativeQuery("""
-                        insert into identity.account_identifier_quarantines
-                            (account_id, lifecycle_event_id, identifier_kind, provider_code,
-                             identifier_fingerprint, fingerprint_key_version,
-                             quarantined_at, reuse_eligible_at)
-                        select :accountId, :eventId, 'OIDC_SUBJECT', provider.code,
-                               login.provider_subject_hmac, login.subject_key_version,
-                               cast(:closedAt as timestamptz), cast(:closedAt as timestamptz) + interval '30 days'
-                        from identity.login_identities login
-                        join identity.auth_providers provider on provider.id = login.provider_id
-                        where login.account_id = :accountId and login.provider_subject_hmac is not null
-                        on conflict do nothing
-                        """)
-                .setParameter("accountId", accountId)
-                .setParameter("eventId", eventId)
-                .setParameter("closedAt", closedAt)
-                .executeUpdate();
-    }
-
-    private void revokeBindings(UUID accountId, OffsetDateTime closedAt) {
-        entityManager.createNativeQuery("""
-                        update identity.account_emails
-                        set status = 'REVOKED', revoked_at = coalesce(revoked_at, :closedAt)
-                        where account_id = :accountId
-                        """)
-                .setParameter("accountId", accountId)
-                .setParameter("closedAt", closedAt)
-                .executeUpdate();
-        entityManager.createNativeQuery("""
-                        update identity.login_identities
-                        set status = 'DISABLED', disabled_at = coalesce(disabled_at, :closedAt),
-                            disabled_reason_code = 'ACCOUNT_CLOSED'
-                        where account_id = :accountId and status in ('ACTIVE', 'PENDING')
-                        """)
-                .setParameter("accountId", accountId)
-                .setParameter("closedAt", closedAt)
                 .executeUpdate();
     }
 

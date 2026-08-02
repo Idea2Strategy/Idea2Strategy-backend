@@ -86,6 +86,11 @@ class AccountLifecycleMigrationContractTest {
         assertTrue(sql.contains("'user:kcrmin'"));
         assertTrue(sql.contains("issuecomment-5156817219"));
         assertTrue(sql.contains("\"generalOperationsLog\":{\"disposition\":\"DELETE\",\"days\":365}"));
+        assertTrue(sql.contains("CREATE TRIGGER bot_account_creation_gate"));
+        assertTrue(sql.contains("CREATE TRIGGER competition_participation_creation_gate"));
+        assertTrue(sql.contains("CREATE TRIGGER notification_preference_activation_gate"));
+        assertTrue(sql.contains("CREATE TRIGGER account_integration_activation_gate"));
+        assertTrue(sql.contains("CREATE TRIGGER trading_order_account_creation_gate"));
     }
 
     private String migration(String path) throws Exception {

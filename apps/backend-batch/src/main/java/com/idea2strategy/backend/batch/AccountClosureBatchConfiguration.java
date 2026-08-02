@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.accountclosure.AccountClosureReadin
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.identity.AccountClosureJpaStore;
 import com.idea2strategy.backend.persistence.identity.AccountClosurePersistenceConfiguration;
+import com.idea2strategy.backend.persistence.identity.AccountLifecycleJpaCommandAdapter;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -22,7 +23,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         name = "idea2strategy.batch.account-closure.enabled",
         havingValue = "true",
         matchIfMissing = false)
-@Import({AccountClosurePersistenceConfiguration.class, BotStopCommandJooqAdapter.class})
+@Import({AccountClosurePersistenceConfiguration.class, AccountLifecycleJpaCommandAdapter.class,
+        BotStopCommandJooqAdapter.class})
 class AccountClosureBatchConfiguration {
     @Bean
     @ConditionalOnMissingBean(Clock.class)

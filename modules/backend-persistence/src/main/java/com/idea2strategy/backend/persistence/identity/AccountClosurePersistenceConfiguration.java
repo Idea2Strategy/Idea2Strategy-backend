@@ -2,6 +2,7 @@ package com.idea2strategy.backend.persistence.identity;
 
 import com.idea2strategy.backend.application.accountclosure.AccountClosureReadinessProbe;
 import com.idea2strategy.backend.application.botcontrol.BotStopCommandPort;
+import com.idea2strategy.backend.application.identity.AccountLifecycleCommandPort;
 import org.jooq.DSLContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,8 +10,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 public class AccountClosurePersistenceConfiguration {
     @Bean
-    AccountClosureJpaStore accountClosureJpaStore(jakarta.persistence.EntityManager entityManager) {
-        return new AccountClosureJpaStore(entityManager);
+    AccountClosureJpaStore accountClosureJpaStore(
+            jakarta.persistence.EntityManager entityManager, AccountLifecycleCommandPort lifecycleCommands) {
+        return new AccountClosureJpaStore(entityManager, lifecycleCommands);
     }
 
     @Bean

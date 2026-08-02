@@ -11,6 +11,8 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class AccountClosureCoordinatorTest {
@@ -94,6 +96,79 @@ class AccountClosureCoordinatorTest {
 
         assertThat(result.closed()).isZero();
         assertThat(store.closeCalls).isZero();
+    }
+
+    @Test
+    void concurrentCoordinatorsCanCommitClosedOnlyOnce() throws Exception {
+        var candidate = new AccountClosureCandidate(ACCOUNT, DEADLINE, 2);
+        var closed = new AtomicBoolean();
+        AccountClosureStore store = new AccountClosureStore() {
+            public List<AccountClosureCandidate> findClosingCandidates(int limit) { return List.of(candidate); }
+            public long beginAttempt(AccountClosureCandidate ignored, UUID correlationId, Instant startedAt) { return 1; }
+            public void recordReadiness(UUID accountId, UUID correlationId, long generation,
+                                        ClosureReadiness readiness) {}
+            public boolean closeIfReady(AccountClosureCandidate ignored, UUID correlationId, long generation,
+                                        String key, Instant at) {
+                return closed.compareAndSet(false, true);
+            }
+        };
+        var coordinator = new AccountClosureCoordinator(store, readyProbes(),
+                (accountId, correlationId, code, evidence, occurredAt) -> {},
+                Clock.fixed(DEADLINE, ZoneOffset.UTC), Duration.ofHours(1));
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var calls = List.<java.util.concurrent.Callable<AccountClosureRunResult>>of(
+                    () -> coordinator.run(1), () -> coordinator.run(1));
+            var results = executor.invokeAll(calls);
+            assertThat(results.get(0).get().closed() + results.get(1).get().closed()).isOne();
+        }
+    }
+
+    @Test
+    void duplicateDomainProbeConfigurationIsRejected() {
+        var probes = new ArrayList<>(readyProbes());
+        probes.add(probes.getFirst());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new AccountClosureCoordinator(
+                        new RecordingStore(new AccountClosureCandidate(ACCOUNT, DEADLINE, 2)),
+                        probes,
+                        (accountId, correlationId, code, evidence, occurredAt) -> {},
+                        Clock.fixed(DEADLINE, ZoneOffset.UTC), Duration.ofHours(1)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void oneBrokenAccountDoesNotStarveTheRestOfTheBatch() {
+        UUID broken = UUID.fromString("a1200000-0000-4000-8000-000000000001");
+        UUID healthy = UUID.fromString("a1200000-0000-4000-8000-000000000002");
+        var candidates = List.of(
+                new AccountClosureCandidate(broken, DEADLINE, 2),
+                new AccountClosureCandidate(healthy, DEADLINE, 2));
+        var closed = new ArrayList<UUID>();
+        var alertCodes = new ArrayList<String>();
+        AccountClosureStore store = new AccountClosureStore() {
+            public List<AccountClosureCandidate> findClosingCandidates(int limit) { return candidates; }
+            public long beginAttempt(AccountClosureCandidate candidate, UUID correlationId, Instant startedAt) {
+                if (candidate.accountId().equals(broken)) throw new IllegalStateException("broken row");
+                return 1;
+            }
+            public void recordReadiness(UUID accountId, UUID correlationId, long generation,
+                                        ClosureReadiness readiness) {}
+            public boolean closeIfReady(AccountClosureCandidate candidate, UUID correlationId, long generation,
+                                        String key, Instant at) {
+                closed.add(candidate.accountId());
+                return true;
+            }
+        };
+        var result = new AccountClosureCoordinator(store, readyProbes(),
+                (accountId, correlationId, code, evidence, occurredAt) -> alertCodes.add(code),
+                Clock.fixed(DEADLINE, ZoneOffset.UTC), Duration.ofHours(1)).run(10);
+
+        assertThat(result.inspected()).isEqualTo(2);
+        assertThat(result.closed()).isOne();
+        assertThat(result.blocked()).isOne();
+        assertThat(closed).containsExactly(healthy);
+        assertThat(alertCodes).containsExactly("ACCOUNT_CLOSURE_PROCESSING_FAILED");
     }
 
     private static List<AccountClosureReadinessProbe> readyProbes() {
