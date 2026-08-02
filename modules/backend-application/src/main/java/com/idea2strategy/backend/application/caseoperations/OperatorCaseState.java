@@ -1,0 +1,36 @@
+package com.idea2strategy.backend.application.caseoperations;
+
+import com.idea2strategy.backend.application.usercase.UserCaseView;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+
+public record OperatorCaseState(
+        UserCaseView caseView,
+        UUID assigneeOperatorId,
+        List<Evidence> evidence) {
+    public OperatorCaseState {
+        Objects.requireNonNull(caseView, "caseView");
+        evidence = List.copyOf(evidence);
+    }
+
+    public record Evidence(
+            UUID evidenceId,
+            String kind,
+            String status,
+            String sourceDomain,
+            boolean ownershipVerified,
+            Instant linkedAt,
+            Map<String, Object> attributes) {
+        public Evidence {
+            Objects.requireNonNull(evidenceId, "evidenceId");
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(sourceDomain, "sourceDomain");
+            Objects.requireNonNull(linkedAt, "linkedAt");
+            attributes = Map.copyOf(attributes);
+        }
+    }
+}
