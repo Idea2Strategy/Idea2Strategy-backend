@@ -45,6 +45,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802060000__backend_account_lifecycle_dormant_status.sql",
                         "V20260802060100__backend_account_lifecycle_contract.sql",
                         "V20260802060200__backend_account_lifecycle_command_receipts.sql",
+                        "V20260802060300__backend_oidc_step_up_nonces.sql",
                         "V20260802110000__pipeline_add_manifest_marker.sql",
                         "V20260802120000__trading_add_execution_marker.sql"),
                 result.orderedFileNames());

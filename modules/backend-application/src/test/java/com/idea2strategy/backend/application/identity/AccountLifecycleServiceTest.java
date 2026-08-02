@@ -86,7 +86,13 @@ class AccountLifecycleServiceTest {
                         .requestWithdrawal(command(
                                 "inactive",
                                 new AccountLifecycleAuthenticationProof(
-                                        AccountLifecycleAuthenticationMethod.OIDC, NOW, false))))
+                                        AccountLifecycleAuthenticationMethod.OIDC,
+                                        ACCOUNT_ID,
+                                        "GOOGLE",
+                                        UUID.randomUUID(),
+                                        NOW,
+                                        NOW,
+                                        false))))
                 .isInstanceOf(AccountLifecycleRejectedException.class)
                 .hasMessageContaining("STEP_UP_REQUIRED");
     }
@@ -183,7 +189,14 @@ class AccountLifecycleServiceTest {
 
     private static AccountLifecycleAuthenticationProof proof(
             AccountLifecycleAuthenticationMethod method, Instant authenticatedAt) {
-        return new AccountLifecycleAuthenticationProof(method, authenticatedAt, true);
+        return new AccountLifecycleAuthenticationProof(
+                method,
+                ACCOUNT_ID,
+                method == AccountLifecycleAuthenticationMethod.OIDC ? "GOOGLE" : null,
+                method == AccountLifecycleAuthenticationMethod.OIDC ? UUID.randomUUID() : null,
+                authenticatedAt,
+                authenticatedAt,
+                true);
     }
 
     private static AccountLifecycleSnapshot active(Instant lastSuccessfulAuthAt) {

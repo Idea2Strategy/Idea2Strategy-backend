@@ -345,6 +345,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
             case REQUEST_WITHDRAWAL -> "WITHDRAWAL_REQUESTED";
             case CANCEL_WITHDRAWAL -> "WITHDRAWAL_CANCELLED";
             case MARK_DORMANT -> "ACCOUNT_DORMANT";
+            case REACTIVATE -> "ACCOUNT_REACTIVATED";
         };
     }
 

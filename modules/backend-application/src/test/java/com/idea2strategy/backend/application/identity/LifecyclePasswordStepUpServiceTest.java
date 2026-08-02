@@ -26,9 +26,15 @@ class LifecyclePasswordStepUpServiceTest {
 
         assertThat(result.accountId()).isEqualTo(ACCOUNT_ID);
         assertThat(result.proof()).isEqualTo(new AccountLifecycleAuthenticationProof(
-                AccountLifecycleAuthenticationMethod.PASSWORD, NOW, true));
+                AccountLifecycleAuthenticationMethod.PASSWORD,
+                ACCOUNT_ID,
+                null,
+                null,
+                NOW,
+                NOW,
+                true));
         assertThat(result.toString()).doesNotContain("correct-secret").doesNotContain("Person@Example.com");
-        verify(commands).recordLoginSuccess(new AuthenticationSuccess(
+        verify(commands).recordStepUpSuccess(new AuthenticationSuccess(
                 ACCOUNT_ID, account(AccountLifecycleStatus.ACTIVE).loginIdentityId(), CORRELATION_ID, NOW));
     }
 

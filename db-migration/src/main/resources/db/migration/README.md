@@ -66,6 +66,8 @@ After a successful deployment, older application versions can ignore the added c
 
 `V20260802060200__backend_account_lifecycle_command_receipts.sql` adds immutable completed-command receipts. A receipt binds the account, command type, idempotency key, and request hash to the original HTTP-style status, response code/document, and optional same-account lifecycle event. This permits exact retries without weakening the append-only lifecycle event contract.
 
+`V20260802060300__backend_oidc_step_up_nonces.sql` adds short-lived, server-issued OIDC step-up challenges. Only keyed-HMAC nonce digests are stored; raw nonces and ID tokens are never persisted. Successful DORMANT-to-ACTIVE commands consume a challenge in the same transaction as exact current-policy acceptance, lifecycle evidence, projection/head mutation, and the idempotent command receipt. Issuance deletes expired rows and enforces a provider-scoped pending-challenge ceiling under an advisory transaction lock. Each challenge also has a database-atomic five-attempt verification ceiling so repeated invalid tokens cannot drive unbounded upstream JWKS work.
+
 Both migrations are forward-only. If deployment fails, preserve their bytes, correct the environmental or data cause, and rerun after Flyway repair/validation. Do not drop lifecycle evidence, retention records, legal holds, or quarantine tombstones as rollback; restore the pre-deployment database backup only for a whole-release rollback, otherwise ship a new forward-fix migration.
 
 각 도메인 소유자가 자신의 변경을 새 migration으로 작성하고, 중앙 통합 담당자가 순서 충돌과 `db/schema.dbml` 일치를 검토합니다.
