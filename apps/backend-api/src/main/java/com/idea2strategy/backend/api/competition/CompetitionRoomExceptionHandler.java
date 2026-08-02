@@ -1,5 +1,8 @@
 package com.idea2strategy.backend.api.competition;
 
+import com.idea2strategy.backend.application.competition.InvalidLeaderboardCursorException;
+import com.idea2strategy.backend.application.competition.LeaderboardAccessException;
+import com.idea2strategy.backend.application.competition.LeaderboardAuthenticationException;
 import com.idea2strategy.backend.application.competition.OperatorAuthorizationException;
 import com.idea2strategy.backend.application.competition.PostEvaluationChoiceAccessException;
 import com.idea2strategy.backend.application.competition.PostEvaluationChoiceConflictException;
@@ -28,9 +31,31 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     PlatformRoomInvalidationController.class,
     RoomTerminationController.class,
     RoomConfigurationController.class,
-    PostEvaluationChoiceController.class
+    PostEvaluationChoiceController.class,
+    AnonymousLeaderboardController.class
 })
 public class CompetitionRoomExceptionHandler {
+    @ExceptionHandler(InvalidLeaderboardCursorException.class)
+    ProblemDetail invalidLeaderboardCursor(InvalidLeaderboardCursorException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+        problem.setTitle("Invalid leaderboard cursor");
+        return problem;
+    }
+
+    @ExceptionHandler(LeaderboardAuthenticationException.class)
+    ProblemDetail leaderboardAuthenticationRequired(LeaderboardAuthenticationException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, exception.getMessage());
+        problem.setTitle("Leaderboard authentication required");
+        return problem;
+    }
+
+    @ExceptionHandler(LeaderboardAccessException.class)
+    ProblemDetail leaderboardAccessDenied(LeaderboardAccessException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
+        problem.setTitle("Leaderboard access denied");
+        return problem;
+    }
+
     @ExceptionHandler(PostEvaluationChoiceAccessException.class)
     ProblemDetail postEvaluationChoiceAccessDenied(PostEvaluationChoiceAccessException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());

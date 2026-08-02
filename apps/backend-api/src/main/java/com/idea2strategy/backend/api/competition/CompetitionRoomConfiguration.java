@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.competition;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.common.CurrentOperatorPrincipal;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
+import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQueryService;
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
 import com.idea2strategy.backend.application.competition.PlatformRoomInvalidationService;
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
@@ -20,6 +21,7 @@ import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryS
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandService;
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.AnonymousLeaderboardJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
@@ -36,6 +38,7 @@ import com.idea2strategy.backend.persistence.strategy.StrategyJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJooqQueryAdapter;
 import java.time.Clock;
 import java.util.UUID;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -45,6 +48,7 @@ import org.springframework.context.annotation.Import;
 @ConditionalOnBean(type = "org.jooq.DSLContext")
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
+    AnonymousLeaderboardJooqAdapter.class,
     RoomConfigurationJooqAdapter.class,
     ScoringTemplateCatalogJooqQueryAdapter.class,
     PublicRoomSearchJooqAdapter.class,
@@ -62,6 +66,15 @@ import org.springframework.context.annotation.Import;
     StrategyValidationRunJooqQueryAdapter.class
 })
 public class CompetitionRoomConfiguration {
+    @Bean
+    AnonymousLeaderboardQueryService anonymousLeaderboardQueryService(
+            AnonymousLeaderboardJooqAdapter adapter, ObjectProvider<CurrentPrincipal> principalProvider) {
+        return new AnonymousLeaderboardQueryService(adapter, () -> {
+            CurrentPrincipal principal = principalProvider.getIfAvailable();
+            return principal == null ? null : principal.accountId();
+        });
+    }
+
     @Bean
     @ConditionalOnBean(CurrentPrincipal.class)
     UserPostEvaluationChoiceService userPostEvaluationChoiceService(
