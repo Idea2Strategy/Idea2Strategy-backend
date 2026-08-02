@@ -10,6 +10,9 @@ public interface RoomTerminationPort {
 
     RoomTerminationResult cancelOwned(UUID roomId, UUID creatorAccountId, String reasonCode, Instant occurredAt);
 
+    RoomTerminationResult cancelOfficial(
+            UUID roomId, UUID operatorId, String reasonCode, Instant occurredAt);
+
     RoomTerminationResult expelOwned(
             UUID roomId, UUID participationId, UUID creatorAccountId, Instant occurredAt);
 

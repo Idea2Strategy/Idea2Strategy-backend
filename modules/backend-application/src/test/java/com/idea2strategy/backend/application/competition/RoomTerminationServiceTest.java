@@ -43,11 +43,16 @@ class RoomTerminationServiceTest {
     @Test
     void requiresAnAuthorizedOperatorAndBoundedReason() {
         var port = new StubPort();
-        var unauthorized = new PlatformRoomInvalidationService(port, Optional::empty, fixedClock());
+        var unauthorized = new PlatformRoomInvalidationService(
+                port, (operator, permission, action, room, at) -> true, Optional::empty, fixedClock());
         assertThatThrownBy(() -> unauthorized.invalidate(ROOM_ID, "LEGAL_REQUIREMENT"))
                 .isInstanceOf(OperatorAuthorizationException.class);
 
-        var authorized = new PlatformRoomInvalidationService(port, () -> Optional.of(OPERATOR_ID), fixedClock());
+        var authorized = new PlatformRoomInvalidationService(
+                port,
+                (operator, permission, action, room, at) -> true,
+                () -> Optional.of(OPERATOR_ID),
+                fixedClock());
         authorized.invalidate(ROOM_ID, "OFFICIAL_LEDGER_INTEGRITY");
         assertThat(port.operatorId).isEqualTo(OPERATOR_ID);
         assertThatThrownBy(() -> authorized.invalidate(ROOM_ID, " "))
@@ -55,6 +60,14 @@ class RoomTerminationServiceTest {
         assertThatThrownBy(() -> authorized.invalidate(ROOM_ID, "CREATOR_REQUESTED"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("legal, safety, or ledger-integrity");
+
+        var denied = new PlatformRoomInvalidationService(
+                port,
+                (operator, permission, action, room, at) -> false,
+                () -> Optional.of(OPERATOR_ID),
+                fixedClock());
+        assertThatThrownBy(() -> denied.invalidate(ROOM_ID, "LEGAL_REQUIREMENT"))
+                .isInstanceOf(OperatorAuthorizationException.class);
     }
 
     private static Clock fixedClock() {
@@ -84,6 +97,14 @@ class RoomTerminationServiceTest {
         @Override
         public RoomTerminationResult cancelOwned(
                 UUID roomId, UUID creatorAccountId, String reasonCode, Instant occurredAt) {
+            return new RoomTerminationResult(roomId, 0, occurredAt);
+        }
+
+        @Override
+        public RoomTerminationResult cancelOfficial(
+                UUID roomId, UUID operatorId, String reasonCode, Instant occurredAt) {
+            this.operatorId = operatorId;
+            this.at = occurredAt;
             return new RoomTerminationResult(roomId, 0, occurredAt);
         }
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.competition.ParticipationExitAction;
+import com.idea2strategy.backend.application.competition.OperatorRoomPermissions;
 import com.idea2strategy.backend.application.competition.RoomTerminationConflictException;
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
@@ -40,6 +41,14 @@ class RoomTerminationPersistenceIntegrationTest {
     private static final UUID PARTICIPATION_ID = id(4);
     private static final UUID OPERATOR_ID = id(5);
     private static final UUID PARTICIPANT_OWNER_ID = id(8);
+    private static final UUID ROLE_ID = id(20);
+    private static final UUID READ_PERMISSION_ID = id(21);
+    private static final UUID MANAGE_PERMISSION_ID = id(22);
+    private static final UUID SCORING_ID = id(23);
+    private static final UUID FEE_POLICY_ID = id(24);
+    private static final UUID BUFFER_POLICY_ID = id(25);
+    private static final UUID FINAL_SNAPSHOT_ID = id(26);
+    private static final UUID PERFORMANCE_SNAPSHOT_ID = id(27);
     private static final Instant NOW = Instant.parse("2026-08-02T05:00:00Z");
 
     @Container
@@ -55,20 +64,34 @@ class RoomTerminationPersistenceIntegrationTest {
     }
 
     @Autowired RoomTerminationJooqAdapter adapter;
+    @Autowired OperatorRoomJooqAdapter operatorRoomAdapter;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void prepare() {
+        jdbc.update("delete from operations.audit_events where actor_id = ?", OPERATOR_ID);
         jdbc.update("delete from operations.outbox_messages");
         jdbc.update("delete from bot.continuation_deadlines");
         jdbc.update("delete from competition.participation_events");
+        jdbc.update("delete from competition.leaderboard_entries");
+        jdbc.update("delete from competition.leaderboard_snapshots");
+        jdbc.update("delete from performance.bot_snapshots");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from competition.room_events");
+        jdbc.update("delete from competition.live_room_rules");
+        jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from bot.launch_snapshots");
         jdbc.update("delete from bot.bots");
+        jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
+        jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_POLICY_ID);
+        jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_POLICY_ID);
+        jdbc.update("delete from operations.operator_role_assignments where role_id = ?", ROLE_ID);
+        jdbc.update("delete from operations.role_permissions where role_id = ?", ROLE_ID);
+        jdbc.update("delete from operations.permissions where id in (?, ?)", READ_PERMISSION_ID, MANAGE_PERMISSION_ID);
+        jdbc.update("delete from operations.roles where id = ?", ROLE_ID);
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
@@ -81,6 +104,41 @@ class RoomTerminationPersistenceIntegrationTest {
                         + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
                         + "values (?, 'operator-e12', 'ACTIVE', ?, ?)",
                 OPERATOR_ID, utc(NOW.minusSeconds(60)), utc(NOW.minusSeconds(60)));
+        jdbc.update(
+                "insert into operations.roles (id, code, hierarchy_rank, status) "
+                        + "values (?, 'E30_OPERATOR', 10, 'ACTIVE')",
+                ROLE_ID);
+        jdbc.update(
+                "insert into operations.permissions (id, code, description, sensitivity) values "
+                        + "(?, ?, 'Read official competition rooms', 'SENSITIVE'), "
+                        + "(?, ?, 'Manage official competition rooms', 'HIGH')",
+                READ_PERMISSION_ID, OperatorRoomPermissions.READ,
+                MANAGE_PERMISSION_ID, OperatorRoomPermissions.MANAGE);
+        jdbc.update(
+                "insert into operations.role_permissions (role_id, permission_id) values (?, ?), (?, ?)",
+                ROLE_ID, READ_PERMISSION_ID, ROLE_ID, MANAGE_PERMISSION_ID);
+        jdbc.update(
+                "insert into operations.operator_role_assignments "
+                        + "(id, operator_account_id, role_id, granted_by_operator_id, granted_at) "
+                        + "values (?, ?, ?, ?, ?)",
+                id(28), OPERATOR_ID, ROLE_ID, OPERATOR_ID, utc(NOW.minusSeconds(60)));
+        jdbc.update(
+                "insert into competition.scoring_template_versions "
+                        + "(id, template_code, version, rules_document, rules_hash, published_at) "
+                        + "values (?, 'TOTAL_RETURN', 'e30', '{}'::jsonb, 'e30-scoring', ?)",
+                SCORING_ID, utc(NOW.minusSeconds(7200)));
+        jdbc.update(
+                "insert into trading.fee_policy_versions "
+                        + "(id, policy_code, version, fee_rate_bps, calculation_rules_version, "
+                        + "rules_hash, effective_from, published_at) "
+                        + "values (?, 'E30', 'v1', 20, 'v1', 'e30-fee', ?, ?)",
+                FEE_POLICY_ID, utc(NOW.minusSeconds(7200)), utc(NOW.minusSeconds(7200)));
+        jdbc.update(
+                "insert into trading.buying_power_buffer_policy_versions "
+                        + "(id, policy_code, version, buffer_bps, rounding_rules_version, "
+                        + "rules_hash, effective_from, published_at) "
+                        + "values (?, 'E30', 'v1', 0, 'v1', 'e30-buffer', ?, ?)",
+                BUFFER_POLICY_ID, utc(NOW.minusSeconds(7200)), utc(NOW.minusSeconds(7200)));
     }
 
     @Test
@@ -211,6 +269,85 @@ class RoomTerminationPersistenceIntegrationTest {
                 .isEqualTo("STOPPING");
         assertThat(count("select count(*) from bot.continuation_deadlines where bot_id = '" + BOT_ID + "'"))
                 .isZero();
+    }
+
+    @Test
+    void authorizesOnlyEffectiveRolePermissionsAndAuditsAllowedAndDeniedAttempts() {
+        assertThat(operatorRoomAdapter.authorize(
+                OPERATOR_ID, OperatorRoomPermissions.READ, "COMPETITION_ROOM_VIEW", ROOM_ID, NOW))
+                .isTrue();
+        assertThat(operatorRoomAdapter.authorize(
+                OPERATOR_ID, "NOT_GRANTED", "COMPETITION_ROOM_VIEW", ROOM_ID, NOW))
+                .isFalse();
+        assertThat(count("select count(*) from operations.audit_events where actor_id = '" + OPERATOR_ID + "'"))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForList(
+                        "select reason_code from operations.audit_events where actor_id = ? order by recorded_at",
+                        String.class, OPERATOR_ID))
+                .containsExactlyInAnyOrder("PERMISSION_GRANTED", "PERMISSION_DENIED");
+    }
+
+    @Test
+    void operatorCancelsOnlyAnOfficialRoomBeforeSubmissionOpens() {
+        seedRoom("RECRUITING", NOW.plusSeconds(60), NOW.plusSeconds(3600));
+        makeOfficial();
+
+        adapter.cancelOfficial(ROOM_ID, OPERATOR_ID, "OPERATOR_CANCELLED", NOW);
+
+        assertThat(value("select status::text from competition.rooms where id = ?", ROOM_ID))
+                .isEqualTo("CANCELLED");
+        assertThat(value("select event_type from competition.room_events where room_id = ?", ROOM_ID))
+                .isEqualTo("ROOM_CANCELLED");
+    }
+
+    @Test
+    void readsOnlySafeOfficialRoomEventsAndFinalProvenance() {
+        seedRoom("ENDED", NOW.minusSeconds(3600), NOW.minusSeconds(1800));
+        makeOfficial();
+        jdbc.update("update competition.rooms set ended_at = ? where id = ?", utc(NOW), ROOM_ID);
+        seedRoomRules();
+        seedParticipation(BOT_ID, PARTICIPATION_ID, "REGISTERED");
+        jdbc.update(
+                "update competition.participations set anonymous_alias = 'safe-alias' where id = ?",
+                PARTICIPATION_ID);
+        jdbc.update(
+                "insert into competition.participation_events "
+                        + "(id, participation_id, event_sequence, event_type, reason_code, occurred_at, "
+                        + "payload_document) values (?, ?, 1, 'PARTICIPATION_ADMITTED', null, ?, "
+                        + "'{\"privateAccountId\":\"hidden\"}'::jsonb)",
+                id(29), PARTICIPATION_ID, utc(NOW.minusSeconds(900)));
+        jdbc.update(
+                "insert into performance.bot_snapshots "
+                        + "(id, bot_id, snapshot_type, source_event_sequence, evaluated_at, equity_amount, "
+                        + "total_return_pct, max_drawdown_pct, sharpe_ratio, metrics_document, input_hash, "
+                        + "calculation_rules_version, snapshot_hash, created_at) "
+                        + "values (?, ?, 'LEADERBOARD_CUTOFF', 10, ?, 110000, 10, 2, 1.5, "
+                        + "'{\"privateMetric\":true}'::jsonb, 'input', 'v1', 'snapshot', ?)",
+                PERFORMANCE_SNAPSHOT_ID, BOT_ID, utc(NOW), utc(NOW));
+        jdbc.update(
+                "insert into competition.leaderboard_snapshots "
+                        + "(id, room_id, scoring_template_version_id, cutoff_at, status, result_hash, created_at) "
+                        + "values (?, ?, ?, ?, 'FINAL', 'final-hash', ?)",
+                FINAL_SNAPSHOT_ID, ROOM_ID, SCORING_ID, utc(NOW), utc(NOW));
+        String provenance = "sha256:" + "a".repeat(64);
+        jdbc.update(
+                "insert into competition.leaderboard_entries "
+                        + "(snapshot_id, participation_id, performance_snapshot_id, rank, is_joint_rank, "
+                        + "eligibility_status, score, tie_break_document, calculation_document) "
+                        + "values (?, ?, ?, 1, false, 'ELIGIBLE', 10, '{\"privateTie\":true}'::jsonb, "
+                        + "jsonb_build_object('provenanceHash', ?, 'privateCalculation', true))",
+                FINAL_SNAPSHOT_ID, PARTICIPATION_ID, PERFORMANCE_SNAPSHOT_ID, provenance);
+
+        var view = operatorRoomAdapter.findOfficialRoom(ROOM_ID).orElseThrow();
+
+        assertThat(view.room().roomId()).isEqualTo(ROOM_ID);
+        assertThat(view.participationEvents()).singleElement()
+                .satisfies(event -> assertThat(event.anonymousAlias()).isEqualTo("safe-alias"));
+        assertThat(view.finalResult().entries()).singleElement()
+                .satisfies(entry -> assertThat(entry.provenanceHash()).isEqualTo(provenance));
+        assertThat(view.toString())
+                .doesNotContain(OWNER_ID.toString(), BOT_ID.toString(), PARTICIPATION_ID.toString())
+                .doesNotContain("privateAccountId", "privateMetric", "privateTie", "privateCalculation");
     }
 
     @Test
@@ -375,6 +512,30 @@ class RoomTerminationPersistenceIntegrationTest {
                 utc(NOW.minusSeconds(1800)), evaluating ? utc(NOW.minusSeconds(900)) : null);
     }
 
+    private void makeOfficial() {
+        jdbc.update(
+                "update competition.rooms set organizer_type = 'PLATFORM', creator_account_id = null, "
+                        + "created_by_operator_id = ? where id = ?",
+                OPERATOR_ID, ROOM_ID);
+    }
+
+    private void seedRoomRules() {
+        jdbc.update(
+                "insert into competition.room_rules "
+                        + "(room_id, scoring_template_version_id, initial_cash_amount, currency_code, "
+                        + "bot_participation_limit, per_account_bot_limit, eligibility_document, "
+                        + "market_scope_document, scoring_parameters, fee_policy_id, slippage_rate_bps, "
+                        + "buying_power_buffer_policy_id, precision_rules_version, rules_hash, locked_at) "
+                        + "values (?, ?, 100000, 'USD', 10, 3, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, "
+                        + "?, 5, ?, '1.0', 'e30-room-rules', ?)",
+                ROOM_ID, SCORING_ID, FEE_POLICY_ID, BUFFER_POLICY_ID, utc(NOW.minusSeconds(7200)));
+        jdbc.update(
+                "insert into competition.live_room_rules "
+                        + "(room_id, stopped_bot_slot_policy, minimum_operation_seconds, minimum_fill_count) "
+                        + "values (?, 'COUNT_UNTIL_END', 0, 0)",
+                ROOM_ID);
+    }
+
     private String value(String sql, Object argument) {
         return jdbc.queryForObject(sql, String.class, argument);
     }
@@ -397,6 +558,11 @@ class RoomTerminationPersistenceIntegrationTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RoomTerminationJooqAdapter.class, BotRunCommandJooqAdapter.class, BotStopCommandJooqAdapter.class})
+    @Import({
+        RoomTerminationJooqAdapter.class,
+        OperatorRoomJooqAdapter.class,
+        BotRunCommandJooqAdapter.class,
+        BotStopCommandJooqAdapter.class
+    })
     static class TestApplication {}
 }
