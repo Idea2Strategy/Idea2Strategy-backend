@@ -76,6 +76,7 @@ class MigrationPolicyTest {
                         "V20260802220100__trading_private_bot_runtime_cleanup.sql",
                         "V20260802220200__backend_retention_execution.sql",
                         "V20260802220300__backtest_competition_owner_anonymization.sql",
+                        "V20260802220400__backend_transactional_outbox.sql",
                         "V20260802230000__backend_operator_room_permissions.sql",
                         "V20260802231000__backend_leaderboard_result_source_guard.sql"),
                 plan.orderedFileNames());
