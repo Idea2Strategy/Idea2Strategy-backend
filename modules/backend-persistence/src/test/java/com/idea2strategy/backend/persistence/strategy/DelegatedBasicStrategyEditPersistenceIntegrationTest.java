@@ -21,12 +21,14 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = DelegatedBasicStrategyEditPersistenceIntegrationTest.TestApplication.class)
+@Transactional
 class DelegatedBasicStrategyEditPersistenceIntegrationTest {
     private static final UUID ACCOUNT_ID = UUID.fromString("10000000-0000-4000-8000-000000000091");
     private static final UUID POLICY_ID = UUID.fromString("20000000-0000-4000-8000-000000000091");
@@ -98,6 +100,11 @@ class DelegatedBasicStrategyEditPersistenceIntegrationTest {
                         + "created_at, updated_at) values (?, '{}'::jsonb, '{}'::jsonb, 'basic-semantic/v1', "
                         + "'basic-presentation/v1', ?, ?, 7, ?, ?)",
                 STRATEGY_ID, HASH_A, HASH_B, at, at);
+        jdbc.update(
+                "insert into identity.delegated_authorization_strategy_targets "
+                        + "(authorization_id, strategy_id, owner_account_id_at_grant, "
+                        + "strategy_access_epoch_at_grant, granted_at) values (?, ?, ?, 1, ?)",
+                AUTHORIZATION_ID, STRATEGY_ID, ACCOUNT_ID, at);
     }
 
     @Test
@@ -126,6 +133,32 @@ class DelegatedBasicStrategyEditPersistenceIntegrationTest {
                 NOW.plusSeconds(1).atOffset(ZoneOffset.UTC), CREDENTIAL_ID);
         assertThatThrownBy(() -> adapter.requireAuthorized(
                         editor, STRATEGY_ID, DelegatedStrategyScope.STRATEGY_EDIT, NOW.plusSeconds(2)))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class);
+    }
+
+    @Test
+    void rejectsAnOwnedStrategyOutsideTheImmutableTargetSet() {
+        UUID outside = UUID.fromString("50000000-0000-4000-8000-000000000092");
+        var at = NOW.atOffset(ZoneOffset.UTC);
+        jdbc.update(
+                "insert into strategy.strategies "
+                        + "(id, owner_account_id, mode, name, edit_sequence, created_at, updated_at) "
+                        + "values (?, ?, 'BASIC', 'Outside target', 0, ?, ?)",
+                outside, ACCOUNT_ID, at, at);
+
+        var editor = new DelegatedStrategyEditor(ACCOUNT_ID, AUTHORIZATION_ID, CREDENTIAL_ID);
+        assertThatThrownBy(() -> adapter.requireAuthorized(
+                        editor, outside, DelegatedStrategyScope.STRATEGY_EDIT, NOW))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class);
+    }
+
+    @Test
+    void rejectsAStaleTargetAfterTheStrategyAccessEpochChanges() {
+        jdbc.update("update strategy.strategies set delegated_access_epoch = 2 where id = ?", STRATEGY_ID);
+
+        var editor = new DelegatedStrategyEditor(ACCOUNT_ID, AUTHORIZATION_ID, CREDENTIAL_ID);
+        assertThatThrownBy(() -> adapter.requireAuthorized(
+                        editor, STRATEGY_ID, DelegatedStrategyScope.STRATEGY_EDIT, NOW))
                 .isInstanceOf(DelegatedBasicEditRejectedException.class);
     }
 
