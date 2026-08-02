@@ -30,6 +30,17 @@ class RoomTerminationServiceTest {
     }
 
     @Test
+    void suppliesTheCreatorWithoutAnExpulsionReason() {
+        var port = new StubPort();
+        var service = new UserRoomTerminationService(port, () -> ACCOUNT_ID, fixedClock());
+
+        service.expel(ROOM_ID, PARTICIPATION_ID);
+
+        assertThat(port.ownerId).isEqualTo(ACCOUNT_ID);
+        assertThat(port.at).isEqualTo(NOW);
+    }
+
+    @Test
     void requiresAnAuthorizedOperatorAndBoundedReason() {
         var port = new StubPort();
         var unauthorized = new PlatformRoomInvalidationService(port, Optional::empty, fixedClock());
@@ -74,6 +85,14 @@ class RoomTerminationServiceTest {
         public RoomTerminationResult cancelOwned(
                 UUID roomId, UUID creatorAccountId, String reasonCode, Instant occurredAt) {
             return new RoomTerminationResult(roomId, 0, occurredAt);
+        }
+
+        @Override
+        public RoomTerminationResult expelOwned(
+                UUID roomId, UUID participationId, UUID creatorAccountId, Instant occurredAt) {
+            this.ownerId = creatorAccountId;
+            this.at = occurredAt;
+            return new RoomTerminationResult(roomId, 1, occurredAt);
         }
 
         @Override

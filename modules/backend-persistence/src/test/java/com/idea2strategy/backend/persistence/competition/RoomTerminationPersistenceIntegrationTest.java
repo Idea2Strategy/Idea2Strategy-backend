@@ -39,6 +39,7 @@ class RoomTerminationPersistenceIntegrationTest {
     private static final UUID BOT_ID = id(3);
     private static final UUID PARTICIPATION_ID = id(4);
     private static final UUID OPERATOR_ID = id(5);
+    private static final UUID PARTICIPANT_OWNER_ID = id(8);
     private static final Instant NOW = Instant.parse("2026-08-02T05:00:00Z");
 
     @Container
@@ -70,7 +71,10 @@ class RoomTerminationPersistenceIntegrationTest {
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
-        jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
+        jdbc.update("delete from identity.accounts where id = ?", PARTICIPANT_OWNER_ID);
+        jdbc.update(
+                "insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE'), (?, 'ACTIVE')",
+                OWNER_ID, PARTICIPANT_OWNER_ID);
         jdbc.update(
                 "insert into operations.operator_accounts "
                         + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
@@ -246,6 +250,86 @@ class RoomTerminationPersistenceIntegrationTest {
                 .isEqualTo("EVALUATING");
     }
 
+    @Test
+    void secretRoomCreatorExpelsAWaitingBotWithoutRecordingAReason() {
+        seedRoom("RECRUITING", NOW.minusSeconds(60), NOW.plusSeconds(3600));
+        jdbc.update("update competition.rooms set access_type = 'SECRET'::competition.room_access_type where id = ?", ROOM_ID);
+        seedParticipation(BOT_ID, PARTICIPATION_ID, PARTICIPANT_OWNER_ID, "REGISTERED");
+
+        assertThat(adapter.expelOwned(ROOM_ID, PARTICIPATION_ID, OWNER_ID, NOW)
+                        .participationsTerminated())
+                .isEqualTo(1);
+
+        assertThat(value("select status::text from competition.participations where id = ?", PARTICIPATION_ID))
+                .isEqualTo("EXPELLED");
+        assertThat(jdbc.queryForObject(
+                        "select expulsion_reason_code is null from competition.participations where id = ?",
+                        Boolean.class, PARTICIPATION_ID))
+                .isTrue();
+        assertThat(instant("select execution_eligible_from from bot.bots where id = ?", BOT_ID)).isEqualTo(NOW);
+        assertThat(instant("select due_at from bot.continuation_deadlines where bot_id = ?", BOT_ID))
+                .isEqualTo(NOW.plusSeconds(30L * 24 * 60 * 60));
+        assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_RUN_COMMAND'"))
+                .isEqualTo(1);
+        assertThat(count("select count(*) from operations.outbox_messages "
+                + "where event_type = 'ROOM_PARTICIPATION_EXPELLED_NOTIFICATION'"))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select not (payload_document ? 'reasonCode') from operations.outbox_messages "
+                                + "where event_type = 'ROOM_PARTICIPATION_EXPELLED_NOTIFICATION'",
+                        Boolean.class))
+                .isTrue();
+        assertThat(jdbc.queryForObject(
+                        "select reason_code is null from competition.participation_events "
+                                + "where participation_id = ? and event_type = 'PARTICIPATION_EXPELLED'",
+                        Boolean.class, PARTICIPATION_ID))
+                .isTrue();
+    }
+
+    @Test
+    void publicRoomCreatorCannotExpel() {
+        seedRoom("RECRUITING", NOW.minusSeconds(60), NOW.plusSeconds(3600));
+        seedParticipation(BOT_ID, PARTICIPATION_ID, "REGISTERED");
+
+        assertThatThrownBy(() -> adapter.expelOwned(ROOM_ID, PARTICIPATION_ID, OWNER_ID, NOW))
+                .isInstanceOf(RoomTerminationConflictException.class)
+                .hasMessageContaining("secret room");
+        assertThat(value("select status::text from competition.participations where id = ?", PARTICIPATION_ID))
+                .isEqualTo("REGISTERED");
+    }
+
+    @Test
+    void secretRoomCreatorCannotExpelTheirOwnParticipation() {
+        seedRoom("RECRUITING", NOW.minusSeconds(60), NOW.plusSeconds(3600));
+        jdbc.update("update competition.rooms set access_type = 'SECRET'::competition.room_access_type where id = ?", ROOM_ID);
+        seedParticipation(BOT_ID, PARTICIPATION_ID, "REGISTERED");
+
+        assertThatThrownBy(() -> adapter.expelOwned(ROOM_ID, PARTICIPATION_ID, OWNER_ID, NOW))
+                .isInstanceOf(RoomTerminationConflictException.class)
+                .hasMessageContaining("own participation");
+        assertThat(value("select status::text from competition.participations where id = ?", PARTICIPATION_ID))
+                .isEqualTo("REGISTERED");
+        assertThat(count("select count(*) from competition.participation_events")).isZero();
+        assertThat(count("select count(*) from operations.outbox_messages")).isZero();
+    }
+
+    @Test
+    void expulsionPreservesAnAlreadyStoppingBot() {
+        seedRoom("EVALUATING", NOW.minusSeconds(3600), NOW.minusSeconds(1800));
+        jdbc.update("update competition.rooms set access_type = 'SECRET'::competition.room_access_type where id = ?", ROOM_ID);
+        seedParticipation(BOT_ID, PARTICIPATION_ID, PARTICIPANT_OWNER_ID, "EVALUATING");
+        jdbc.update(
+                "update bot.bots set lifecycle_status = 'STOPPING'::bot.lifecycle_status, "
+                        + "stop_requested_at = ?, stop_reason_code = 'OWNER_STOPPED' where id = ?",
+                utc(NOW.minusSeconds(10)), BOT_ID);
+
+        adapter.expelOwned(ROOM_ID, PARTICIPATION_ID, OWNER_ID, NOW);
+
+        assertThat(value("select lifecycle_status::text from bot.bots where id = ?", BOT_ID))
+                .isEqualTo("STOPPING");
+        assertThat(count("select count(*) from bot.continuation_deadlines")).isZero();
+    }
+
     private void seedRoom(String status, Instant participationOpensAt, Instant evaluationStartsAt) {
         jdbc.update(
                 "insert into competition.rooms "
@@ -263,12 +347,16 @@ class RoomTerminationPersistenceIntegrationTest {
     }
 
     private void seedParticipation(UUID botId, UUID participationId, String status) {
+        seedParticipation(botId, participationId, OWNER_ID, status);
+    }
+
+    private void seedParticipation(UUID botId, UUID participationId, UUID ownerAccountId, String status) {
         jdbc.update(
                 "insert into bot.bots "
                         + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, created_at, "
                         + "execution_eligible_from, edit_sequence, updated_at) "
                         + "values (?, ?, 'BASIC', ?, 'RUNNING', ?, ?, ?, 0, ?)",
-                botId, OWNER_ID, "E12 Bot " + botId, utc(NOW.minusSeconds(3600)), utc(NOW.minusSeconds(3600)),
+                botId, ownerAccountId, "E12 Bot " + botId, utc(NOW.minusSeconds(3600)), utc(NOW.minusSeconds(3600)),
                 utc(NOW.plusSeconds(3600)), utc(NOW.minusSeconds(3600)));
         jdbc.update(
                 "insert into bot.launch_snapshots "
@@ -282,7 +370,7 @@ class RoomTerminationPersistenceIntegrationTest {
                 "insert into competition.participations "
                         + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at, evaluation_started_at) "
                         + "values (?, ?, ?, ?, ?, ?::competition.participation_status, ?, ?)",
-                participationId, ROOM_ID, botId, OWNER_ID, "alias-" + participationId, status,
+                participationId, ROOM_ID, botId, ownerAccountId, "alias-" + participationId, status,
                 utc(NOW.minusSeconds(1800)), evaluating ? utc(NOW.minusSeconds(900)) : null);
     }
 

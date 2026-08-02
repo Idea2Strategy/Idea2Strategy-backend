@@ -32,6 +32,14 @@ public final class UserRoomTerminationService {
                 Objects.requireNonNull(roomId, "roomId"), principal.accountId(), requiredReason(reasonCode), clock.instant());
     }
 
+    public RoomTerminationResult expel(UUID roomId, UUID participationId) {
+        return port.expelOwned(
+                Objects.requireNonNull(roomId, "roomId"),
+                Objects.requireNonNull(participationId, "participationId"),
+                principal.accountId(),
+                clock.instant());
+    }
+
     private static String requiredReason(String reasonCode) {
         if (reasonCode == null || reasonCode.isBlank() || reasonCode.length() > 80) {
             throw new IllegalArgumentException("reasonCode must contain 1 to 80 characters");
