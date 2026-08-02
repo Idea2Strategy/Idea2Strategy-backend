@@ -14,6 +14,8 @@ class AccountLifecycleMigrationContractTest {
             "db/migration/V20260802060100__backend_account_lifecycle_contract.sql";
     private static final String RECEIPT_MIGRATION =
             "db/migration/V20260802060200__backend_account_lifecycle_command_receipts.sql";
+    private static final String CLOSURE_MIGRATION =
+            "db/migration/V20260802060400__backend_account_closure_coordination.sql";
 
     @Test
     void addsDormantBeforeAnyColumnOrConstraintCanReferenceIt() throws Exception {
@@ -66,6 +68,21 @@ class AccountLifecycleMigrationContractTest {
         assertTrue(sql.contains("response_status BETWEEN 100 AND 599"));
         assertTrue(sql.contains("response_document jsonb NOT NULL"));
         assertTrue(sql.contains("CREATE TRIGGER account_lifecycle_command_receipts_immutable"));
+    }
+
+    @Test
+    void installsFailClosedClosureCoordinationAndApprovedRetentionDefaults() throws Exception {
+        var sql = migration(CLOSURE_MIGRATION);
+        DatabaseAccessPolicy.verifyMigrationOwnership(MigrationOwner.BACKEND, sql);
+
+        assertTrue(sql.contains("CREATE TABLE identity.account_closure_runs"));
+        assertTrue(sql.contains("CREATE TABLE identity.account_closure_readiness"));
+        assertTrue(sql.contains("'BOT', 'TRADING', 'COMPETITION', 'NOTIFICATION', 'INTEGRATION'"));
+        assertTrue(sql.contains("'FREEZE_REQUESTED', 'FROZEN', 'SETTLEMENT_REQUIRED', 'SETTLED', 'BLOCKED'"));
+        assertTrue(sql.contains("CREATE TABLE operations.account_integrations"));
+        assertTrue(sql.contains("ALTER COLUMN email_lookup_hmac DROP NOT NULL"));
+        assertTrue(sql.contains("'A12-2026-08-02'"));
+        assertTrue(sql.contains("'kcrmin'"));
     }
 
     private String migration(String path) throws Exception {
