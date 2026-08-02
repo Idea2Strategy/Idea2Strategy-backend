@@ -3,7 +3,7 @@ package com.idea2strategy.backend.application.competition;
 import java.math.BigDecimal;
 
 public record AnonymousLeaderboardItem(
-        int rank,
+        Integer rank,
         boolean jointRank,
         String anonymousAlias,
         BigDecimal score,

@@ -53,7 +53,8 @@ public final class OwnedBotComparisonQueryService {
     }
 
     private static String encode(UUID snapshotId, LeaderboardQueryRow row) {
-        String value = snapshotId + "|" + row.item().rank() + "|" + row.cursorAnchor();
+        int cursorRank = row.item().rank() == null ? Integer.MAX_VALUE : row.item().rank();
+        String value = snapshotId + "|" + cursorRank + "|" + row.cursorAnchor();
         return Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
