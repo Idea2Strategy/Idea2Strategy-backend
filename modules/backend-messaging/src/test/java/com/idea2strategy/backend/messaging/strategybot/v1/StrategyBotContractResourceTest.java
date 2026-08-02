@@ -55,6 +55,14 @@ class StrategyBotContractResourceTest {
         assertNoForbiddenFields(stop);
         assertNoForbiddenFields(backtest);
         assertEquals("BASIC", plan.required("executionSnapshot").required("mode").textValue());
+        var requiredFeature = plan.required("requiredFeatures").required(0);
+        assertEquals("00000000-0000-4000-8000-000000000401", requiredFeature.required("featureId").textValue());
+        assertEquals("1.0.0", requiredFeature.required("featureVersion").textValue());
+        assertEquals("PT1M", requiredFeature.required("resolution").textValue());
+        assertEquals(14, requiredFeature.required("requiredObservations").intValue());
+        assertEquals(
+                "00000000-0000-4000-8000-000000000301",
+                requiredFeature.required("instruments").required(0).textValue());
         assertTrue(plan.toString().contains("EMIT_ORDER_CANDIDATE"));
         assertFalse(plan.toString().contains("\"operation\":\"EMIT_ORDER\""));
     }

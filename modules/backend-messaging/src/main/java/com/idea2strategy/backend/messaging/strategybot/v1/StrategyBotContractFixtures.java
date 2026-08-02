@@ -3,11 +3,16 @@ package com.idea2strategy.backend.messaging.strategybot.v1;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.time.format.DateTimeParseException;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Versioned, deterministic contract fixtures for the B strategy and bot-control boundary.
@@ -31,6 +36,8 @@ public final class StrategyBotContractFixtures {
             "sha256:3333333333333333333333333333333333333333333333333333333333333333";
     private static final String DATASET_MANIFEST_ID = "00000000-0000-4000-8000-000000000203";
     private static final String OCCURRED_AT = "2026-07-31T12:00:00Z";
+    private static final Pattern SEMANTIC_VERSION = Pattern.compile(
+            "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$");
 
     private StrategyBotContractFixtures() {}
 
@@ -57,6 +64,13 @@ public final class StrategyBotContractFixtures {
                 "us-supported-universe:2026-07-31",
                 "basic-compiler:1.0.0",
                 REQUIRED_FEATURE_SET_HASH,
+                List.of(new RequiredFeature(
+                        "rsi-14-pt1m",
+                        "00000000-0000-4000-8000-000000000401",
+                        "1.0.0",
+                        List.of("00000000-0000-4000-8000-000000000301"),
+                        "PT1M",
+                        14)),
                 executionSnapshot,
                 List.of(
                         new PlanStep(1, "LOAD_FEATURE", orderedMap(
@@ -76,6 +90,7 @@ public final class StrategyBotContractFixtures {
                 draft.instrumentCatalogVersion(),
                 draft.compilerVersion(),
                 draft.requiredFeatureSetHash(),
+                draft.requiredFeatures(),
                 draft.executionSnapshot(),
                 draft.steps(),
                 checksum(draft.checksumMaterial()));
@@ -126,6 +141,7 @@ public final class StrategyBotContractFixtures {
                 plan.instrumentCatalogVersion(),
                 plan.compilerVersion(),
                 plan.requiredFeatureSetHash(),
+                plan.requiredFeatures(),
                 plan.executionSnapshot(),
                 plan.steps());
         return checksum(draft.checksumMaterial());
@@ -263,6 +279,51 @@ public final class StrategyBotContractFixtures {
         }
     }
 
+    public record RequiredFeature(
+            String requirementId,
+            String featureId,
+            String featureVersion,
+            List<String> instruments,
+            String resolution,
+            int requiredObservations) {
+        public RequiredFeature {
+            requireText(requirementId, "requiredFeature.requirementId");
+            featureId = requireUuid(featureId, "requiredFeature.featureId");
+            requireText(featureVersion, "requiredFeature.featureVersion");
+            if (!SEMANTIC_VERSION.matcher(featureVersion).matches()) {
+                throw new IllegalArgumentException(
+                        "requiredFeature.featureVersion must be an exact major.minor.patch version");
+            }
+            Objects.requireNonNull(instruments, "requiredFeature.instruments");
+            var normalizedInstruments = instruments.stream()
+                    .map(value -> requireUuid(value, "requiredFeature.instruments"))
+                    .sorted()
+                    .toList();
+            if (normalizedInstruments.isEmpty()) {
+                throw new IllegalArgumentException("requiredFeature.instruments must not be empty");
+            }
+            if (new HashSet<>(normalizedInstruments).size() != normalizedInstruments.size()) {
+                throw new IllegalArgumentException("requiredFeature.instruments must not contain duplicates");
+            }
+            instruments = List.copyOf(normalizedInstruments);
+            requireNormalizedResolution(resolution);
+            if (requiredObservations <= 0) {
+                throw new IllegalArgumentException("requiredFeature.requiredObservations must be positive");
+            }
+        }
+
+        String checksumMaterial() {
+            return new StringBuilder()
+                    .append("requirementId=").append(requirementId)
+                    .append('|').append("featureId=").append(featureId)
+                    .append('|').append("featureVersion=").append(featureVersion)
+                    .append('|').append("instruments=").append(String.join(",", instruments))
+                    .append('|').append("resolution=").append(resolution)
+                    .append('|').append("requiredObservations=").append(requiredObservations)
+                    .toString();
+        }
+    }
+
     private record CompiledPlanDraft(
             String contractVersion,
             String schemaVersion,
@@ -270,6 +331,7 @@ public final class StrategyBotContractFixtures {
             String instrumentCatalogVersion,
             String compilerVersion,
             String requiredFeatureSetHash,
+            List<RequiredFeature> requiredFeatures,
             ExecutionSnapshot executionSnapshot,
             List<PlanStep> steps) {
         String checksumMaterial() {
@@ -283,10 +345,13 @@ public final class StrategyBotContractFixtures {
                     .append("elementCatalogVersion=").append(elementCatalogVersion).append('\n')
                     .append("instrumentCatalogVersion=").append(instrumentCatalogVersion).append('\n')
                     .append("compilerVersion=").append(compilerVersion).append('\n')
-                    .append("requiredFeatureSetHash=").append(requiredFeatureSetHash).append('\n')
+                    .append("requiredFeatureSetHash=").append(requiredFeatureSetHash)
+                    .append('\n')
                     .append("mode=").append(executionSnapshot.mode()).append('\n')
                     .append("initialCashAmount=").append(executionSnapshot.initialCashAmount()).append('\n')
                     .append("currency=").append(executionSnapshot.currency());
+            requiredFeatures.forEach(feature -> result.append('\n')
+                    .append("requiredFeature=").append(feature.checksumMaterial()));
             executionSnapshot.partitions().forEach(partition -> {
                 result.append('\n')
                         .append("partition=").append(partition.key())
@@ -308,6 +373,7 @@ public final class StrategyBotContractFixtures {
             String instrumentCatalogVersion,
             String compilerVersion,
             String requiredFeatureSetHash,
+            List<RequiredFeature> requiredFeatures,
             ExecutionSnapshot executionSnapshot,
             List<PlanStep> steps,
             String planChecksum) {
@@ -318,6 +384,25 @@ public final class StrategyBotContractFixtures {
             requireText(instrumentCatalogVersion, "instrumentCatalogVersion");
             requireText(compilerVersion, "compilerVersion");
             requireSha256(requiredFeatureSetHash, "requiredFeatureSetHash");
+            requiredFeatures = List.copyOf(requiredFeatures);
+            if (requiredFeatures.isEmpty()) {
+                throw new IllegalArgumentException("At least one required feature is required");
+            }
+            var requirementIds = new HashSet<String>();
+            var requirementKeys = new HashSet<String>();
+            for (var feature : requiredFeatures) {
+                if (!requirementIds.add(feature.requirementId())) {
+                    throw new IllegalArgumentException("requiredFeature.requirementId must be unique");
+                }
+                var key = String.join("|",
+                        feature.featureId(),
+                        feature.featureVersion(),
+                        feature.resolution(),
+                        String.join(",", feature.instruments()));
+                if (!requirementKeys.add(key)) {
+                    throw new IllegalArgumentException("Duplicate required feature is not allowed");
+                }
+            }
             Objects.requireNonNull(executionSnapshot);
             steps = List.copyOf(steps);
             if (steps.isEmpty()) {
@@ -401,6 +486,33 @@ public final class StrategyBotContractFixtures {
         requireText(value, field);
         if (!value.matches("sha256:[0-9a-f]{64}")) {
             throw new IllegalArgumentException(field + " must use sha256:<64 lowercase hex>");
+        }
+    }
+
+    private static String requireUuid(String value, String field) {
+        requireText(value, field);
+        try {
+            var normalized = UUID.fromString(value).toString();
+            if (!normalized.equals(value)) {
+                throw new IllegalArgumentException(field + " must use canonical lowercase UUID format");
+            }
+            return normalized;
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(field + " must use canonical lowercase UUID format", exception);
+        }
+    }
+
+    private static void requireNormalizedResolution(String value) {
+        requireText(value, "requiredFeature.resolution");
+        try {
+            var duration = Duration.parse(value);
+            if (duration.isZero() || duration.isNegative() || !duration.toString().equals(value)) {
+                throw new IllegalArgumentException(
+                        "requiredFeature.resolution must be a positive normalized ISO-8601 duration");
+            }
+        } catch (DateTimeParseException exception) {
+            throw new IllegalArgumentException(
+                    "requiredFeature.resolution must be a positive normalized ISO-8601 duration", exception);
         }
     }
 }

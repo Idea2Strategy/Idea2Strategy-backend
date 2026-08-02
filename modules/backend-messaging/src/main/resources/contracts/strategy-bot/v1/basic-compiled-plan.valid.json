@@ -5,6 +5,16 @@
   "instrumentCatalogVersion": "us-supported-universe:2026-07-31",
   "compilerVersion": "basic-compiler:1.0.0",
   "requiredFeatureSetHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "requiredFeatures": [
+    {
+      "requirementId": "rsi-14-pt1m",
+      "featureId": "00000000-0000-4000-8000-000000000401",
+      "featureVersion": "1.0.0",
+      "instruments": ["00000000-0000-4000-8000-000000000301"],
+      "resolution": "PT1M",
+      "requiredObservations": 14
+    }
+  ],
   "executionSnapshot": {
     "immutableStrategyVersion": {
       "snapshotSchemaVersion": "basic-launch-snapshot.v1",
@@ -44,5 +54,5 @@
       "arguments": {"allocation": "EQUAL", "orderType": "MARKET", "side": "BUY"}
     }
   ],
-  "planChecksum": "sha256:0a614ae06037d1db3f87ac499aa5834a0461f54b8b6dde3de000374b14666693"
+  "planChecksum": "sha256:88d61198d46dce161c2a929702a7fd1cee5c9b044c470d2590b96f3825fcacb3"
 }
