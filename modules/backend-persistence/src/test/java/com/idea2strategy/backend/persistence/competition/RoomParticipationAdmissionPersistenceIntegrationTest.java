@@ -237,7 +237,13 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
         var lifecycle = new AccountLifecycleService(
                 lifecycleCommands, (candidateCutoff, limit) -> List.of(), Clock.fixed(NOW, ZoneOffset.UTC));
         var proof = new AccountLifecycleAuthenticationProof(
-                AccountLifecycleAuthenticationMethod.PASSWORD, NOW, true);
+                AccountLifecycleAuthenticationMethod.PASSWORD,
+                OWNER_A,
+                null,
+                null,
+                NOW,
+                NOW,
+                true);
         lifecycle.requestWithdrawal(new AccountLifecycleCommand(
                 OWNER_A, "participation-ineligible", "participation-ineligible", UUID.randomUUID(), proof));
         var inactive = adapter.admit(request(31, ROOM_A, OWNER_A, "bot-a"), provision(id(131), OWNER_A));

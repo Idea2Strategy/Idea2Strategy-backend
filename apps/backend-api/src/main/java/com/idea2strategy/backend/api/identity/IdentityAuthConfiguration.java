@@ -7,13 +7,15 @@ import com.idea2strategy.backend.application.identity.AccountLifecycleCandidateQ
 import com.idea2strategy.backend.application.identity.AccountLifecycleCommandPort;
 import com.idea2strategy.backend.application.identity.AccountLifecycleService;
 import com.idea2strategy.backend.application.identity.LifecyclePasswordStepUpService;
+import com.idea2strategy.backend.application.identity.LifecycleOidcStepUpService;
+import com.idea2strategy.backend.application.identity.HmacOidcSubjectProtector;
+import com.idea2strategy.backend.application.identity.OidcStepUpChallengeService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
 import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
 import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
 import com.idea2strategy.backend.domain.identity.ThemePreference;
-import java.time.Duration;
 import com.idea2strategy.backend.persistence.identity.IdentityAccountJpaEntity;
 import com.idea2strategy.backend.persistence.identity.AccountPreferencesConsentJpaAdapter;
 import com.idea2strategy.backend.persistence.identity.AccountPreferencesConsentJooqAdapter;
@@ -21,11 +23,15 @@ import com.idea2strategy.backend.persistence.identity.AccountLifecycleJooqQueryA
 import com.idea2strategy.backend.persistence.identity.AccountLifecycleJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.identity.OidcStepUpChallengeJpaAdapter;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -33,6 +39,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.ApplicationEventPublisher;
 
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(TrustedOidcProperties.class)
 @ConditionalOnProperty(
         prefix = "identity.crypto",
         name = {"email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key"})
@@ -43,7 +50,8 @@ import org.springframework.context.ApplicationEventPublisher;
         AccountLifecycleJooqQueryAdapter.class,
         AccountLifecycleJpaCommandAdapter.class,
         AccountPreferencesConsentJooqAdapter.class,
-        AccountPreferencesConsentJpaAdapter.class
+        AccountPreferencesConsentJpaAdapter.class,
+        OidcStepUpChallengeJpaAdapter.class
 })
 public class IdentityAuthConfiguration {
     @Bean
@@ -178,8 +186,9 @@ public class IdentityAuthConfiguration {
     AccountLifecycleService accountLifecycleService(
             AccountLifecycleCommandPort commands,
             AccountLifecycleCandidateQueryPort candidates,
+            OidcStepUpChallengeJpaAdapter reactivationEligibility,
             Clock identityClock) {
-        return new AccountLifecycleService(commands, candidates, identityClock);
+        return new AccountLifecycleService(commands, candidates, reactivationEligibility, identityClock);
     }
 
     @Bean
@@ -191,6 +200,58 @@ public class IdentityAuthConfiguration {
             Clock identityClock) {
         return new LifecyclePasswordStepUpService(
                 queries, commands, passwordCodec, emailProtector, identityClock);
+    }
+
+    @Bean
+    HmacOidcStepUpNonces oidcStepUpNonces(
+            @Value("${identity.crypto.oidc-nonce-hmac-key:${identity.crypto.verification-hmac-key}}") String key) {
+        return new HmacOidcStepUpNonces(decode(key), (short) 1);
+    }
+
+    @Bean
+    HmacOidcSubjectProtector oidcSubjectProtector(
+            @Value("${identity.crypto.oidc-subject-hmac-key:${identity.crypto.lookup-hmac-key}}") String key) {
+        return new HmacOidcSubjectProtector(decode(key), (short) 1);
+    }
+
+    @Bean
+    OidcStepUpChallengeService oidcStepUpChallengeService(
+            IdentityJooqQueryAdapter identities,
+            OidcStepUpChallengeJpaAdapter challenges,
+            HmacOidcStepUpNonces nonces,
+            Clock identityClock,
+            @Value("${identity.oidc.challenge-lifetime:PT5M}") Duration challengeLifetime) {
+        return new OidcStepUpChallengeService(
+                identities, challenges, nonces, identityClock, challengeLifetime);
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "identity.oidc", name = "enabled", havingValue = "true")
+    TrustedOidcIdTokenVerifier trustedOidcIdTokenVerifier(
+            ObjectMapper objectMapper,
+            Clock identityClock,
+            TrustedOidcProperties properties,
+            @Value("${identity.oidc.maximum-authentication-age:PT10M}") Duration maximumAuthenticationAge) {
+        return new TrustedOidcIdTokenVerifier(
+                objectMapper,
+                HttpJwksSource.createDefault(),
+                identityClock,
+                maximumAuthenticationAge,
+                properties.trustedProviders());
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "identity.oidc", name = "enabled", havingValue = "true")
+    LifecycleOidcStepUpService lifecycleOidcStepUpService(
+            IdentityJooqQueryAdapter identities,
+            IdentityJpaCommandAdapter commands,
+            OidcStepUpChallengeJpaAdapter challenges,
+            HmacOidcStepUpNonces nonces,
+            TrustedOidcIdTokenVerifier verifier,
+            HmacOidcSubjectProtector subjectProtector,
+            Clock identityClock) {
+        return new LifecycleOidcStepUpService(
+                identities, commands, challenges, nonces, verifier, subjectProtector, identityClock);
     }
 
     @Bean

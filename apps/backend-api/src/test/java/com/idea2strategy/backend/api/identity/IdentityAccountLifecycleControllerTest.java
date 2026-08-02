@@ -29,7 +29,13 @@ class IdentityAccountLifecycleControllerTest {
         var lifecycle = mock(AccountLifecycleService.class);
         var stepUp = mock(LifecyclePasswordStepUpService.class);
         var proof = new AccountLifecycleAuthenticationProof(
-                AccountLifecycleAuthenticationMethod.PASSWORD, AUTHENTICATED_AT, true);
+                AccountLifecycleAuthenticationMethod.PASSWORD,
+                ACCOUNT_ID,
+                null,
+                null,
+                AUTHENTICATED_AT,
+                AUTHENTICATED_AT,
+                true);
         UUID correlationId = UUID.randomUUID();
         when(stepUp.authenticate("person@example.com", "top-secret", correlationId))
                 .thenReturn(new LifecycleStepUp(ACCOUNT_ID, proof));
@@ -56,7 +62,13 @@ class IdentityAccountLifecycleControllerTest {
         var lifecycle = mock(AccountLifecycleService.class);
         var stepUp = mock(LifecyclePasswordStepUpService.class);
         var proof = new AccountLifecycleAuthenticationProof(
-                AccountLifecycleAuthenticationMethod.PASSWORD, AUTHENTICATED_AT, true);
+                AccountLifecycleAuthenticationMethod.PASSWORD,
+                ACCOUNT_ID,
+                null,
+                null,
+                AUTHENTICATED_AT,
+                AUTHENTICATED_AT,
+                true);
         when(stepUp.authenticate(
                         org.mockito.ArgumentMatchers.eq("person@example.com"),
                         org.mockito.ArgumentMatchers.eq("top-secret"),
@@ -90,6 +102,50 @@ class IdentityAccountLifecycleControllerTest {
                 "person@example.com", "top-secret");
 
         assertThat(request.toString()).isEqualTo("PasswordStepUpRequest[credentials=REDACTED]");
+    }
+
+    @Test
+    void reactivationHashBindsThePublicStepUpShapeButNeverCredentials() {
+        UUID firstChallenge = UUID.randomUUID();
+        String first = IdentityAccountLifecycleController.reactivationRequestHash(
+                ACCOUNT_ID, "OIDC", "TEST_OIDC", firstChallenge);
+
+        assertThat(first).isEqualTo(IdentityAccountLifecycleController.reactivationRequestHash(
+                ACCOUNT_ID, "OIDC", "TEST_OIDC", firstChallenge));
+        assertThat(first).isNotEqualTo(IdentityAccountLifecycleController.reactivationRequestHash(
+                ACCOUNT_ID, "OIDC", "TEST_OIDC", UUID.randomUUID()));
+        assertThat(first).isNotEqualTo(IdentityAccountLifecycleController.reactivationRequestHash(
+                ACCOUNT_ID, "PASSWORD", null, null));
+        assertThat(first).hasSize(64).doesNotContain("jwt").doesNotContain("nonce");
+        assertThat(first).isNotEqualTo(IdentityAccountLifecycleController.reactivationRequestHash(
+                ACCOUNT_ID, "OIDC", "TEST_OIDC", firstChallenge, java.util.Set.of(UUID.randomUUID())));
+    }
+
+    @Test
+    void passwordReactivationCarriesExplicitPolicyAcceptanceWithoutIssuingASession() {
+        var lifecycle = mock(AccountLifecycleService.class);
+        var stepUp = mock(LifecyclePasswordStepUpService.class);
+        UUID policyId = UUID.randomUUID();
+        var proof = new AccountLifecycleAuthenticationProof(
+                AccountLifecycleAuthenticationMethod.PASSWORD,
+                ACCOUNT_ID, null, null, AUTHENTICATED_AT, AUTHENTICATED_AT, true);
+        when(stepUp.authenticate(
+                        org.mockito.ArgumentMatchers.eq("person@example.com"),
+                        org.mockito.ArgumentMatchers.eq("top-secret"), any(UUID.class)))
+                .thenReturn(new LifecycleStepUp(ACCOUNT_ID, proof));
+        when(lifecycle.reactivate(any())).thenReturn(result(AccountLifecycleStatus.ACTIVE));
+        var controller = new IdentityAccountLifecycleController(lifecycle, stepUp);
+
+        var response = controller.reactivate(
+                new IdentityAccountLifecycleController.PasswordStepUpRequest(
+                        "person@example.com", "top-secret", java.util.Set.of(policyId)),
+                "reactivate-1", null);
+
+        assertThat(response.status()).isEqualTo(AccountLifecycleStatus.ACTIVE);
+        var captor = ArgumentCaptor.forClass(AccountLifecycleCommand.class);
+        verify(lifecycle).reactivate(captor.capture());
+        assertThat(captor.getValue().acceptedPolicyDocumentIds()).containsExactly(policyId);
+        assertThat(captor.getValue().requestHash()).doesNotContain("top-secret");
     }
 
     @Test

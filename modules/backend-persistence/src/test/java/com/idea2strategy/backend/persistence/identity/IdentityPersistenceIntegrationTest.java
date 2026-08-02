@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
+import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
 import com.idea2strategy.backend.application.identity.ConfirmOidcLinkCommand;
 import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
@@ -155,6 +156,38 @@ class IdentityPersistenceIntegrationTest {
         assertThatThrownBy(() -> registration.signup(new SignupCommand(
                         "person@example.com", "another sufficiently long passphrase", UUID.randomUUID(), null)))
                 .isInstanceOf(DuplicateEmailException.class);
+    }
+
+    @Test
+    void stepUpUpdatesAuthenticationFreshnessButEmitsNoLoginEventOrSession() {
+        var registration = registrationService(new AtomicInteger());
+        var signup = registration.signup(new SignupCommand(
+                "step-up@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null));
+        registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
+        UUID loginId = jdbcTemplate.queryForObject(
+                "select id from identity.login_identities where account_id = ?", UUID.class, signup.accountId());
+        UUID correlationId = UUID.randomUUID();
+
+        commandAdapter.recordStepUpSuccess(new AuthenticationSuccess(
+                signup.accountId(), loginId, correlationId, NOW.plusSeconds(30)));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from identity.sessions where account_id = ?", Integer.class, signup.accountId()))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                        select count(*) from identity.authentication_events
+                        where account_id = ? and event_type = 'STEP_UP_SUCCEEDED'
+                        """, Integer.class, signup.accountId()))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                        select count(*) from identity.authentication_events
+                        where account_id = ? and event_type = 'LOGIN_SUCCEEDED'
+                        """, Integer.class, signup.accountId()))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "select last_successful_auth_at >= ? from identity.accounts where id = ?",
+                Boolean.class, java.time.OffsetDateTime.ofInstant(NOW.plusSeconds(30), ZoneOffset.UTC), signup.accountId()))
+                .isTrue();
     }
 
     @Test

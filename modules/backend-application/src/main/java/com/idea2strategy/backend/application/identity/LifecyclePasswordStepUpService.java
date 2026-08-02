@@ -54,10 +54,14 @@ public final class LifecyclePasswordStepUpService {
                     now));
             throw new AuthenticationRejectedException(INVALID_CREDENTIALS);
         }
-        commands.recordLoginSuccess(new AuthenticationSuccess(
+        commands.recordStepUpSuccess(new AuthenticationSuccess(
                 account.accountId(), account.loginIdentityId(), correlationId, now));
         var proof = new AccountLifecycleAuthenticationProof(
                 AccountLifecycleAuthenticationMethod.PASSWORD,
+                account.accountId(),
+                null,
+                null,
+                now,
                 now,
                 true);
         return new LifecycleStepUp(account.accountId(), proof);

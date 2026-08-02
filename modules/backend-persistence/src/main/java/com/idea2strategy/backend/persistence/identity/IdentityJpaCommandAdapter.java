@@ -336,6 +336,38 @@ public class IdentityJpaCommandAdapter
 
     @Override
     @Transactional
+    public void recordStepUpSuccess(AuthenticationSuccess success) {
+        OffsetDateTime now = utc(success.occurredAt());
+        entityManager.createNativeQuery("""
+                        update identity.login_identities
+                        set last_authenticated_at = :now, failed_attempt_count = 0
+                        where id = :loginId
+                        """)
+                .setParameter("now", now)
+                .setParameter("loginId", success.loginIdentityId())
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.accounts
+                        set last_successful_auth_at = :now
+                        where id = :accountId
+                          and (last_successful_auth_at is null or last_successful_auth_at < :now)
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", success.accountId())
+                .executeUpdate();
+        insertAuthenticationEvent(
+                success.accountId(),
+                "STEP_UP_SUCCEEDED",
+                success.loginIdentityId(),
+                "USER",
+                null,
+                success.correlationId(),
+                "step-up-success:" + success.correlationId(),
+                now);
+    }
+
+    @Override
+    @Transactional
     public void completeLogin(AuthenticationSession session, AuthenticationSuccess success) {
         completeLogin(session, success, Integer.MAX_VALUE);
     }

@@ -67,7 +67,8 @@ class MigrationPolicyTest {
                         "V20260802050054__backend_account_preferences_theme.sql",
                         "V20260802060000__backend_account_lifecycle_dormant_status.sql",
                         "V20260802060100__backend_account_lifecycle_contract.sql",
-                        "V20260802060200__backend_account_lifecycle_command_receipts.sql"),
+                        "V20260802060200__backend_account_lifecycle_command_receipts.sql",
+                        "V20260802060300__backend_oidc_step_up_nonces.sql"),
                 plan.orderedFileNames());
     }
 

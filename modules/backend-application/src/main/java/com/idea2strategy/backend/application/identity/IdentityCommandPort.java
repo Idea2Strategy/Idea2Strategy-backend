@@ -7,6 +7,8 @@ public interface IdentityCommandPort {
 
     default void recordLoginSuccess(AuthenticationSuccess success) {}
 
+    default void recordStepUpSuccess(AuthenticationSuccess success) {}
+
     default void completeLogin(AuthenticationSession session, AuthenticationSuccess success) {
         createSession(session);
         recordLoginSuccess(success);

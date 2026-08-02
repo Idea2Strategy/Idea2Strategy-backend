@@ -15,14 +15,25 @@ public final class AccountLifecycleService {
 
     private final AccountLifecycleCommandPort commands;
     private final AccountLifecycleCandidateQueryPort candidates;
+    private final AccountReactivationEligibilityPort reactivationEligibility;
     private final Clock clock;
 
     public AccountLifecycleService(
             AccountLifecycleCommandPort commands,
             AccountLifecycleCandidateQueryPort candidates,
             Clock clock) {
+        this(commands, candidates, (accountId, proof, policies, correlationId, now) ->
+                AccountReactivationEligibility.rejected("REACTIVATION_POLICY_UNAVAILABLE"), clock);
+    }
+
+    public AccountLifecycleService(
+            AccountLifecycleCommandPort commands,
+            AccountLifecycleCandidateQueryPort candidates,
+            AccountReactivationEligibilityPort reactivationEligibility,
+            Clock clock) {
         this.commands = Objects.requireNonNull(commands, "commands");
         this.candidates = Objects.requireNonNull(candidates, "candidates");
+        this.reactivationEligibility = Objects.requireNonNull(reactivationEligibility, "reactivationEligibility");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -36,7 +47,7 @@ public final class AccountLifecycleService {
                 command.requestHash(),
                 command.correlationId(),
                 current -> {
-                    requireStepUp(command.proof(), now);
+                    requireStepUp(command.accountId(), command.proof(), now);
                     return requestWithdrawal(current, now);
                 });
     }
@@ -51,8 +62,41 @@ public final class AccountLifecycleService {
                 command.requestHash(),
                 command.correlationId(),
                 current -> {
-                    requireStepUp(command.proof(), now);
+                    requireStepUp(command.accountId(), command.proof(), now);
                     return cancelWithdrawal(current, now);
+                });
+    }
+
+    public AccountLifecycleResult reactivate(AccountLifecycleCommand command) {
+        Objects.requireNonNull(command, "command");
+        Instant now = clock.instant();
+        return commands.executeAtomically(
+                command.accountId(),
+                AccountLifecycleCommandType.REACTIVATE,
+                command.idempotencyKey(),
+                command.requestHash(),
+                command.correlationId(),
+                current -> {
+                    requireStepUp(command.accountId(), command.proof(), now);
+                    if (current.status() != AccountLifecycleStatus.DORMANT) {
+                        throw rejected("REACTIVATION_NOT_DORMANT");
+                    }
+                    AccountReactivationEligibility eligibility = reactivationEligibility.evaluateAndConsume(
+                            command.accountId(),
+                            command.proof(),
+                            command.acceptedPolicyDocumentIds(),
+                            command.correlationId(),
+                            now);
+                    if (!eligibility.eligible()) {
+                        throw rejected(eligibility.rejectionCode());
+                    }
+                    return Optional.of(new AccountLifecycleMutation(
+                            AccountLifecycleStatus.ACTIVE,
+                            now,
+                            null,
+                            null,
+                            null,
+                            "ACCOUNT_REACTIVATED"));
                 });
     }
 
@@ -135,12 +179,17 @@ public final class AccountLifecycleService {
                 "DORMANCY_THRESHOLD_REACHED"));
     }
 
-    private static void requireStepUp(AccountLifecycleAuthenticationProof proof, Instant now) {
+    private static void requireStepUp(
+            java.util.UUID accountId, AccountLifecycleAuthenticationProof proof, Instant now) {
         boolean acceptedMethod = proof.method() == AccountLifecycleAuthenticationMethod.PASSWORD
                 || proof.method() == AccountLifecycleAuthenticationMethod.OIDC;
-        Duration age = Duration.between(proof.authenticatedAt(), now);
+        Instant olderProofTimestamp = proof.authenticatedAt().isBefore(proof.verifiedAt())
+                ? proof.authenticatedAt()
+                : proof.verifiedAt();
+        Duration age = Duration.between(olderProofTimestamp, now);
         if (!proof.active()
                 || !acceptedMethod
+                || !accountId.equals(proof.accountId())
                 || age.isNegative()
                 || age.compareTo(STEP_UP_WINDOW) > 0) {
             throw rejected("STEP_UP_REQUIRED");
