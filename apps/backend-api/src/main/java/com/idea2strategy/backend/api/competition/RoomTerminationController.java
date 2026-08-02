@@ -35,6 +35,11 @@ public class RoomTerminationController {
         return response(service.cancel(roomId, request.reasonCode()));
     }
 
+    @PostMapping("/participations/{participationId}/expulsion")
+    public TerminationResponse expel(@PathVariable UUID roomId, @PathVariable UUID participationId) {
+        return response(service.expel(roomId, participationId));
+    }
+
     public record WithdrawalRequest(ParticipationExitAction action, String reasonCode) {}
     public record ReasonRequest(String reasonCode) {}
     public record TerminationResponse(UUID roomId, int participationsTerminated, Instant occurredAt) {}

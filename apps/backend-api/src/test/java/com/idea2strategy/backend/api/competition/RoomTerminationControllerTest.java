@@ -73,6 +73,19 @@ class RoomTerminationControllerTest {
                 .andExpect(jsonPath("$.participationsTerminated").value(2));
     }
 
+    @Test
+    void expelsWithoutAcceptingAReasonPayload() throws Exception {
+        var service = mock(UserRoomTerminationService.class);
+        when(service.expel(ROOM_ID, PARTICIPATION_ID))
+                .thenReturn(new RoomTerminationResult(ROOM_ID, 1, NOW));
+        MockMvc mvc = mvc(new RoomTerminationController(service));
+
+        mvc.perform(post("/api/v1/competition/rooms/{roomId}/participations/{participationId}/expulsion",
+                        ROOM_ID, PARTICIPATION_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.participationsTerminated").value(1));
+    }
+
     private static MockMvc mvc(Object controller) {
         return MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new CompetitionRoomExceptionHandler())

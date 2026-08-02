@@ -7,6 +7,7 @@ import com.idea2strategy.backend.application.competition.RoomTerminationAccessEx
 import com.idea2strategy.backend.application.competition.RoomTerminationConflictException;
 import com.idea2strategy.backend.application.competition.RoomTerminationPort;
 import com.idea2strategy.backend.application.competition.RoomTerminationResult;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -90,6 +91,55 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
         roomEvent(roomId, "ROOM_CANCELLED", "CANCELLED", reasonCode, creatorAccountId, occurredAt);
         int count = detachRoomParticipations(roomId, reasonCode, "ROOM_CANCELLED", false, occurredAt);
         return new RoomTerminationResult(roomId, count, occurredAt);
+    }
+
+    @Override
+    @Transactional
+    public RoomTerminationResult expelOwned(
+            UUID roomId, UUID participationId, UUID creatorAccountId, Instant occurredAt) {
+        Record room = dsl.fetchOne(
+                "select access_type::text as access_type, status::text as status "
+                        + "from competition.rooms where id = ? "
+                        + "and organizer_type = 'USER'::competition.organizer_type "
+                        + "and creator_account_id = ? for update",
+                roomId, creatorAccountId);
+        if (room == null) {
+            throw new RoomTerminationAccessException();
+        }
+        if (!"SECRET".equals(room.get("access_type", String.class))) {
+            throw new RoomTerminationConflictException("Only a secret room creator can expel a participation");
+        }
+        String roomStatus = room.get("status", String.class);
+        if (!"RECRUITING".equals(roomStatus) && !"EVALUATING".equals(roomStatus)) {
+            throw new RoomTerminationConflictException("Only an active secret room participation can be expelled");
+        }
+        Record participation = dsl.fetchOne(
+                "select p.bot_id, p.owner_account_id, p.status::text as status "
+                        + "from competition.participations p join bot.bots b on b.id = p.bot_id "
+                        + "where p.id = ? and p.room_id = ? for update of p, b",
+                participationId, roomId);
+        if (participation == null) {
+            throw new RoomTerminationAccessException();
+        }
+        String status = participation.get("status", String.class);
+        if (!"REGISTERED".equals(status) && !"EVALUATING".equals(status)) {
+            throw new RoomTerminationConflictException("Only an active participation can be expelled");
+        }
+        UUID botId = participation.get("bot_id", UUID.class);
+        UUID ownerAccountId = participation.get("owner_account_id", UUID.class);
+        if (creatorAccountId.equals(ownerAccountId)) {
+            throw new RoomTerminationConflictException("A secret room creator cannot expel their own participation");
+        }
+        dsl.execute(
+                "update competition.participations set status = 'EXPELLED'::competition.participation_status, "
+                        + "expelled_at = ?::timestamptz, expulsion_reason_code = null where id = ?",
+                utc(occurredAt), participationId);
+        expulsionEvent(participationId, roomId, botId, creatorAccountId, occurredAt);
+        if (isRunning(botId)) {
+            continuePrivate(botId, ownerAccountId, status, occurredAt);
+        }
+        expulsionNotification(participationId, roomId, botId, ownerAccountId, occurredAt);
+        return new RoomTerminationResult(roomId, 1, occurredAt);
     }
 
     @Override
@@ -200,6 +250,43 @@ public class RoomTerminationJooqAdapter implements RoomTerminationPort {
                         + "(id, participation_id, event_sequence, event_type, reason_code, occurred_at, payload_document) "
                         + "values (?, ?, ?, ?, ?, ?::timestamptz, jsonb_build_object('reasonCode', ?))",
                 UUID.randomUUID(), participationId, sequence, eventType, reasonCode, utc(occurredAt), reasonCode);
+    }
+
+    private void expulsionEvent(
+            UUID participationId, UUID roomId, UUID botId, UUID actorAccountId, Instant occurredAt) {
+        int sequence = ((Number) dsl.fetchValue(
+                "select coalesce(max(event_sequence), 0) + 1 from competition.participation_events "
+                        + "where participation_id = ?", participationId)).intValue();
+        dsl.execute(
+                "insert into competition.participation_events "
+                        + "(id, participation_id, event_sequence, event_type, occurred_at, payload_document) "
+                        + "values (?, ?, ?, 'PARTICIPATION_EXPELLED', ?::timestamptz, "
+                        + "jsonb_build_object('roomId', ?::text, 'botId', ?::text, 'actorAccountId', ?::text))",
+                UUID.randomUUID(), participationId, sequence, utc(occurredAt), roomId, botId, actorAccountId);
+    }
+
+    private void expulsionNotification(
+            UUID participationId, UUID roomId, UUID botId, UUID ownerAccountId, Instant occurredAt) {
+        String idempotencyKey = "room-participation-expelled:" + participationId;
+        UUID messageId = UUID.nameUUIDFromBytes(
+                ("expulsion-notification:" + participationId).getBytes(StandardCharsets.UTF_8));
+        long sequence = ((Number) dsl.fetchValue(
+                "select coalesce(max(aggregate_sequence), 0) + 1 from operations.outbox_messages "
+                        + "where owner_domain = 'competition' and aggregate_id = ?", participationId)).longValue();
+        dsl.execute(
+                "insert into operations.outbox_messages "
+                        + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
+                        + "payload_document, idempotency_key, created_at) "
+                        + "values (?, 'competition', ?, ?, 'ROOM_PARTICIPATION_EXPELLED_NOTIFICATION', "
+                        + "'competition-room.v1', jsonb_build_object("
+                        + "'metadata', jsonb_build_object('contractVersion', 'competition-room.v1', "
+                        + "'messageType', 'ROOM_PARTICIPATION_EXPELLED_NOTIFICATION', 'messageId', ?::text, "
+                        + "'occurredAt', ?::text, 'idempotencyKey', ?), "
+                        + "'roomId', ?::text, 'participationId', ?::text, 'botId', ?::text, "
+                        + "'ownerAccountId', ?::text), ?, ?::timestamptz) "
+                        + "on conflict (idempotency_key) do nothing",
+                messageId, participationId, sequence, messageId, occurredAt.toString(), idempotencyKey,
+                roomId, participationId, botId, ownerAccountId, idempotencyKey, utc(occurredAt));
     }
 
     private void roomEvent(
