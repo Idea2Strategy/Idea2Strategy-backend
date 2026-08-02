@@ -15,6 +15,8 @@ public record BotStopSettlementView(
         UUID partitionId,
         UUID flowId,
         UUID instrumentId,
+        String symbol,
+        String currentSymbol,
         String reasonType,
         BigDecimal requestedQuantity,
         UUID generatedIntentId,

@@ -19,6 +19,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.jooq.DSLContext;
+import org.jooq.Field;
+import org.jooq.impl.DSL;
 import org.jooq.impl.SQLDataType;
 import org.springframework.stereotype.Repository;
 
@@ -47,6 +49,10 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                         field(name("o", "id"), UUID.class),
                         field(name("o", "partition_id"), UUID.class),
                         field(name("o", "instrument_id"), UUID.class),
+                        symbolAsOf(
+                                field(name("o", "instrument_id"), UUID.class),
+                                field(name("o", "accepted_at"), OffsetDateTime.class)),
+                        currentSymbol(field(name("o", "instrument_id"), UUID.class)),
                         field(name("o", "side"), String.class),
                         field(name("o", "order_type"), String.class),
                         field(name("o", "time_in_force"), String.class),
@@ -64,7 +70,8 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                 .fetch(record -> new BotOrderView(
                         record.value1(), record.value2(), record.value3(), record.value4(),
                         record.value5(), record.value6(), record.value7(), record.value8(),
-                        record.value9(), record.value10(), instant(record.value11()))));
+                        record.value9(), record.value10(), record.value11(), record.value12(),
+                        instant(record.value13()))));
     }
 
     @Override
@@ -74,6 +81,10 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                         field(name("f", "id"), UUID.class),
                         field(name("f", "order_id"), UUID.class),
                         field(name("o", "instrument_id"), UUID.class),
+                        symbolAsOf(
+                                field(name("o", "instrument_id"), UUID.class),
+                                field(name("f", "occurred_at"), OffsetDateTime.class)),
+                        currentSymbol(field(name("o", "instrument_id"), UUID.class)),
                         field(name("f", "quantity"), BigDecimal.class),
                         field(name("f", "fill_price"), BigDecimal.class),
                         field(name("f", "gross_amount"), BigDecimal.class),
@@ -89,26 +100,29 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                 .fetch(record -> new BotFillView(
                         record.value1(), record.value2(), record.value3(), record.value4(),
                         record.value5(), record.value6(), record.value7(), record.value8(),
-                        instant(record.value9()))));
+                        record.value9(), record.value10(), instant(record.value11()))));
     }
 
     @Override
     public Optional<List<BotPositionView>> findOwnedPositions(UUID botId, UUID ownerAccountId) {
         return owned(botId, ownerAccountId, () -> dsl
                 .select(
-                        field(name("flow_id"), UUID.class),
-                        field(name("partition_id"), UUID.class),
-                        field(name("instrument_id"), UUID.class),
-                        field(name("long_quantity"), BigDecimal.class),
-                        field(name("short_quantity"), BigDecimal.class),
-                        field(name("cost_basis_amount"), BigDecimal.class),
-                        field(name("last_event_sequence"), Long.class))
-                .from(table(name("trading", "flow_position_projections")))
-                .where(field(name("bot_id"), UUID.class).eq(botId))
-                .orderBy(field(name("flow_id")).asc(), field(name("instrument_id")).asc())
+                        field(name("fp", "flow_id"), UUID.class),
+                        field(name("fp", "partition_id"), UUID.class),
+                        field(name("fp", "instrument_id"), UUID.class),
+                        // A projection sums many lots, so there is no one trade moment to read the
+                        // ticker as of. The current name is the only honest answer here.
+                        currentSymbol(field(name("fp", "instrument_id"), UUID.class)),
+                        field(name("fp", "long_quantity"), BigDecimal.class),
+                        field(name("fp", "short_quantity"), BigDecimal.class),
+                        field(name("fp", "cost_basis_amount"), BigDecimal.class),
+                        field(name("fp", "last_event_sequence"), Long.class))
+                .from(table(name("trading", "flow_position_projections")).as("fp"))
+                .where(field(name("fp", "bot_id"), UUID.class).eq(botId))
+                .orderBy(field(name("fp", "flow_id")).asc(), field(name("fp", "instrument_id")).asc())
                 .fetch(record -> new BotPositionView(
                         record.value1(), record.value2(), record.value3(), record.value4(),
-                        record.value5(), record.value6(), record.value7())));
+                        record.value5(), record.value6(), record.value7(), record.value8())));
     }
 
     /**
@@ -162,6 +176,10 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                         field(name("i", "partition_id"), UUID.class),
                         field(name("i", "flow_id"), UUID.class),
                         field(name("i", "instrument_id"), UUID.class),
+                        symbolAsOf(
+                                field(name("i", "instrument_id"), UUID.class),
+                                field(name("b", "finalized_at"), OffsetDateTime.class)),
+                        currentSymbol(field(name("i", "instrument_id"), UUID.class)),
                         field(name("i", "decision"), String.class),
                         field(name("i", "decision_reason_code"), String.class),
                         field(name("i", "requested_quantity"), BigDecimal.class),
@@ -184,7 +202,7 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                 .fetch(record -> new BotDecisionReasonView(
                         record.value1(), record.value2(), record.value3(), record.value4(),
                         record.value5(), record.value6(), record.value7(), record.value8(),
-                        instant(record.value9()))));
+                        record.value9(), record.value10(), instant(record.value11()))));
     }
 
     @Override
@@ -192,21 +210,58 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
             UUID botId, UUID ownerAccountId) {
         return owned(botId, ownerAccountId, () -> dsl
                 .select(
-                        field(name("id"), UUID.class),
-                        field(name("partition_id"), UUID.class),
-                        field(name("flow_id"), UUID.class),
-                        field(name("instrument_id"), UUID.class),
-                        field(name("reason_type"), String.class),
-                        field(name("requested_quantity"), BigDecimal.class),
-                        field(name("generated_intent_id"), UUID.class),
-                        field(name("created_at"), OffsetDateTime.class))
-                .from(table(name("trading", "system_close_actions")))
-                .where(field(name("bot_id"), UUID.class).eq(botId))
-                .orderBy(field(name("created_at")).desc(), field(name("id")).asc())
+                        field(name("a", "id"), UUID.class),
+                        field(name("a", "partition_id"), UUID.class),
+                        field(name("a", "flow_id"), UUID.class),
+                        field(name("a", "instrument_id"), UUID.class),
+                        symbolAsOf(
+                                field(name("a", "instrument_id"), UUID.class),
+                                field(name("a", "created_at"), OffsetDateTime.class)),
+                        currentSymbol(field(name("a", "instrument_id"), UUID.class)),
+                        field(name("a", "reason_type"), String.class),
+                        field(name("a", "requested_quantity"), BigDecimal.class),
+                        field(name("a", "generated_intent_id"), UUID.class),
+                        field(name("a", "created_at"), OffsetDateTime.class))
+                .from(table(name("trading", "system_close_actions")).as("a"))
+                .where(field(name("a", "bot_id"), UUID.class).eq(botId))
+                .orderBy(field(name("a", "created_at")).desc(), field(name("a", "id")).asc())
                 .fetch(record -> new BotStopSettlementView(
                         record.value1(), record.value2(), record.value3(), record.value4(),
-                        record.value5(), record.value6(), record.value7(),
-                        instant(record.value8()))));
+                        record.value5(), record.value6(), record.value7(), record.value8(),
+                        record.value9(), instant(record.value10()))));
+    }
+
+    /**
+     * The instrument's ticker as it stood at a given moment.
+     *
+     * <p>{@code market_data.instrument_symbols} is effective-dated, so a ticker change makes "the
+     * symbol" ambiguous. A trading record is read as of when it happened, so orders, fills,
+     * decisions and stop actions resolve against their own timestamp; {@link #currentSymbol} gives
+     * the name the same instrument goes by now, and the screen shows it alongside when the two
+     * differ. A renamed instrument then reads as one thing renamed rather than two things.
+     *
+     * <p>An instrument can carry symbols on several exchanges, so this takes the one on the
+     * instrument's own primary listing rather than whichever row sorts first.
+     */
+    private static Field<String> symbolAsOf(Field<UUID> instrumentId, Field<OffsetDateTime> at) {
+        return DSL.field(
+                """
+                (select sym_s.symbol
+                   from market_data.instrument_symbols sym_s
+                   join market_data.instruments sym_i on sym_i.id = sym_s.instrument_id
+                  where sym_s.instrument_id = {0}
+                    and sym_s.exchange_mic = sym_i.primary_exchange_mic
+                    and sym_s.effective_from <= {1}
+                    and (sym_s.effective_to is null or sym_s.effective_to > {1})
+                  order by sym_s.effective_from desc
+                  limit 1)
+                """,
+                String.class, instrumentId, at);
+    }
+
+    /** The ticker the instrument goes by now. */
+    private static Field<String> currentSymbol(Field<UUID> instrumentId) {
+        return symbolAsOf(instrumentId, DSL.field("now()", OffsetDateTime.class));
     }
 
     private <T> Optional<T> owned(UUID botId, UUID ownerAccountId, Supplier<T> read) {
