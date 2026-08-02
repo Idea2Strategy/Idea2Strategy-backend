@@ -12,6 +12,7 @@ import com.idea2strategy.backend.application.competition.RoomParticipationAdmiss
 import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.UserPostEvaluationChoiceService;
 import com.idea2strategy.backend.application.competition.UserRoomConfigurationService;
 import com.idea2strategy.backend.application.competition.UserRoomTerminationService;
 import com.idea2strategy.backend.application.strategy.BasicExecutionPlanCommandService;
@@ -20,6 +21,7 @@ import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCo
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
@@ -49,6 +51,7 @@ import org.springframework.context.annotation.Import;
     RoomInvitationJooqAdapter.class,
     RoomParticipationAdmissionJooqAdapter.class,
     RoomStrategyBotProvisioningJooqAdapter.class,
+    PostEvaluationChoiceJooqAdapter.class,
     RoomTerminationJooqAdapter.class,
     BotRunCommandJooqAdapter.class,
     BotStopCommandJooqAdapter.class,
@@ -59,6 +62,13 @@ import org.springframework.context.annotation.Import;
     StrategyValidationRunJooqQueryAdapter.class
 })
 public class CompetitionRoomConfiguration {
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    UserPostEvaluationChoiceService userPostEvaluationChoiceService(
+            PostEvaluationChoiceJooqAdapter adapter, CurrentPrincipal principal) {
+        return new UserPostEvaluationChoiceService(adapter, principal, Clock.systemUTC());
+    }
+
     @Bean
     @ConditionalOnBean(CurrentPrincipal.class)
     UserRoomTerminationService userRoomTerminationService(

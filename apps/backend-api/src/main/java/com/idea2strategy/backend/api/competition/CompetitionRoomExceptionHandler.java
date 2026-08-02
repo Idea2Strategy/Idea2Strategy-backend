@@ -1,6 +1,8 @@
 package com.idea2strategy.backend.api.competition;
 
 import com.idea2strategy.backend.application.competition.OperatorAuthorizationException;
+import com.idea2strategy.backend.application.competition.PostEvaluationChoiceAccessException;
+import com.idea2strategy.backend.application.competition.PostEvaluationChoiceConflictException;
 import com.idea2strategy.backend.application.competition.RoomConfigurationAccessException;
 import com.idea2strategy.backend.application.competition.RoomConfigurationConflictException;
 import com.idea2strategy.backend.application.competition.RoomInvitationAccessException;
@@ -25,9 +27,24 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     RoomParticipationController.class,
     PlatformRoomInvalidationController.class,
     RoomTerminationController.class,
-    RoomConfigurationController.class
+    RoomConfigurationController.class,
+    PostEvaluationChoiceController.class
 })
 public class CompetitionRoomExceptionHandler {
+    @ExceptionHandler(PostEvaluationChoiceAccessException.class)
+    ProblemDetail postEvaluationChoiceAccessDenied(PostEvaluationChoiceAccessException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
+        problem.setTitle("Post-evaluation choice access denied");
+        return problem;
+    }
+
+    @ExceptionHandler(PostEvaluationChoiceConflictException.class)
+    ProblemDetail postEvaluationChoiceConflict(PostEvaluationChoiceConflictException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Post-evaluation choice rejected");
+        return problem;
+    }
+
     @ExceptionHandler(RoomConfigurationAccessException.class)
     ProblemDetail configurationAccessDenied(RoomConfigurationAccessException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
