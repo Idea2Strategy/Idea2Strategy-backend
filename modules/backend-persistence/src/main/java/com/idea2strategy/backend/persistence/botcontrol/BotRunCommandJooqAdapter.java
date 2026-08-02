@@ -45,6 +45,10 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
                         + "from bot.bots b "
                         + "join bot.launch_snapshots s on s.bot_id = b.id "
                         + "left join competition.participations p on p.bot_id = b.id "
+                        + "and p.status not in ('WITHDRAWN'::competition.participation_status, "
+                        + "'EXPELLED'::competition.participation_status, "
+                        + "'COMPLETED'::competition.participation_status, "
+                        + "'EVALUATION_FAILED'::competition.participation_status) "
                         + "left join competition.room_schedules schedule on schedule.room_id = p.room_id "
                         + "where b.id = ? and b.owner_account_id = ? and b.deleted_at is null for update of b",
                 botId, ownerAccountId);

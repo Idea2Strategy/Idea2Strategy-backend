@@ -1,9 +1,10 @@
 package com.idea2strategy.backend.api.competition;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.common.CurrentOperatorPrincipal;
+import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.PlatformRoomInvalidationService;
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
 import com.idea2strategy.backend.application.competition.RoomInvitationService;
@@ -11,14 +12,18 @@ import com.idea2strategy.backend.application.competition.RoomParticipationAdmiss
 import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.UserRoomTerminationService;
 import com.idea2strategy.backend.application.strategy.BasicExecutionPlanCommandService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandService;
+import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
+import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomParticipationAdmissionJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomTerminationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.ScoringTemplateCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.CompiledFlowPlanJooqCommandAdapter;
 import com.idea2strategy.backend.persistence.strategy.ImmutableStrategyReleaseJooqCommandAdapter;
@@ -41,6 +46,9 @@ import org.springframework.context.annotation.Import;
     RoomInvitationJooqAdapter.class,
     RoomParticipationAdmissionJooqAdapter.class,
     RoomStrategyBotProvisioningJooqAdapter.class,
+    RoomTerminationJooqAdapter.class,
+    BotRunCommandJooqAdapter.class,
+    BotStopCommandJooqAdapter.class,
     CompiledFlowPlanJooqCommandAdapter.class,
     ImmutableStrategyReleaseJooqCommandAdapter.class,
     StrategyDocumentJooqQueryAdapter.class,
@@ -48,6 +56,20 @@ import org.springframework.context.annotation.Import;
     StrategyValidationRunJooqQueryAdapter.class
 })
 public class CompetitionRoomConfiguration {
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    UserRoomTerminationService userRoomTerminationService(
+            RoomTerminationJooqAdapter adapter, CurrentPrincipal principal) {
+        return new UserRoomTerminationService(adapter, principal, Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentOperatorPrincipal.class)
+    PlatformRoomInvalidationService platformRoomInvalidationService(
+            RoomTerminationJooqAdapter adapter, CurrentOperatorPrincipal principal) {
+        return new PlatformRoomInvalidationService(adapter, principal, Clock.systemUTC());
+    }
+
     @Bean
     PublicRoomDiscoveryService publicRoomDiscoveryService(PublicRoomSearchJooqAdapter searchAdapter) {
         return new PublicRoomDiscoveryService(searchAdapter);

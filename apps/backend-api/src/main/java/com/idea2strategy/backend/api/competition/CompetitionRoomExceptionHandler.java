@@ -1,10 +1,12 @@
 package com.idea2strategy.backend.api.competition;
 
-import com.idea2strategy.backend.application.competition.ScoringTemplateNotFoundException;
 import com.idea2strategy.backend.application.competition.OperatorAuthorizationException;
 import com.idea2strategy.backend.application.competition.RoomInvitationAccessException;
 import com.idea2strategy.backend.application.competition.RoomInvitationUnavailableException;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionException;
+import com.idea2strategy.backend.application.competition.RoomTerminationAccessException;
+import com.idea2strategy.backend.application.competition.RoomTerminationConflictException;
+import com.idea2strategy.backend.application.competition.ScoringTemplateNotFoundException;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.application.strategy.StrategyCatalogNotFoundException;
 import java.util.NoSuchElementException;
@@ -18,9 +20,25 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     OfficialCompetitionRoomController.class,
     PublicRoomDiscoveryController.class,
     RoomInvitationController.class,
-    RoomParticipationController.class
+    RoomParticipationController.class,
+    PlatformRoomInvalidationController.class,
+    RoomTerminationController.class
 })
 public class CompetitionRoomExceptionHandler {
+    @ExceptionHandler(RoomTerminationAccessException.class)
+    ProblemDetail terminationAccessDenied(RoomTerminationAccessException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
+        problem.setTitle("Room termination access denied");
+        return problem;
+    }
+
+    @ExceptionHandler(RoomTerminationConflictException.class)
+    ProblemDetail terminationConflict(RoomTerminationConflictException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Room termination rejected");
+        return problem;
+    }
+
     @ExceptionHandler(RoomInvitationAccessException.class)
     ProblemDetail invitationAccessDenied(RoomInvitationAccessException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
