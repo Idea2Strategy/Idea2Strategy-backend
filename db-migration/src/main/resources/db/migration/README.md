@@ -76,6 +76,8 @@ After a successful deployment, older application versions can ignore the added c
 
 `V20260802231100__backend_transactional_outbox.sql` is the implementation candidate for isolated root proposal commit `52870121`. It adds a durable delivery head, append-only claim attempts, immutable replay lineage, and handler/message consumer receipts while keeping retry/lease numbers in versioned runtime configuration. Existing envelopes are backfilled without changing their payload or producer idempotency identity, and legacy writers remain compatible through a database-side envelope preparation trigger. This migration is not canonical or release-ready until the exact COM-A17 proposal is approved and integrated.
 
+`V20260802231300__backend_user_case_contract.sql` prepares the isolated COM-A19 proposal as typed user-owned case heads, append-only event/evidence chains, and successful command receipts. It is not canonical or release-ready until exact proposal approval; A20 operator workflow remains outside this migration.
+
 `V20260802231600__backend_account_sanction_commands.sql` prepares A14 account sanction heads, stable appeal references, append-only history, due-expiry lookup, and immutable idempotency receipts. It preserves account, strategy, trading, audit, and case data and remains non-canonical until the A13/A17 parents and product contract are approved.
 
 Both migrations are forward-only. If deployment fails, preserve their bytes, correct the environmental or data cause, and rerun after Flyway repair/validation. Do not drop lifecycle evidence, retention records, legal holds, or quarantine tombstones as rollback; restore the pre-deployment database backup only for a whole-release rollback, otherwise ship a new forward-fix migration.
