@@ -56,7 +56,8 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802220200__backend_retention_execution.sql",
                         "V20260802220300__backtest_competition_owner_anonymization.sql",
                         "V20260802230000__backend_operator_room_permissions.sql",
-                        "V20260802231000__backend_leaderboard_result_source_guard.sql"),
+                        "V20260802231000__backend_leaderboard_result_source_guard.sql",
+                        "V20260802231100__backend_transactional_outbox.sql"),
                 result.orderedFileNames());
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));

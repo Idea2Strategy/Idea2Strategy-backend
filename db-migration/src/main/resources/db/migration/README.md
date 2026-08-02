@@ -72,6 +72,10 @@ After a successful deployment, older application versions can ignore the added c
 
 `V20260802230000__backend_operator_room_permissions.sql` installs the approved E30 room read/manage permission codes without granting either permission to a role. Existing codes must retain the approved sensitivity or migration fails closed; role membership remains an explicit audited operations decision.
 
+## A17 transactional outbox proposal migration
+
+`V20260802231100__backend_transactional_outbox.sql` is the implementation candidate for isolated root proposal commit `52870121`. It adds a durable delivery head, append-only claim attempts, immutable replay lineage, and handler/message consumer receipts while keeping retry/lease numbers in versioned runtime configuration. Existing envelopes are backfilled without changing their payload or producer idempotency identity, and legacy writers remain compatible through a database-side envelope preparation trigger. This migration is not canonical or release-ready until the exact COM-A17 proposal is approved and integrated.
+
 Both migrations are forward-only. If deployment fails, preserve their bytes, correct the environmental or data cause, and rerun after Flyway repair/validation. Do not drop lifecycle evidence, retention records, legal holds, or quarantine tombstones as rollback; restore the pre-deployment database backup only for a whole-release rollback, otherwise ship a new forward-fix migration.
 
 각 도메인 소유자가 자신의 변경을 새 migration으로 작성하고, 중앙 통합 담당자가 순서 충돌과 `db/schema.dbml` 일치를 검토합니다.
