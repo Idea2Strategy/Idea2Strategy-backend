@@ -91,8 +91,8 @@ class OfficialCompetitionRoomCreationServiceTest {
                         NOW.plusSeconds(120),
                         NOW.plusSeconds(240),
                         NOW.plusSeconds(180),
-                        NOW.plusSeconds(300),
-                        NOW.plusSeconds(360),
+                        NOW.plusSeconds(3840),
+                        NOW.plusSeconds(3900),
                         "UTC"));
     }
 

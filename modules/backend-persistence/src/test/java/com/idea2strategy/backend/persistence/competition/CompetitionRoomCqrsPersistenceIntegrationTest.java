@@ -187,8 +187,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                         CREATED_AT.plusSeconds(120),
                         CREATED_AT.plusSeconds(240),
                         CREATED_AT.plusSeconds(180),
-                        CREATED_AT.plusSeconds(300),
-                        CREATED_AT.plusSeconds(360),
+                        CREATED_AT.plusSeconds(3840),
+                        CREATED_AT.plusSeconds(3900),
                         "UTC"),
                 CREATED_AT);
 
@@ -205,8 +205,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 CREATED_AT.plusSeconds(120),
                 CREATED_AT.plusSeconds(240),
                 CREATED_AT.plusSeconds(180),
-                CREATED_AT.plusSeconds(300),
-                CREATED_AT.plusSeconds(360),
+                CREATED_AT.plusSeconds(3840),
+                CREATED_AT.plusSeconds(3900),
                 "UTC");
         var room = CompetitionRoom.platformLive(
                 ROOM_ID,
@@ -507,8 +507,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                         recruitmentAt.plusSeconds(60),
                         recruitmentAt.plusSeconds(180),
                         recruitmentAt.plusSeconds(120),
-                        recruitmentAt.plusSeconds(240),
-                        recruitmentAt.plusSeconds(300),
+                        recruitmentAt.plusSeconds(7380),
+                        recruitmentAt.plusSeconds(7440),
                         "UTC"),
                 observedAt);
     }
@@ -542,8 +542,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                         CREATED_AT.plusSeconds(120),
                         CREATED_AT.plusSeconds(240),
                         CREATED_AT.plusSeconds(180),
-                        CREATED_AT.plusSeconds(300),
-                        CREATED_AT.plusSeconds(360),
+                        CREATED_AT.plusSeconds(3840),
+                        CREATED_AT.plusSeconds(3900),
                         "UTC"),
                 CREATED_AT);
     }

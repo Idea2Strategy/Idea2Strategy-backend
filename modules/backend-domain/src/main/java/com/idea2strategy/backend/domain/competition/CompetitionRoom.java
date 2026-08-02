@@ -2,6 +2,7 @@ package com.idea2strategy.backend.domain.competition;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -89,6 +90,12 @@ public record CompetitionRoom(
             if (schedule.participationClosesAt().isAfter(schedule.evaluationStartsAt())) {
                 throw new IllegalArgumentException(
                         "LIVE_PAPER participation must close before evaluation starts");
+            }
+            long evaluationSeconds = Duration.between(
+                    schedule.evaluationStartsAt(), schedule.evaluationEndsAt()).getSeconds();
+            if (liveRules.minimumOperationSeconds() > evaluationSeconds) {
+                throw new IllegalArgumentException(
+                        "minimumOperationSeconds must not exceed the evaluation window");
             }
         } else if (liveRules != null) {
             throw new IllegalArgumentException("BACKTEST rooms must not contain live rules");

@@ -55,8 +55,8 @@ class OfficialCompetitionRoomControllerTest {
                           "participationOpensAt":"2026-08-02T00:02:00Z",
                           "evaluationStartsAt":"2026-08-02T00:04:00Z",
                           "participationClosesAt":"2026-08-02T00:03:00Z",
-                          "evaluationEndsAt":"2026-08-02T00:05:00Z",
-                          "finalizationDeadlineAt":"2026-08-02T00:06:00Z",
+                          "evaluationEndsAt":"2026-08-02T01:04:00Z",
+                          "finalizationDeadlineAt":"2026-08-02T01:05:00Z",
                           "timezoneName":"UTC"
                         }
                         """))
@@ -118,8 +118,8 @@ class OfficialCompetitionRoomControllerTest {
                   "participationOpensAt":"2026-08-02T00:02:00Z",
                   "evaluationStartsAt":"2026-08-02T00:04:00Z",
                   "participationClosesAt":"2026-08-02T00:03:00Z",
-                  "evaluationEndsAt":"2026-08-02T00:05:00Z",
-                  "finalizationDeadlineAt":"2026-08-02T00:06:00Z",
+                  "evaluationEndsAt":"2026-08-02T01:04:00Z",
+                  "finalizationDeadlineAt":"2026-08-02T01:05:00Z",
                   "timezoneName":"UTC"
                 }
                 """;
