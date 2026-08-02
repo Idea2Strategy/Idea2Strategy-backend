@@ -11,6 +11,7 @@ public record OperatorRbacCommand(
         UUID roleId,
         UUID assignmentId,
         UUID requiredPermissionId,
+        String expectedCatalogVersion,
         Instant expiresAt,
         String reasonCode,
         UUID correlationId,
@@ -22,6 +23,9 @@ public record OperatorRbacCommand(
         Objects.requireNonNull(requestContext, "requestContext");
         Objects.requireNonNull(targetOperatorId, "targetOperatorId");
         Objects.requireNonNull(requiredPermissionId, "requiredPermissionId");
+        if (expectedCatalogVersion == null || expectedCatalogVersion.isBlank()) {
+            throw new IllegalArgumentException("expectedCatalogVersion is required");
+        }
         if (reasonCode == null || reasonCode.isBlank()) {
             throw new IllegalArgumentException("reasonCode is required");
         }

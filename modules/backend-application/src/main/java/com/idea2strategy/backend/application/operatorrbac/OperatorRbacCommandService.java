@@ -142,6 +142,9 @@ public final class OperatorRbacCommandService {
         if (state.catalog() == null || state.catalog().status() != OperatorRbacState.Status.ACTIVE) {
             return Evaluation.rejected("RBAC_CATALOG_UNAVAILABLE", context, true);
         }
+        if (!state.catalog().version().equals(command.expectedCatalogVersion())) {
+            return Evaluation.rejected("RBAC_CATALOG_STALE", context, true);
+        }
         if (!state.catalog().permissions().contains(command.requiredPermissionId())) {
             return Evaluation.rejected("RBAC_PERMISSION_CONFIGURATION_INVALID", context, true);
         }

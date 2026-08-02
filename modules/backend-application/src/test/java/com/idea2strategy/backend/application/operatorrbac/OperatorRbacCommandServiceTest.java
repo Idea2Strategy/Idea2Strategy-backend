@@ -214,14 +214,14 @@ class OperatorRbacCommandServiceTest {
 
     private static OperatorRbacCommand grant(String key, String hash, OperatorRequestContext context) {
         return new OperatorRbacCommand(
-                OperatorRbacCommand.Type.GRANT, context, TARGET_ID, LOW_ROLE, null, COMMAND_PERMISSION,
+                OperatorRbacCommand.Type.GRANT, context, TARGET_ID, LOW_ROLE, null, COMMAND_PERMISSION, "catalog-v1",
                 NOW.plusSeconds(3600), "ACCESS_REVIEW", uuid(41), key, hash);
     }
 
     private static OperatorRbacCommand revoke(String key, String hash) {
         return new OperatorRbacCommand(
                 OperatorRbacCommand.Type.REVOKE, new OperatorRequestContext(ACTOR_ID, true, true),
-                TARGET_ID, null, ASSIGNMENT_ID, COMMAND_PERMISSION, null,
+                TARGET_ID, null, ASSIGNMENT_ID, COMMAND_PERMISSION, "catalog-v1", null,
                 "ACCESS_REVIEW", uuid(42), key, hash);
     }
 
