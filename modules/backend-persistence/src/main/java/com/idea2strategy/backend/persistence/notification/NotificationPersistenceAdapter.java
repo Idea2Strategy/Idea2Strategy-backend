@@ -6,6 +6,8 @@ import com.idea2strategy.backend.application.notification.NotificationChannel;
 import com.idea2strategy.backend.application.notification.NotificationPolicy;
 import com.idea2strategy.backend.application.notification.NotificationPolicyPort;
 import com.idea2strategy.backend.application.notification.NotificationPreferencePort;
+import com.idea2strategy.backend.application.notification.NotificationPreferenceManagementPort;
+import com.idea2strategy.backend.application.notification.NotificationPreferenceView;
 import com.idea2strategy.backend.application.notification.NotificationQueryPort;
 import com.idea2strategy.backend.application.notification.NotificationRequest;
 import com.idea2strategy.backend.application.notification.NotificationStore;
@@ -27,7 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class NotificationPersistenceAdapter
-        implements NotificationPolicyPort, NotificationPreferencePort, NotificationStore, NotificationQueryPort {
+        implements NotificationPolicyPort, NotificationPreferencePort, NotificationPreferenceManagementPort,
+        NotificationStore, NotificationQueryPort {
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
 
@@ -61,6 +64,46 @@ public class NotificationPersistenceAdapter
             result.add(NotificationChannel.valueOf(channel));
         }
         return Set.copyOf(result);
+    }
+
+    @Override
+    public List<NotificationPreferenceView> list(UUID accountId) {
+        return jdbc.query("""
+                select type_code, policy_version, mandatory, default_channels::text
+                from operations.notification_policies
+                where active
+                order by type_code
+                """, (rs, row) -> {
+            String typeCode = rs.getString(1);
+            String policyVersion = rs.getString(2);
+            boolean mandatory = rs.getBoolean(3);
+            Set<NotificationChannel> defaults = channels(rs.getString(4));
+            Set<NotificationChannel> enabled = mandatory
+                    ? defaults
+                    : effectiveOptionalChannels(defaults, enabledChannels(accountId, typeCode, policyVersion));
+            return new NotificationPreferenceView(typeCode, policyVersion, mandatory, enabled);
+        });
+    }
+
+    @Override
+    @Transactional
+    public void replace(
+            UUID accountId,
+            String typeCode,
+            String policyVersion,
+            Set<NotificationChannel> enabledChannels,
+            Instant updatedAt) {
+        jdbc.update("""
+                delete from operations.notification_preferences
+                where account_id = ? and bot_id is null and event_type = ? and policy_version = ?
+                """, accountId, typeCode, policyVersion);
+        for (NotificationChannel channel : enabledChannels) {
+            jdbc.update("""
+                    insert into operations.notification_preferences
+                        (account_id, bot_id, event_type, channel, enabled, updated_at, policy_version)
+                    values (?, null, ?, ?, true, ?, ?)
+                    """, accountId, typeCode, channel.name(), Timestamp.from(updatedAt), policyVersion);
+        }
     }
 
     @Override
@@ -154,6 +197,15 @@ public class NotificationPersistenceAdapter
         } catch (Exception e) {
             throw new IllegalStateException("invalid notification channels", e);
         }
+    }
+
+    private static Set<NotificationChannel> effectiveOptionalChannels(
+            Set<NotificationChannel> defaults, Set<NotificationChannel> configured) {
+        var result = EnumSet.noneOf(NotificationChannel.class);
+        result.addAll(defaults);
+        result.retainAll(configured);
+        result.add(NotificationChannel.APP);
+        return Set.copyOf(result);
     }
 
     private Map<String, String> readMap(String value) {
