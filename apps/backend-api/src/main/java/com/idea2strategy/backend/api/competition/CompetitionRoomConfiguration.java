@@ -10,6 +10,7 @@ import com.idea2strategy.backend.application.competition.PlatformRoomInvalidatio
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
 import com.idea2strategy.backend.application.competition.RoomInvitationService;
+import com.idea2strategy.backend.application.competition.RoomLeaderboardQueryService;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionService;
 import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
@@ -28,6 +29,7 @@ import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJoo
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomLeaderboardJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomParticipationAdmissionJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomTerminationJooqAdapter;
@@ -54,6 +56,7 @@ import org.springframework.context.annotation.Import;
     ScoringTemplateCatalogJooqQueryAdapter.class,
     PublicRoomSearchJooqAdapter.class,
     RoomInvitationJooqAdapter.class,
+    RoomLeaderboardJooqAdapter.class,
     RoomParticipationAdmissionJooqAdapter.class,
     RoomStrategyBotProvisioningJooqAdapter.class,
     PostEvaluationChoiceJooqAdapter.class,
@@ -80,6 +83,15 @@ public class CompetitionRoomConfiguration {
     OwnedBotComparisonQueryService ownedBotComparisonQueryService(
             AnonymousLeaderboardJooqAdapter adapter, ObjectProvider<CurrentPrincipal> principalProvider) {
         return new OwnedBotComparisonQueryService(adapter, () -> {
+            CurrentPrincipal principal = principalProvider.getIfAvailable();
+            return principal == null ? null : principal.accountId();
+        });
+    }
+
+    @Bean
+    RoomLeaderboardQueryService roomLeaderboardQueryService(
+            RoomLeaderboardJooqAdapter adapter, ObjectProvider<CurrentPrincipal> principalProvider) {
+        return new RoomLeaderboardQueryService(adapter, () -> {
             CurrentPrincipal principal = principalProvider.getIfAvailable();
             return principal == null ? null : principal.accountId();
         });

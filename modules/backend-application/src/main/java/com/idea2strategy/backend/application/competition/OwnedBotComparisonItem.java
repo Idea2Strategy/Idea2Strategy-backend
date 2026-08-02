@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.util.Objects;
 
 public record OwnedBotComparisonItem(
-        int rank,
+        Integer rank,
         boolean jointRank,
         String anonymousAlias,
         BigDecimal score,

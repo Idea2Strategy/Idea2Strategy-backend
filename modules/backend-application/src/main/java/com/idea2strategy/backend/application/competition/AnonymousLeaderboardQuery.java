@@ -12,7 +12,8 @@ public record AnonymousLeaderboardQuery(
         int limit) {
     public AnonymousLeaderboardQuery {
         Objects.requireNonNull(roomId, "roomId");
-        if ((snapshotId == null) != (afterRank == null) || (snapshotId == null) != (afterAnchor == null)) {
+        if ((afterRank == null) != (afterAnchor == null)
+                || (snapshotId == null && afterRank != null)) {
             throw new IllegalArgumentException("leaderboard cursor fields must be supplied together");
         }
         if (limit < 1) {
