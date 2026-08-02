@@ -8,6 +8,7 @@ import com.idea2strategy.backend.application.competition.LeaderboardAuthenticati
 import com.idea2strategy.backend.application.competition.LeaderboardQueryPort;
 import com.idea2strategy.backend.application.competition.LeaderboardQueryResult;
 import com.idea2strategy.backend.application.competition.LeaderboardQueryRow;
+import com.idea2strategy.backend.application.competition.OwnedBotComparisonQueryPort;
 import com.idea2strategy.backend.application.competition.OwnedLeaderboardEvidence;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -22,7 +23,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
+public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, OwnedBotComparisonQueryPort {
     private final DSLContext dsl;
 
     public AnonymousLeaderboardJooqAdapter(DSLContext dsl) {
@@ -32,6 +33,16 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
     @Override
     @Transactional(readOnly = true)
     public LeaderboardQueryResult query(AnonymousLeaderboardQuery query) {
+        return query(query, false);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public LeaderboardQueryResult queryOwned(AnonymousLeaderboardQuery query) {
+        return query(query, true);
+    }
+
+    private LeaderboardQueryResult query(AnonymousLeaderboardQuery query, boolean ownedOnly) {
         if (query.viewerAccountId() == null || !isActiveAccount(query.viewerAccountId())) {
             throw new LeaderboardAuthenticationException("An active authenticated account is required");
         }
@@ -88,8 +99,10 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
         UUID snapshotId = snapshot.get("id", UUID.class);
         UUID afterParticipationId = query.afterAnchor() == null
                 ? null
-                : resolveAnchorParticipation(snapshotId, query.afterRank(), query.afterAnchor());
-        var rows = dsl.fetch(
+                : resolveAnchorParticipation(
+                        snapshotId, query.afterRank(), query.afterAnchor(),
+                        ownedOnly ? query.viewerAccountId() : null);
+        var rows = ownedOnly ? fetchOwnedRows(query, snapshotId, afterParticipationId) : dsl.fetch(
                 "select le.participation_id, le.rank, le.is_joint_rank, p.anonymous_alias, le.score, "
                         + "le.eligibility_status, ps.equity_amount, "
                         + "coalesce(ps.total_return_pct, bar.weighted_return_pct) as total_return_pct, "
@@ -139,7 +152,34 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
                 snapshotId,
                 snapshot.get("status", String.class),
                 snapshot.get("cutoff_at", OffsetDateTime.class).toInstant(),
-                rows.map(record -> mapRow(snapshotId, record)));
+                rows.map(record -> mapRow(
+                        snapshotId, record, ownedOnly ? query.viewerAccountId() : null)));
+    }
+
+    private org.jooq.Result<Record> fetchOwnedRows(
+            AnonymousLeaderboardQuery query, UUID snapshotId, UUID afterParticipationId) {
+        return dsl.fetch(
+                "select le.participation_id, le.rank, le.is_joint_rank, p.anonymous_alias, le.score, "
+                        + "le.eligibility_status, ps.equity_amount, "
+                        + "coalesce(ps.total_return_pct, bar.weighted_return_pct) as total_return_pct, "
+                        + "coalesce(ps.max_drawdown_pct, bar.weighted_max_drawdown_pct) as max_drawdown_pct, "
+                        + "coalesce(ps.sharpe_ratio, bar.weighted_sharpe_ratio) as sharpe_ratio, "
+                        + "true as viewer_owned, p.bot_id as owned_bot_id, "
+                        + "le.performance_snapshot_id as owned_performance_snapshot_id, "
+                        + "le.backtest_aggregate_result_id as owned_backtest_result_id, "
+                        + "le.eligibility_reason_code as owned_eligibility_reason_code "
+                        + "from competition.leaderboard_entries le "
+                        + "join competition.participations p on p.id = le.participation_id "
+                        + "left join performance.bot_snapshots ps on ps.id = le.performance_snapshot_id "
+                        + "left join competition.backtest_aggregate_results bar "
+                        + "on bar.id = le.backtest_aggregate_result_id "
+                        + "where le.snapshot_id = ? and p.owner_account_id = ? and p.status not in "
+                        + "('WITHDRAWN'::competition.participation_status, "
+                        + "'EXPELLED'::competition.participation_status) and "
+                        + "(?::int is null or le.rank > ? or (le.rank = ? and le.participation_id > ?)) "
+                        + "order by le.rank, le.participation_id limit ?",
+                snapshotId, query.viewerAccountId(), query.afterRank(), query.afterRank(),
+                query.afterRank(), afterParticipationId, query.limit());
     }
 
     private boolean isActiveAccount(UUID accountId) {
@@ -169,19 +209,25 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
                 viewerAccountId));
     }
 
-    private UUID resolveAnchorParticipation(UUID snapshotId, int rank, String anchor) {
-        var candidates = dsl.fetch(
-                "select le.participation_id from competition.leaderboard_entries le "
-                        + "where le.snapshot_id = ? and le.rank = ?",
-                snapshotId, rank);
+    private UUID resolveAnchorParticipation(UUID snapshotId, int rank, String anchor, UUID ownerScope) {
+        var candidates = ownerScope == null
+                ? dsl.fetch(
+                        "select le.participation_id from competition.leaderboard_entries le "
+                                + "where le.snapshot_id = ? and le.rank = ?",
+                        snapshotId, rank)
+                : dsl.fetch(
+                        "select le.participation_id from competition.leaderboard_entries le "
+                                + "join competition.participations p on p.id = le.participation_id "
+                                + "where le.snapshot_id = ? and le.rank = ? and p.owner_account_id = ?",
+                        snapshotId, rank, ownerScope);
         return candidates.stream()
                 .map(record -> record.get("participation_id", UUID.class))
-                .filter(participationId -> anchor.equals(rowAnchor(snapshotId, rank, participationId)))
+                .filter(participationId -> anchor.equals(rowAnchor(snapshotId, rank, participationId, ownerScope)))
                 .findFirst()
                 .orElseThrow(() -> new InvalidLeaderboardCursorException("cursor anchor is invalid"));
     }
 
-    private LeaderboardQueryRow mapRow(UUID snapshotId, Record record) {
+    private LeaderboardQueryRow mapRow(UUID snapshotId, Record record, UUID ownerScope) {
         UUID participationId = record.get("participation_id", UUID.class);
         OwnedLeaderboardEvidence owned = null;
         if (Boolean.TRUE.equals(record.get("viewer_owned", Boolean.class))) {
@@ -193,7 +239,7 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
                     record.get("owned_eligibility_reason_code", String.class));
         }
         return new LeaderboardQueryRow(
-                rowAnchor(snapshotId, record.get("rank", Integer.class), participationId),
+                rowAnchor(snapshotId, record.get("rank", Integer.class), participationId, ownerScope),
                 new AnonymousLeaderboardItem(
                         record.get("rank", Integer.class),
                         record.get("is_joint_rank", Boolean.class),
@@ -207,7 +253,7 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
                         owned));
     }
 
-    private static String rowAnchor(UUID snapshotId, int rank, UUID participationId) {
+    private static String rowAnchor(UUID snapshotId, int rank, UUID participationId, UUID ownerScope) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(snapshotId.toString().getBytes(StandardCharsets.UTF_8));
@@ -215,6 +261,12 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort {
             digest.update(Integer.toString(rank).getBytes(StandardCharsets.UTF_8));
             digest.update((byte) 0);
             digest.update(participationId.toString().getBytes(StandardCharsets.UTF_8));
+            if (ownerScope != null) {
+                digest.update((byte) 0);
+                digest.update("OWNED_COMPARISON".getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) 0);
+                digest.update(ownerScope.toString().getBytes(StandardCharsets.UTF_8));
+            }
             return "sha256:" + HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
