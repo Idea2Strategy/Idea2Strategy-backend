@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "contractVersion": "backtest.v1",
+    "messageType": "BACKTEST_COMPLETED",
+    "messageId": "90000000-0000-4000-8000-000000000001",
+    "occurredAt": "2024-01-03T01:05:01Z",
+    "correlationId": "55555555-5555-4555-8555-555555555555",
+    "idempotencyKey": "sha256:b9ef3969253ee8495d2e8241d891a75927e62c1d9814530f83ed07540b2e2f78"
+  },
+  "backtestRunId": "77777777-7777-4777-8777-777777777777",
+  "botId": "00000000-0000-4000-8000-000000000201",
+  "ownerAccountId": "66666666-6666-4666-8666-666666666666",
+  "expectedSnapshotHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "inputBundleFingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "executionPolicyVersion": "official-backtest-policy-v1",
+  "precisionRulesVersion": "precision:1.0.0",
+  "status": "COMPLETED",
+  "completedAt": "2024-01-03T01:10:00Z",
+  "attempt": 1,
+  "resultManifestId": "99999999-9999-4999-8999-999999999999",
+  "resultHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source": "BACKTEST",
+  "eventType": "BACKTEST_RESULT",
+  "livePerformanceEligible": false
+}
