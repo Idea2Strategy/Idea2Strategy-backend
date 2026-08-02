@@ -13,6 +13,7 @@ dependencies {
 
     testImplementation(testFixtures(project(":modules:backend-application")))
     testImplementation(project(":modules:backend-messaging"))
+    testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.flywaydb:flyway-core")
     testImplementation("org.flywaydb:flyway-database-postgresql")

@@ -97,6 +97,8 @@ public final class RoomContractFixtures {
             BOT_ID,
             EVALUATION_SEGMENT_ID,
             schedule.scheduleVersion(),
+            schedule.evaluationStartsAt(),
+            schedule.evaluationEndsAt(),
             effectiveAt,
             "sha256:" + Integer.toString(sequence).repeat(64)
         );

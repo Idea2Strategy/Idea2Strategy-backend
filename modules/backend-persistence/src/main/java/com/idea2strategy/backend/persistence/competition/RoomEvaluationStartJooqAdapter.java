@@ -4,9 +4,12 @@ import com.idea2strategy.backend.application.competition.RoomEvaluationStartPort
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartReport;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -15,8 +18,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
-    private static final String EVENT_SCHEMA_VERSION = "competition-room.v1";
+    private static final String BOT_EVENT_SCHEMA_VERSION = "competition-room.v1";
+    private static final String ROOM_PERFORMANCE_CONTRACT_VERSION = "room-performance.v1";
     private static final String COMMAND_TYPE = "ROOM_EVALUATION_START_COMMAND";
+    private static final String START_EVALUATION = "START_EVALUATION";
+    private static final String SCHEDULE_VERSION = "room-schedule.v1";
+    private static final String INITIAL_STATE_VERSION = "live-evaluation-initial-state.v1";
     private final DSLContext dsl;
 
     public RoomEvaluationStartJooqAdapter(DSLContext dsl) {
@@ -28,11 +35,12 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
     public RoomEvaluationStartReport startEligible(Instant observedAt, int limit) {
         OffsetDateTime observed = observedAt.atOffset(ZoneOffset.UTC);
         var candidates = dsl.fetch(
-                "select p.id as participation_id, p.room_id, p.bot_id, "
+                "select p.id as participation_id, p.room_id, p.bot_id, r.competition_type::text, "
                         + "b.lifecycle_status::text as lifecycle_status, b.started_at, b.execution_eligible_from, "
                         + "rr.initial_cash_amount as room_initial_cash, rr.fee_policy_id as room_fee_policy_id, "
                         + "rr.buying_power_buffer_policy_id as room_buffer_policy_id, "
                         + "rr.precision_rules_version as room_precision_rules_version, rr.slippage_rate_bps, "
+                        + "rr.rules_hash, rs.evaluation_starts_at, rs.evaluation_ends_at, "
                         + "lc.initial_cash_amount as launch_initial_cash, lc.currency_code, "
                         + "lc.fee_policy_id as launch_fee_policy_id, "
                         + "lc.buying_power_buffer_policy_id as launch_buffer_policy_id, "
@@ -75,8 +83,16 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                         + "idempotency_key, occurred_at, received_at, summary_document) "
                         + "values (?, ?, ?, 'ROOM_EVALUATION_STARTED', ?, ?, ?, ?::timestamptz, ?::timestamptz, "
                         + "jsonb_build_object('roomId', ?::text, 'participationId', ?::text))",
-                botEventId, botId, botEventSequence, EVENT_SCHEMA_VERSION, correlationId, idempotencyKey,
+                botEventId, botId, botEventSequence, BOT_EVENT_SCHEMA_VERSION, correlationId, idempotencyKey,
                 observedAt, observedAt, roomId, participationId);
+
+        UUID evaluationSegmentId;
+        if ("LIVE_PAPER".equals(candidate.get("competition_type", String.class))) {
+            evaluationSegmentId = insertLiveEvaluationSegment(
+                    candidate, participationId, roomId, botId, botEventSequence);
+        } else {
+            evaluationSegmentId = derivedId("backtest-evaluation-segment.v1", participationId);
+        }
 
         BigDecimal initialCash = candidate.get("room_initial_cash", BigDecimal.class);
         OffsetDateTime officialStartsAt = candidate.get("execution_eligible_from", OffsetDateTime.class);
@@ -122,7 +138,32 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                         + "jsonb_build_object('roomId', ?::text, 'botId', ?::text, 'initialCashAmount', ?::text))",
                 derivedId("participation-event", participationId), participationId, participationEventSequence,
                 observedAt, roomId, botId, initialCash.toPlainString());
-        insertStartCommand(candidate, participationId, roomId, botId, observedAt, initialCash, idempotencyKey);
+        insertStartCommand(
+                candidate, participationId, roomId, botId, evaluationSegmentId,
+                observedAt);
+    }
+
+    private UUID insertLiveEvaluationSegment(
+            Record candidate,
+            UUID participationId,
+            UUID roomId,
+            UUID botId,
+            long startEventSequence) {
+        UUID segmentId = derivedId("live-evaluation-segment.v1", participationId);
+        OffsetDateTime startsAt = candidate.get("evaluation_starts_at", OffsetDateTime.class);
+        OffsetDateTime endsAt = candidate.get("evaluation_ends_at", OffsetDateTime.class);
+        if (!startsAt.isBefore(endsAt)) {
+            throw new IllegalStateException("Live evaluation segment must have a non-empty schedule window");
+        }
+        String initialStateHash = initialStateHash(
+                candidate, segmentId, participationId, roomId, botId, startsAt, endsAt, startEventSequence);
+        dsl.execute(
+                "insert into competition.live_evaluation_segments "
+                        + "(id, participation_id, segment_type, starts_at, ends_at, start_event_sequence, "
+                        + "initial_state_hash) values (?, ?, 'OFFICIAL_EVALUATION', ?::timestamptz, "
+                        + "?::timestamptz, ?, ?)",
+                segmentId, participationId, startsAt, endsAt, startEventSequence, initialStateHash);
+        return segmentId;
     }
 
     private void validateCandidate(Record candidate, UUID botId) {
@@ -167,34 +208,128 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             UUID participationId,
             UUID roomId,
             UUID botId,
-            OffsetDateTime observedAt,
-            BigDecimal initialCash,
-            String idempotencyKey) {
+            UUID evaluationSegmentId,
+            OffsetDateTime observedAt) {
         Number nextSequence = (Number) dsl.fetchValue(
                 "select coalesce(max(aggregate_sequence), 0) + 1 from operations.outbox_messages "
                         + "where owner_domain = 'competition' and aggregate_id = ?",
                 participationId);
-        OffsetDateTime eligibleFrom = candidate.get("execution_eligible_from", OffsetDateTime.class);
-        String snapshotHash = "sha256:" + candidate.get("snapshot_hash", String.class);
+        UUID commandId = derivedId("room-evaluation-start-command.v1", participationId);
+        OffsetDateTime effectiveAt = candidate.get("execution_eligible_from", OffsetDateTime.class);
+        OffsetDateTime evaluationStartsAt = candidate.get("evaluation_starts_at", OffsetDateTime.class);
+        OffsetDateTime evaluationEndsAt = candidate.get("evaluation_ends_at", OffsetDateTime.class);
+        String commandIdempotencyKey = commandIdempotencyKey(
+                commandId, roomId, participationId, botId, evaluationSegmentId,
+                evaluationStartsAt, evaluationEndsAt, effectiveAt);
         dsl.execute(
                 "insert into operations.outbox_messages "
                         + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
                         + "payload_document, idempotency_key, created_at) "
                         + "values (?, 'competition', ?, ?, ?, ?, "
                         + "jsonb_build_object("
-                        + "'metadata', jsonb_build_object('contractVersion', ?, 'messageType', ?, "
-                        + "'messageId', ?::text, 'occurredAt', ?::text, 'correlationId', ?::text, "
-                        + "'idempotencyKey', ?), "
+                        + "'contractVersion', ?, 'commandId', ?::text, 'type', ?, "
                         + "'roomId', ?::text, 'participationId', ?::text, 'botId', ?::text, "
-                        + "'expectedSnapshotHash', ?, 'executionEligibleFrom', ?::text, "
-                        + "'initialCashAmount', ?::text, 'currencyCode', 'USD'), "
+                        + "'evaluationSegmentId', ?::text, 'scheduleVersion', ?, "
+                        + "'evaluationStartsAt', ?::text, 'evaluationEndsAt', ?::text, "
+                        + "'effectiveAt', ?::text, 'idempotencyKey', ?), "
                         + "?, ?::timestamptz)",
                 derivedId("outbox-message", participationId), participationId, nextSequence.longValue(),
-                COMMAND_TYPE, EVENT_SCHEMA_VERSION,
-                EVENT_SCHEMA_VERSION, COMMAND_TYPE, derivedId("outbox-message", participationId),
-                observedAt.toInstant().toString(), derivedId("correlation", participationId), idempotencyKey,
-                roomId, participationId, botId, snapshotHash, eligibleFrom.toInstant().toString(),
-                initialCash.toPlainString(), idempotencyKey, observedAt);
+                COMMAND_TYPE, ROOM_PERFORMANCE_CONTRACT_VERSION,
+                ROOM_PERFORMANCE_CONTRACT_VERSION, commandId, START_EVALUATION,
+                roomId, participationId, botId, evaluationSegmentId, SCHEDULE_VERSION,
+                evaluationStartsAt.toInstant().toString(), evaluationEndsAt.toInstant().toString(),
+                effectiveAt.toInstant().toString(), commandIdempotencyKey,
+                commandIdempotencyKey, observedAt);
+    }
+
+    private String commandIdempotencyKey(
+            UUID commandId,
+            UUID roomId,
+            UUID participationId,
+            UUID botId,
+            UUID evaluationSegmentId,
+            OffsetDateTime evaluationStartsAt,
+            OffsetDateTime evaluationEndsAt,
+            OffsetDateTime effectiveAt) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digestField(digest, "contractVersion", ROOM_PERFORMANCE_CONTRACT_VERSION);
+            digestField(digest, "commandId", commandId.toString());
+            digestField(digest, "type", START_EVALUATION);
+            digestField(digest, "roomId", roomId.toString());
+            digestField(digest, "participationId", participationId.toString());
+            digestField(digest, "botId", botId.toString());
+            digestField(digest, "evaluationSegmentId", evaluationSegmentId.toString());
+            digestField(digest, "scheduleVersion", SCHEDULE_VERSION);
+            digestField(digest, "evaluationStartsAt", evaluationStartsAt.toInstant().toString());
+            digestField(digest, "evaluationEndsAt", evaluationEndsAt.toInstant().toString());
+            digestField(digest, "effectiveAt", effectiveAt.toInstant().toString());
+            return "sha256:" + HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private String initialStateHash(
+            Record candidate,
+            UUID segmentId,
+            UUID participationId,
+            UUID roomId,
+            UUID botId,
+            OffsetDateTime startsAt,
+            OffsetDateTime endsAt,
+            long startEventSequence) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digestField(digest, "stateVersion", INITIAL_STATE_VERSION);
+            digestField(digest, "evaluationSegmentId", segmentId.toString());
+            digestField(digest, "participationId", participationId.toString());
+            digestField(digest, "roomId", roomId.toString());
+            digestField(digest, "botId", botId.toString());
+            digestField(digest, "scheduleVersion", SCHEDULE_VERSION);
+            digestField(digest, "startsAt", startsAt.toInstant().toString());
+            digestField(digest, "endsAt", endsAt.toInstant().toString());
+            digestField(digest, "startEventSequence", Long.toString(startEventSequence));
+            digestField(
+                    digest,
+                    "initialCashAmount",
+                    candidate.get("room_initial_cash", BigDecimal.class).toPlainString());
+            digestField(digest, "currencyCode", "USD");
+            digestField(digest, "rulesHash", candidate.get("rules_hash", String.class));
+            digestField(digest, "snapshotHash", candidate.get("snapshot_hash", String.class));
+            digestField(digest, "feePolicyId", candidate.get("room_fee_policy_id", UUID.class).toString());
+            digestField(
+                    digest,
+                    "buyingPowerBufferPolicyId",
+                    candidate.get("room_buffer_policy_id", UUID.class).toString());
+            digestField(
+                    digest,
+                    "precisionRulesVersion",
+                    candidate.get("room_precision_rules_version", String.class));
+            digestField(
+                    digest,
+                    "slippageRateBps",
+                    candidate.get("slippage_rate_bps", Integer.class).toString());
+            return "sha256:" + HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static void digestField(MessageDigest digest, String name, String value) {
+        updateLengthPrefixed(digest, name);
+        updateLengthPrefixed(digest, value);
+    }
+
+    private static void updateLengthPrefixed(MessageDigest digest, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        digest.update(new byte[] {
+                (byte) (bytes.length >>> 24),
+                (byte) (bytes.length >>> 16),
+                (byte) (bytes.length >>> 8),
+                (byte) bytes.length
+        });
+        digest.update(bytes);
     }
 
     private long nextBotEventSequence(UUID botId) {

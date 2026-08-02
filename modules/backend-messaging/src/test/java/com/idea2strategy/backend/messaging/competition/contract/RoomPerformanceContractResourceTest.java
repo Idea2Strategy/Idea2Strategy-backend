@@ -51,6 +51,8 @@ class RoomPerformanceContractResourceTest {
         commands.forEach(command -> {
             assertEquals(RoomContractFixtures.CONTRACT_VERSION, command.required("contractVersion").textValue());
             assertTrue(command.required("idempotencyKey").textValue().matches("sha256:[0-9a-f]{64}"));
+            assertTrue(command.required("evaluationStartsAt").textValue()
+                .compareTo(command.required("evaluationEndsAt").textValue()) < 0);
         });
     }
 

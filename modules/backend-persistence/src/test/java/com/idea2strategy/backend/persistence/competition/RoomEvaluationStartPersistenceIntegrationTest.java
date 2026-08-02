@@ -3,7 +3,13 @@ package com.idea2strategy.backend.persistence.competition;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartReport;
+import com.idea2strategy.backend.messaging.competition.contract.RoomEvaluationCommandFixture;
+import com.idea2strategy.backend.messaging.competition.contract.RoomEvaluationCommandType;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -57,6 +63,10 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
     @BeforeEach
     void prepareReferences() {
         jdbc.update("delete from operations.outbox_messages");
@@ -64,6 +74,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from trading.ledger_transactions");
         jdbc.update("delete from trading.ledger_accounts");
         jdbc.update("delete from competition.participation_events");
+        jdbc.update("delete from competition.live_evaluation_segments");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
@@ -103,7 +114,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     }
 
     @Test
-    void initializesOfficialStateAndEmitsOneStartCommand() {
+    void initializesOfficialStateAndEmitsOneContractCompatibleStartCommand() throws Exception {
         seedLiveParticipation();
 
         assertThat(adapter.startEligible(OBSERVED_AT, 10))
@@ -151,10 +162,56 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         Integer.class, PARTICIPATION_ID))
                 .isEqualTo(1);
         assertThat(jdbc.queryForObject(
-                        "select payload_document ->> 'executionEligibleFrom' from operations.outbox_messages "
+                        "select payload_document ->> 'effectiveAt' from operations.outbox_messages "
                                 + "where aggregate_id = ?",
                         String.class, PARTICIPATION_ID))
                 .isEqualTo(EVALUATION_START.toString());
+
+        UUID expectedSegmentId = UUID.nameUUIDFromBytes(
+                ("live-evaluation-segment.v1:" + PARTICIPATION_ID).getBytes(StandardCharsets.UTF_8));
+        assertThat(jdbc.queryForMap(
+                        "select id, segment_type, starts_at, ends_at, start_event_sequence, initial_state_hash "
+                                + "from competition.live_evaluation_segments where participation_id = ?",
+                        PARTICIPATION_ID))
+                .satisfies(segment -> {
+                    assertThat(segment.get("id")).isEqualTo(expectedSegmentId);
+                    assertThat(segment.get("segment_type")).isEqualTo("OFFICIAL_EVALUATION");
+                    assertThat(((java.sql.Timestamp) segment.get("starts_at")).toInstant())
+                            .isEqualTo(EVALUATION_START);
+                    assertThat(((java.sql.Timestamp) segment.get("ends_at")).toInstant())
+                            .isEqualTo(EVALUATION_START.plusSeconds(2 * 60 * 60));
+                    assertThat(((Number) segment.get("start_event_sequence")).longValue()).isEqualTo(1L);
+                    assertThat(segment.get("initial_state_hash"))
+                            .asString()
+                            .matches("sha256:[0-9a-f]{64}");
+                });
+        String payload = jdbc.queryForObject(
+                "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
+                String.class, PARTICIPATION_ID);
+        RoomEvaluationCommandFixture command = objectMapper.readValue(payload, RoomEvaluationCommandFixture.class);
+        UUID expectedCommandId = UUID.nameUUIDFromBytes(
+                ("room-evaluation-start-command.v1:" + PARTICIPATION_ID)
+                        .getBytes(StandardCharsets.UTF_8));
+        assertThat(command.contractVersion()).isEqualTo("room-performance.v1");
+        assertThat(command.commandId()).isEqualTo(expectedCommandId);
+        assertThat(command.type()).isEqualTo(RoomEvaluationCommandType.START_EVALUATION);
+        assertThat(command.roomId()).isEqualTo(ROOM_ID);
+        assertThat(command.participationId()).isEqualTo(PARTICIPATION_ID);
+        assertThat(command.botId()).isEqualTo(BOT_ID);
+        assertThat(command.evaluationSegmentId()).isEqualTo(expectedSegmentId);
+        assertThat(command.scheduleVersion()).isEqualTo("room-schedule.v1");
+        assertThat(command.evaluationStartsAt()).isEqualTo(EVALUATION_START);
+        assertThat(command.evaluationEndsAt()).isEqualTo(EVALUATION_START.plusSeconds(2 * 60 * 60));
+        assertThat(command.effectiveAt()).isEqualTo(EVALUATION_START);
+        assertThat(command.idempotencyKey()).matches("sha256:[0-9a-f]{64}");
+        assertThat(objectMapper.readTree(objectMapper.writeValueAsString(command)))
+                .isEqualTo(objectMapper.readTree(payload));
+        assertThat(jdbc.queryForMap(
+                        "select event_schema_version, idempotency_key from operations.outbox_messages "
+                                + "where aggregate_id = ?",
+                        PARTICIPATION_ID))
+                .containsEntry("event_schema_version", "room-performance.v1")
+                .containsEntry("idempotency_key", command.idempotencyKey());
     }
 
     @Test
@@ -175,16 +232,20 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                     .extracting(RoomEvaluationStartReport::participantsStarted)
                     .containsExactlyInAnyOrder(1, 0);
         }
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from competition.live_evaluation_segments where participation_id = ?",
+                        Integer.class, PARTICIPATION_ID))
+                .isEqualTo(1);
     }
 
     @Test
-    void startsLateBacktestSubmissionFromItsActualAdmissionTime() {
+    void startsLateBacktestSubmissionFromItsActualAdmissionTime() throws Exception {
         Instant admittedAt = EVALUATION_START.plusSeconds(5);
         seedBacktestParticipation(admittedAt);
 
         assertThat(adapter.startEligible(OBSERVED_AT, 10).participantsStarted()).isEqualTo(1);
         assertThat(jdbc.queryForObject(
-                        "select payload_document ->> 'executionEligibleFrom' from operations.outbox_messages "
+                        "select payload_document ->> 'effectiveAt' from operations.outbox_messages "
                                 + "where aggregate_id = ?",
                         String.class, PARTICIPATION_ID))
                 .isEqualTo(admittedAt.toString());
@@ -192,6 +253,45 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         "select evaluation_started_at from competition.participations where id = ?",
                         java.time.OffsetDateTime.class, PARTICIPATION_ID).toInstant())
                 .isEqualTo(admittedAt);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from competition.live_evaluation_segments where participation_id = ?",
+                        Integer.class, PARTICIPATION_ID))
+                .isZero();
+        String payload = jdbc.queryForObject(
+                "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
+                String.class, PARTICIPATION_ID);
+        RoomEvaluationCommandFixture command = objectMapper.readValue(payload, RoomEvaluationCommandFixture.class);
+        assertThat(command.type()).isEqualTo(RoomEvaluationCommandType.START_EVALUATION);
+        assertThat(command.evaluationSegmentId()).isEqualTo(UUID.nameUUIDFromBytes(
+                ("backtest-evaluation-segment.v1:" + PARTICIPATION_ID)
+                        .getBytes(StandardCharsets.UTF_8)));
+        assertThat(command.evaluationStartsAt()).isEqualTo(EVALUATION_START);
+        assertThat(command.evaluationEndsAt()).isEqualTo(EVALUATION_START.plusSeconds(2 * 60 * 60));
+        assertThat(command.effectiveAt()).isEqualTo(admittedAt);
+    }
+
+    @Test
+    void rejectsAnEmptyLiveEvaluationWindowWithoutCreatingOfficialState() {
+        seedLiveParticipation();
+        jdbc.update(
+                "update competition.room_schedules set evaluation_ends_at = ?, "
+                        + "finalization_deadline_at = ? where room_id = ?",
+                EVALUATION_START.atOffset(ZoneOffset.UTC),
+                EVALUATION_START.plusSeconds(60).atOffset(ZoneOffset.UTC),
+                ROOM_ID);
+
+        assertThatThrownBy(() -> adapter.startEligible(OBSERVED_AT, 10))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .hasStackTraceContaining("non-empty schedule window");
+
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.participations where id = ?",
+                        String.class, PARTICIPATION_ID))
+                .isEqualTo("REGISTERED");
+        assertThat(jdbc.queryForObject("select count(*) from competition.live_evaluation_segments", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from bot.bot_events", Integer.class))
+                .isZero();
     }
 
     @Test
@@ -214,6 +314,35 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from operations.outbox_messages", Integer.class))
                 .isZero();
         assertThat(jdbc.queryForObject("select count(*) from trading.ledger_transactions", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from competition.live_evaluation_segments", Integer.class))
+                .isZero();
+    }
+
+    @Test
+    void rollsBackLiveSegmentAndOfficialStateWhenStartCommandCannotBeRecorded() {
+        seedLiveParticipation();
+        UUID outboxId = UUID.nameUUIDFromBytes(
+                ("outbox-message:" + PARTICIPATION_ID).getBytes(StandardCharsets.UTF_8));
+        jdbc.update(
+                "insert into operations.outbox_messages "
+                        + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, "
+                        + "event_schema_version, payload_document, idempotency_key, created_at) "
+                        + "values (?, 'competition', ?, 1, 'EXISTING', 'test.v1', '{}'::jsonb, ?, ?)",
+                outboxId, id(90), "existing:" + PARTICIPATION_ID, OBSERVED_AT.atOffset(ZoneOffset.UTC));
+
+        assertThatThrownBy(() -> adapter.startEligible(OBSERVED_AT, 10))
+                .hasStackTraceContaining("duplicate key");
+
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.participations where id = ?",
+                        String.class, PARTICIPATION_ID))
+                .isEqualTo("REGISTERED");
+        assertThat(jdbc.queryForObject("select count(*) from competition.live_evaluation_segments", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from trading.ledger_transactions", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from bot.bot_events", Integer.class))
                 .isZero();
     }
 
