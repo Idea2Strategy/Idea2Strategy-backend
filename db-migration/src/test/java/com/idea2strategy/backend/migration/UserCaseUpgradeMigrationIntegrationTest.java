@@ -28,7 +28,7 @@ class UserCaseUpgradeMigrationIntegrationTest {
         Path beforeA19 = Files.createDirectories(temporaryDirectory.resolve("before-a19"));
         try (var files = Files.list(central)) {
             for (Path source : files.filter(Files::isRegularFile).toList()) {
-                if (!A19.equals(source.getFileName().toString())) {
+                if (source.getFileName().toString().compareTo(A19) < 0) {
                     Files.copy(source, beforeA19.resolve(source.getFileName()));
                 }
             }
