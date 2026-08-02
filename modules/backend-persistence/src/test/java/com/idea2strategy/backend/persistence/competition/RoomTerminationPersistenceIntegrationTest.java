@@ -42,8 +42,10 @@ class RoomTerminationPersistenceIntegrationTest {
     private static final UUID OPERATOR_ID = id(5);
     private static final UUID PARTICIPANT_OWNER_ID = id(8);
     private static final UUID ROLE_ID = id(20);
-    private static final UUID READ_PERMISSION_ID = id(21);
-    private static final UUID MANAGE_PERMISSION_ID = id(22);
+    private static final UUID READ_PERMISSION_ID =
+            UUID.fromString("e3000000-0000-4000-8000-000000000001");
+    private static final UUID MANAGE_PERMISSION_ID =
+            UUID.fromString("e3000000-0000-4000-8000-000000000002");
     private static final UUID SCORING_ID = id(23);
     private static final UUID FEE_POLICY_ID = id(24);
     private static final UUID BUFFER_POLICY_ID = id(25);
