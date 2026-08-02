@@ -3,6 +3,7 @@ package com.idea2strategy.backend.persistence.competition;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.application.competition.RoomScheduleTransitionReport;
+import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -28,6 +29,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(classes = RoomScheduleTransitionPersistenceIntegrationTest.TestApplication.class)
 class RoomScheduleTransitionPersistenceIntegrationTest {
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000084");
+    private static final UUID BOT_OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000085");
     private static final UUID ROOM_ID = UUID.fromString("20000000-0000-4000-8000-000000000084");
     private static final Instant RECRUITMENT = Instant.parse("2026-08-02T01:00:00Z");
     private static final Instant EVALUATION = Instant.parse("2026-08-02T02:00:00Z");
@@ -53,16 +55,27 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbc.update("delete from operations.outbox_messages");
+        jdbc.update("delete from competition.leaderboard_entries");
+        jdbc.update("delete from competition.leaderboard_snapshots");
+        jdbc.update("delete from bot.continuation_deadlines");
+        jdbc.update("delete from competition.participation_events");
+        jdbc.update("delete from competition.participations");
         jdbc.update("delete from competition.room_events");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.rooms");
+        jdbc.update("delete from bot.launch_snapshots");
+        jdbc.update("delete from bot.bots");
         jdbc.update("delete from identity.accounts");
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
+        jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", BOT_OWNER_ID);
     }
 
     @Test
     void catchesUpEveryDueBoundaryInOrderAndIsIdempotent() {
         seedRoom("DRAFT");
+        seedActiveParticipation(1, OWNER_ID, "RUNNING");
+        seedActiveParticipation(2, OWNER_ID, "RUNNING");
         Instant observedAt = END.plusSeconds(30);
 
         assertThat(adapter.advanceDue(observedAt, 10))
@@ -95,6 +108,7 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
     @Test
     void concurrentBatchInstancesApplyOneTransitionOnly() throws Exception {
         seedRoom("RECRUITING");
+        seedActiveParticipation(1, OWNER_ID, "RUNNING");
         var gate = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             Future<RoomScheduleTransitionReport> first = executor.submit(() -> {
@@ -112,6 +126,79 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
         assertThat(jdbc.queryForObject(
                         "select count(*) from competition.room_events where room_id = ?", Integer.class, ROOM_ID))
                 .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.rooms where id = ?", String.class, ROOM_ID))
+                .isEqualTo("ENDED");
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages "
+                                + "where event_type = 'ROOM_INSUFFICIENT_PARTICIPATION_ENDED_NOTIFICATION'",
+                        Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void endsAnUnderSubscribedRoomWithoutLeaderboardAndContinuesItsWaitingBotPrivately() {
+        seedRoom("RECRUITING");
+        UUID botId = seedActiveParticipation(1, BOT_OWNER_ID, "RUNNING");
+
+        assertThat(adapter.advanceDue(EVALUATION.plusSeconds(5), 10))
+                .isEqualTo(new RoomScheduleTransitionReport(EVALUATION.plusSeconds(5), 1, 1));
+        assertThat(adapter.advanceDue(EVALUATION.plusSeconds(10), 10).transitionsApplied()).isZero();
+
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.rooms where id = ?", String.class, ROOM_ID))
+                .isEqualTo("ENDED");
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.participations where bot_id = ?", String.class, botId))
+                .isEqualTo("WITHDRAWN");
+        assertThat(jdbc.queryForObject(
+                        "select withdrawal_reason_code from competition.participations where bot_id = ?",
+                        String.class, botId))
+                .isEqualTo("INSUFFICIENT_PARTICIPATION");
+        assertThat(jdbc.queryForObject(
+                        "select due_at from bot.continuation_deadlines where bot_id = ?",
+                        java.time.OffsetDateTime.class, botId).toInstant())
+                .isEqualTo(EVALUATION.plusSeconds(5).plus(java.time.Duration.ofDays(30)));
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages where event_type = 'BOT_RUN_COMMAND'",
+                        Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages "
+                                + "where event_type = 'ROOM_INSUFFICIENT_PARTICIPATION_ENDED_NOTIFICATION'",
+                        Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from competition.leaderboard_snapshots where room_id = ?",
+                        Integer.class, ROOM_ID))
+                .isZero();
+        assertThat(jdbc.queryForList(
+                        "select event_type, reason_code from competition.room_events where room_id = ?",
+                        ROOM_ID))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.get("event_type")).isEqualTo("INSUFFICIENT_PARTICIPATION");
+                    assertThat(event.get("reason_code")).isEqualTo("INSUFFICIENT_PARTICIPATION");
+                });
+    }
+
+    @Test
+    void preservesAStoppingBotWhenAnUnderSubscribedRoomEnds() {
+        seedRoom("RECRUITING");
+        UUID botId = seedActiveParticipation(1, BOT_OWNER_ID, "STOPPING");
+
+        assertThat(adapter.advanceDue(EVALUATION, 10).transitionsApplied()).isEqualTo(1);
+
+        assertThat(jdbc.queryForObject(
+                        "select lifecycle_status::text from bot.bots where id = ?", String.class, botId))
+                .isEqualTo("STOPPING");
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from bot.continuation_deadlines where bot_id = ?", Integer.class, botId))
+                .isZero();
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages where event_type = 'BOT_RUN_COMMAND'",
+                        Integer.class))
+                .isZero();
     }
 
     private void seedRoom(String status) {
@@ -137,8 +224,33 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
                 END.plusSeconds(3600).atOffset(ZoneOffset.UTC));
     }
 
+    private UUID seedActiveParticipation(int suffix, UUID ownerId, String lifecycleStatus) {
+        UUID botId = UUID.fromString("30000000-0000-4000-8000-" + String.format("%012d", suffix));
+        UUID participationId = UUID.fromString("40000000-0000-4000-8000-" + String.format("%012d", suffix));
+        var createdAt = RECRUITMENT.minusSeconds(1800).atOffset(ZoneOffset.UTC);
+        jdbc.update(
+                "insert into bot.bots "
+                        + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, created_at, "
+                        + "execution_eligible_from, edit_sequence, updated_at) "
+                        + "values (?, ?, 'BASIC', ?, ?::bot.lifecycle_status, ?, ?, ?, 0, ?)",
+                botId, ownerId, "Schedule bot " + suffix, lifecycleStatus, createdAt, createdAt,
+                EVALUATION.atOffset(ZoneOffset.UTC), createdAt);
+        jdbc.update(
+                "insert into bot.launch_snapshots "
+                        + "(bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, semantic_hash, "
+                        + "presentation_hash, snapshot_hash, created_at) "
+                        + "values (?, 'basic-launch-snapshot.v1', '{}'::jsonb, '{}'::jsonb, ?, ?, ?, ?)",
+                botId, "semantic-" + suffix, "presentation-" + suffix, "snapshot-" + suffix, createdAt);
+        jdbc.update(
+                "insert into competition.participations "
+                        + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at) "
+                        + "values (?, ?, ?, ?, ?, 'REGISTERED', ?)",
+                participationId, ROOM_ID, botId, ownerId, "schedule-bot-" + suffix, createdAt);
+        return botId;
+    }
+
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import(RoomScheduleTransitionJooqAdapter.class)
+    @Import({RoomScheduleTransitionJooqAdapter.class, BotRunCommandJooqAdapter.class})
     static class TestApplication {}
 }
