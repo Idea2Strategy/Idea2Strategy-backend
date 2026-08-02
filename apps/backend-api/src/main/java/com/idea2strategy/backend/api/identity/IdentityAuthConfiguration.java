@@ -28,6 +28,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -62,8 +64,12 @@ public class IdentityAuthConfiguration {
     @Bean
     AesGcmEmailProtector emailProtector(
             @Value("${identity.crypto.email-encryption-key}") String encryptionKey,
-            @Value("${identity.crypto.lookup-hmac-key}") String lookupKey) {
-        return new AesGcmEmailProtector(decode(encryptionKey), decode(lookupKey), (short) 1, (short) 1);
+            @Value("${identity.crypto.lookup-hmac-key}") String lookupKey,
+            @Value("${identity.crypto.email-encryption-key-version:1}") short encryptionKeyVersion,
+            @Value("${identity.crypto.lookup-hmac-key-version:1}") short lookupKeyVersion,
+            @Value("${identity.crypto.previous-lookup-hmac-keys:}") String previousLookupKeys) {
+        return new AesGcmEmailProtector(decode(encryptionKey), decode(lookupKey),
+                encryptionKeyVersion, lookupKeyVersion, decodeKeyRing(previousLookupKeys));
     }
 
     @Bean
@@ -210,8 +216,10 @@ public class IdentityAuthConfiguration {
 
     @Bean
     HmacOidcSubjectProtector oidcSubjectProtector(
-            @Value("${identity.crypto.oidc-subject-hmac-key:${identity.crypto.lookup-hmac-key}}") String key) {
-        return new HmacOidcSubjectProtector(decode(key), (short) 1);
+            @Value("${identity.crypto.oidc-subject-hmac-key:${identity.crypto.lookup-hmac-key}}") String key,
+            @Value("${identity.crypto.oidc-subject-hmac-key-version:1}") short keyVersion,
+            @Value("${identity.crypto.previous-oidc-subject-hmac-keys:}") String previousKeys) {
+        return new HmacOidcSubjectProtector(decode(key), keyVersion, decodeKeyRing(previousKeys));
     }
 
     @Bean
@@ -276,5 +284,25 @@ public class IdentityAuthConfiguration {
         } catch (IllegalArgumentException exception) {
             throw new IllegalStateException("Identity crypto keys must use standard Base64 encoding", exception);
         }
+    }
+
+    private static Map<Short, byte[]> decodeKeyRing(String encoded) {
+        var keys = new LinkedHashMap<Short, byte[]>();
+        if (encoded == null || encoded.isBlank()) return Map.of();
+        for (String entry : encoded.split(",")) {
+            String[] parts = entry.trim().split(":", 2);
+            if (parts.length != 2) {
+                throw new IllegalStateException("Previous HMAC keys must use version:base64 entries");
+            }
+            try {
+                short version = Short.parseShort(parts[0]);
+                if (keys.putIfAbsent(version, decode(parts[1])) != null) {
+                    throw new IllegalStateException("Previous HMAC key versions must be unique");
+                }
+            } catch (NumberFormatException exception) {
+                throw new IllegalStateException("Previous HMAC key version is invalid", exception);
+            }
+        }
+        return Map.copyOf(keys);
     }
 }

@@ -45,7 +45,8 @@ public final class OidcIdentityLinkingService {
                 protectedSubject.hmac(),
                 protectedSubject.keyVersion(),
                 command.correlationId(),
-                clock.instant()));
+                clock.instant(),
+                protectedSubject.comparisonFingerprints()));
         return pendingId;
     }
 
@@ -66,6 +67,7 @@ public final class OidcIdentityLinkingService {
                 provider.id(),
                 protectedSubject.hmac(),
                 command.correlationId(),
-                clock.instant()));
+                clock.instant(),
+                protectedSubject.comparisonFingerprints()));
     }
 }

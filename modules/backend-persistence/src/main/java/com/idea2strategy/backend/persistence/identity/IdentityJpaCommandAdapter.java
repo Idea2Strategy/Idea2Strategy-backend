@@ -6,6 +6,9 @@ import com.idea2strategy.backend.application.identity.AuthenticationRejectedExce
 import com.idea2strategy.backend.application.identity.ActivateOidcLink;
 import com.idea2strategy.backend.application.identity.AccountRecoveryCommandPort;
 import com.idea2strategy.backend.application.identity.IdentityCommandPort;
+import com.idea2strategy.backend.application.identity.IdentifierFingerprint;
+import com.idea2strategy.backend.application.identity.IdentifierAdvisoryLockKey;
+import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.LoginFailure;
 import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
@@ -26,6 +29,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.List;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +50,11 @@ public class IdentityJpaCommandAdapter
     @Transactional
     public void createPending(PendingRegistration registration) {
         OffsetDateTime now = utc(registration.requestedAt());
+        try {
+            guardIdentifierReuse("EMAIL", "PASSWORD", registration.email().comparisonFingerprints(), null);
+        } catch (AuthenticationRejectedException rejected) {
+            throw new DuplicateEmailException();
+        }
         entityManager.createNativeQuery("""
                         insert into identity.accounts (id, lifecycle_status, status_changed_at, created_at)
                         values (:id, cast('PENDING_VERIFICATION' as identity.account_lifecycle_status), :now, :now)
@@ -516,6 +525,10 @@ public class IdentityJpaCommandAdapter
     @Override
     @Transactional
     public void createPendingLink(PendingOidcLink link) {
+        String providerCode = (String) entityManager.createNativeQuery(
+                        "select code from identity.auth_providers where id = :providerId")
+                .setParameter("providerId", link.providerId()).getSingleResult();
+        guardIdentifierReuse("OIDC_SUBJECT", providerCode, link.comparisonFingerprints(), null);
         Object status = entityManager.createNativeQuery("""
                         select account.lifecycle_status::text
                         from identity.accounts account
@@ -563,6 +576,15 @@ public class IdentityJpaCommandAdapter
     @Override
     @Transactional
     public long activatePendingLink(ActivateOidcLink command) {
+        String providerCode = (String) entityManager.createNativeQuery(
+                        "select code from identity.auth_providers where id = :providerId")
+                .setParameter("providerId", command.providerId()).getSingleResult();
+        List<IdentifierFingerprint> comparisonFingerprints = command.comparisonFingerprints().isEmpty()
+                ? List.of(new IdentifierFingerprint(command.subjectHmac(), pendingSubjectKeyVersion(
+                        command.pendingLoginIdentityId())))
+                : command.comparisonFingerprints();
+        guardIdentifierReuse("OIDC_SUBJECT", providerCode, comparisonFingerprints,
+                command.pendingLoginIdentityId());
         Object[] row;
         try {
             row = (Object[]) entityManager.createNativeQuery("""
@@ -635,6 +657,97 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
         insertAuthenticationTransitionEvent(command, now);
         return ((Number) row[2]).longValue() + 1;
+    }
+
+    private short pendingSubjectKeyVersion(UUID pendingLoginIdentityId) {
+        return ((Number) entityManager.createNativeQuery(
+                        "select subject_key_version from identity.login_identities where id = :id")
+                .setParameter("id", pendingLoginIdentityId).getSingleResult()).shortValue();
+    }
+
+    private void guardIdentifierReuse(String kind, String providerCode,
+                                      List<IdentifierFingerprint> fingerprints, UUID excludedLoginId) {
+        if (fingerprints.isEmpty()) {
+            throw new AuthenticationRejectedException("Identifier comparison key ring is unavailable");
+        }
+        var ordered = fingerprints.stream()
+                .sorted(java.util.Comparator.comparingInt(IdentifierFingerprint::keyVersion)
+                        .thenComparing(IdentifierFingerprint::value))
+                .toList();
+        if (ordered.stream().map(IdentifierFingerprint::keyVersion).distinct().count() != ordered.size()) {
+            throw new AuthenticationRejectedException("Identifier comparison key versions are ambiguous");
+        }
+        for (var fingerprint : ordered) {
+            entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtextextended(:key, 0))")
+                    .setParameter("key", IdentifierAdvisoryLockKey.of(kind, providerCode, fingerprint))
+                    .getSingleResult();
+        }
+
+        @SuppressWarnings("unchecked")
+        List<Number> requiredKeyVersions = entityManager.createNativeQuery("""
+                        select distinct required.key_version
+                        from (
+                            select quarantine.fingerprint_key_version key_version
+                            from identity.account_identifier_quarantines quarantine
+                            where quarantine.identifier_kind = :kind
+                              and quarantine.provider_code = :providerCode
+                              and quarantine.released_at is null
+                            union all
+                            select email.email_lookup_key_version
+                            from identity.account_emails email
+                            where :kind = 'EMAIL' and :providerCode = 'PASSWORD'
+                              and email.email_lookup_hmac is not null
+                            union all
+                            select login.subject_key_version
+                            from identity.login_identities login
+                            join identity.auth_providers provider on provider.id = login.provider_id
+                            where :kind = 'OIDC_SUBJECT' and provider.code = :providerCode
+                              and login.provider_subject_hmac is not null
+                        ) required
+                        where required.key_version is not null
+                        """).setParameter("kind", kind).setParameter("providerCode", providerCode).getResultList();
+        if (requiredKeyVersions.stream().map(Number::shortValue)
+                .anyMatch(version -> ordered.stream().noneMatch(candidate -> candidate.keyVersion() == version))) {
+            throw new AuthenticationRejectedException("Identifier comparison key ring is incomplete");
+        }
+
+        for (var fingerprint : ordered) {
+            Number quarantineCount = (Number) entityManager.createNativeQuery("""
+                            select count(*) from identity.account_identifier_quarantines
+                            where identifier_kind = :kind and provider_code = :providerCode
+                              and identifier_fingerprint = :fingerprint
+                              and fingerprint_key_version = :keyVersion and released_at is null
+                            """).setParameter("kind", kind).setParameter("providerCode", providerCode)
+                    .setParameter("fingerprint", fingerprint.value())
+                    .setParameter("keyVersion", fingerprint.keyVersion()).getSingleResult();
+            if (quarantineCount.intValue() != 0) {
+                throw new AuthenticationRejectedException("Identifier is quarantined");
+            }
+            Number bindingCount;
+            if ("EMAIL".equals(kind)) {
+                bindingCount = (Number) entityManager.createNativeQuery("""
+                                select count(*) from identity.account_emails
+                                where email_lookup_hmac = :fingerprint
+                                  and email_lookup_key_version = :keyVersion
+                                """).setParameter("fingerprint", fingerprint.value())
+                        .setParameter("keyVersion", fingerprint.keyVersion()).getSingleResult();
+            } else {
+                bindingCount = (Number) entityManager.createNativeQuery("""
+                                select count(*) from identity.login_identities login
+                                join identity.auth_providers provider on provider.id = login.provider_id
+                                where provider.code = :providerCode
+                                  and login.provider_subject_hmac = :fingerprint
+                                  and login.subject_key_version = :keyVersion
+                                  and (cast(:excludedId as uuid) is null or login.id <> cast(:excludedId as uuid))
+                                """).setParameter("providerCode", providerCode)
+                        .setParameter("fingerprint", fingerprint.value())
+                        .setParameter("keyVersion", fingerprint.keyVersion())
+                        .setParameter("excludedId", excludedLoginId).getSingleResult();
+            }
+            if (bindingCount.intValue() != 0) {
+                throw new AuthenticationRejectedException("Identifier is already bound");
+            }
+        }
     }
 
     @Override

@@ -71,7 +71,11 @@ class MigrationPolicyTest {
                         "V20260802060300__backend_oidc_step_up_nonces.sql",
                         "V20260802060400__backend_account_closure_coordination.sql",
                         "V20260802194500__backend_final_leaderboard_unranked_entries.sql",
-                        "V20260802213500__backend_room_final_access_grants.sql"),
+                        "V20260802213500__backend_room_final_access_grants.sql",
+                        "V20260802220000__backend_retention_category_split.sql",
+                        "V20260802220100__trading_private_bot_runtime_cleanup.sql",
+                        "V20260802220200__backend_retention_execution.sql",
+                        "V20260802220300__backtest_competition_owner_anonymization.sql"),
                 plan.orderedFileNames());
     }
 

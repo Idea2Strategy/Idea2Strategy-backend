@@ -50,7 +50,7 @@ class AccountLifecycleMigrationIntegrationTest {
         assertEquals(List.of("PENDING_VERIFICATION", "ACTIVE", "DORMANT", "CLOSING", "CLOSED"), lifecycleStatuses());
         assertProjection(ACTIVE_ACCOUNT, "ACTIVE", 1, null);
         assertProjection(CLOSING_ACCOUNT, "CLOSING", 2, OffsetDateTime.parse("2026-09-01T00:00:00Z"));
-        assertEquals(0, scalarInt("select count(*) from identity.account_retention_policy_versions"));
+        assertEquals(1, scalarInt("select count(*) from identity.account_retention_policy_versions"));
         assertEquals(1, scalarInt("select count(*) from identity.account_retention_policy_proposals"));
 
         var newAccount = UUID.fromString("12000000-0000-4000-8000-000000000004");

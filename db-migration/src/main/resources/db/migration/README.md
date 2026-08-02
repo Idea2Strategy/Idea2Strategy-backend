@@ -68,6 +68,8 @@ After a successful deployment, older application versions can ignore the added c
 
 `V20260802060300__backend_oidc_step_up_nonces.sql` adds short-lived, server-issued OIDC step-up challenges. Only keyed-HMAC nonce digests are stored; raw nonces and ID tokens are never persisted. Successful DORMANT-to-ACTIVE commands consume a challenge in the same transaction as exact current-policy acceptance, lifecycle evidence, projection/head mutation, and the idempotent command receipt. Issuance deletes expired rows and enforces a provider-scoped pending-challenge ceiling under an advisory transaction lock. Each challenge also has a database-atomic five-attempt verification ceiling so repeated invalid tokens cannot drive unbounded upstream JWKS work.
 
+`V20260802220000` through `V20260802220300` install the approved A12 ten-category retention policy and its backend/trading/backtest-owned execution boundaries. The upgrade backfills only CLOSED events at or after the immutable policy effective time; older missing-policy evidence remains fail-closed. Account-wide legal-hold serialization and identifier fingerprint locks make disposition, hold, release, and reuse mutually ordered.
+
 Both migrations are forward-only. If deployment fails, preserve their bytes, correct the environmental or data cause, and rerun after Flyway repair/validation. Do not drop lifecycle evidence, retention records, legal holds, or quarantine tombstones as rollback; restore the pre-deployment database backup only for a whole-release rollback, otherwise ship a new forward-fix migration.
 
 각 도메인 소유자가 자신의 변경을 새 migration으로 작성하고, 중앙 통합 담당자가 순서 충돌과 `db/schema.dbml` 일치를 검토합니다.

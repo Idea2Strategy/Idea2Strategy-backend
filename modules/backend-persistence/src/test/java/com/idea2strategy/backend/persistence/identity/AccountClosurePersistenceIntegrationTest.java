@@ -14,6 +14,13 @@ import com.idea2strategy.backend.application.accountclosure.ClosureReadinessStat
 import com.idea2strategy.backend.application.identity.AccountLifecycleCommandType;
 import com.idea2strategy.backend.application.identity.AccountLifecycleMutation;
 import com.idea2strategy.backend.application.identity.AccountLifecycleStatus;
+import com.idea2strategy.backend.application.accountretention.RetentionExecutionResult;
+import com.idea2strategy.backend.application.identity.PendingRegistration;
+import com.idea2strategy.backend.application.identity.PendingOidcLink;
+import com.idea2strategy.backend.application.identity.ProtectedEmail;
+import com.idea2strategy.backend.application.identity.PasswordHash;
+import com.idea2strategy.backend.application.identity.DuplicateEmailException;
+import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import java.time.Clock;
 import java.time.Duration;
@@ -27,6 +34,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeoutException;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,6 +75,8 @@ class AccountClosurePersistenceIntegrationTest {
 
     @Autowired AccountLifecycleJpaCommandAdapter lifecycle;
     @Autowired AccountClosureJpaStore closure;
+    @Autowired AccountRetentionJpaAdapter retention;
+    @Autowired IdentityJpaCommandAdapter identityCommands;
     @Autowired JdbcTemplate jdbc;
     @Autowired DSLContext dsl;
     @Autowired BotStopCommandJooqAdapter botStops;
@@ -145,12 +156,12 @@ class AccountClosurePersistenceIntegrationTest {
                 String.class, accountId)).isEqualTo("CLOSED");
         assertThat(jdbc.queryForObject(
                 "select count(*) from identity.account_retention_obligations where account_id = ?",
-                Integer.class, accountId)).isEqualTo(8);
+                Integer.class, accountId)).isEqualTo(10);
         assertThat(jdbc.queryForObject("""
                 select count(*) from identity.account_retention_obligations
-                where account_id = ? and status = 'FAILED'
-                  and failure_code = 'RETENTION_POLICY_MISSING'
-                """, Integer.class, accountId)).isEqualTo(8);
+                where account_id = ? and status = 'PENDING'
+                  and retention_policy_version = 'A12-2026-08-02'
+                """, Integer.class, accountId)).isEqualTo(10);
         assertThat(jdbc.queryForObject("""
                 select count(*) from identity.account_closure_readiness
                 where correlation_id = ? and generation = ?
@@ -158,11 +169,14 @@ class AccountClosurePersistenceIntegrationTest {
         assertThat(jdbc.queryForObject("""
                 select count(*) from identity.account_lifecycle_events
                 where account_id = ? and command_type = 'ACCOUNT_CLOSED'
-                  and retention_policy_version is null
+                  and retention_policy_version = 'A12-2026-08-02'
                 """, Integer.class, accountId)).isOne();
         assertThat(jdbc.queryForObject(
                 "select count(*) from identity.account_identifier_quarantines where account_id = ?",
                 Integer.class, accountId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select provider_code from identity.account_identifier_quarantines where account_id = ?",
+                String.class, accountId)).isEqualTo("PASSWORD");
         assertThat(jdbc.queryForObject(
                 "select cast(status as text) from identity.account_emails where account_id = ?",
                 String.class, accountId)).isEqualTo("VERIFIED");
@@ -548,11 +562,526 @@ class AccountClosurePersistenceIntegrationTest {
                 .hasStackTraceContaining("account is not ACTIVE");
     }
 
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void retentionHonorsExactIdentifierBoundaryAndLegalHoldBeforeAtomicRelease() {
+        UUID accountId = UUID.randomUUID();
+        jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", accountId);
+        jdbc.update("insert into identity.account_security_states (account_id) values (?)", accountId);
+        jdbc.update("""
+                insert into identity.account_emails
+                    (account_id, email_ciphertext, email_lookup_hmac, email_lookup_key_version,
+                     encryption_key_version, status, verified_at)
+                values (?, 'ciphertext', ?, 1, 1, 'VERIFIED', ?)
+                """, accountId, "retention-hmac-" + accountId, REQUESTED.atOffset(ZoneOffset.UTC));
+        lifecycle.executeAtomically(accountId, AccountLifecycleCommandType.REQUEST_WITHDRAWAL,
+                "retention-request", "retention-request-hash", UUID.randomUUID(), ignored -> Optional.of(
+                        new AccountLifecycleMutation(AccountLifecycleStatus.CLOSING, REQUESTED,
+                                AccountLifecycleStatus.ACTIVE, REQUESTED, DEADLINE, "WITHDRAWAL_REQUESTED")));
+        var closureCandidate = new AccountClosureCandidate(accountId, DEADLINE, 2);
+        UUID closureCorrelation = UUID.randomUUID();
+        long generation = closure.beginAttempt(closureCandidate, closureCorrelation, DEADLINE);
+        for (var domain : ClosureDomain.values()) {
+            closure.recordReadiness(accountId, closureCorrelation, generation,
+                    new ClosureReadiness(domain,
+                            domain == ClosureDomain.TRADING
+                                    ? ClosureReadinessStatus.SETTLED : ClosureReadinessStatus.FROZEN,
+                            "READY", "{}", DEADLINE));
+        }
+        assertThat(closure.closeIfReady(closureCandidate, closureCorrelation, generation,
+                "retention-close:" + accountId, DEADLINE)).isTrue();
+
+        retention.executeAccount(accountId, UUID.randomUUID(),
+                DEADLINE.plus(Duration.ofDays(30)).minusMillis(1));
+        assertThat(jdbc.queryForObject("select count(*) from identity.account_emails where account_id = ?",
+                Integer.class, accountId)).isOne();
+
+        Instant eligible = DEADLINE.plus(Duration.ofDays(30));
+        jdbc.update("""
+                insert into identity.account_legal_holds
+                    (account_id, data_category, blocks_identifier_reuse, basis_reference, applied_by)
+                values (?, 'CONTACT_IDENTIFIER', true, 'test-hold', 'test')
+                """, accountId);
+        UUID legalHoldId = jdbc.queryForObject("""
+                select id from identity.account_legal_holds
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER' and status = 'ACTIVE'
+                """, UUID.class, accountId);
+        jdbc.update("""
+                update identity.account_legal_holds
+                set basis_reference = basis_reference
+                where id = ?
+                """, legalHoldId);
+        retention.executeAccount(accountId, UUID.randomUUID(), eligible);
+        assertThat(jdbc.queryForObject("""
+                select cast(status as text) from identity.account_retention_obligations
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER'
+                """, String.class, accountId)).isEqualTo("HELD");
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_retention_execution_attempts
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER'
+                  and outcome = 'HELD' and legal_hold_id = ? and correlation_id = ?
+                """, Integer.class, accountId, legalHoldId, legalHoldId)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from identity.account_emails where account_id = ?",
+                Integer.class, accountId)).isOne();
+
+        jdbc.update("""
+                update identity.account_legal_holds
+                set status = 'RELEASED', released_by = 'test', released_at = ?
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER' and status = 'ACTIVE'
+                """, eligible.atOffset(ZoneOffset.UTC), accountId);
+        assertThat(retention.findDueAccounts(100, eligible)).contains(accountId);
+        assertThat(retention.executeAccount(accountId, UUID.randomUUID(), eligible))
+                .contains(RetentionExecutionResult.COMPLETED);
+        assertThat(jdbc.queryForObject("select count(*) from identity.account_emails where account_id = ?",
+                Integer.class, accountId)).isZero();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_identifier_quarantines
+                where account_id = ? and released_at = ? and release_reason_code = 'QUARANTINE_EXPIRED'
+                """, Integer.class, accountId, eligible.atOffset(ZoneOffset.UTC))).isOne();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void competitionAnonymizationUnlinksAllOwnersAndPreservesOfficialEvidence() {
+        UUID accountId = activeAccount();
+        UUID botId = insertBot(accountId, "STOPPED");
+        UUID roomId = UUID.randomUUID();
+        UUID participationId = UUID.randomUUID();
+        UUID feeId = UUID.randomUUID();
+        UUID bufferId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        UUID periodId = UUID.randomUUID();
+        String suffix = UUID.randomUUID().toString();
+        jdbc.update("""
+                insert into competition.rooms
+                    (id, competition_type, organizer_type, creator_account_id, name, access_type, status)
+                values (?, 'LIVE_PAPER', 'USER', ?, 'retention-room', 'PUBLIC', 'RECRUITING')
+                """, roomId, accountId);
+        jdbc.update("""
+                insert into competition.participations
+                    (id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at)
+                values (?, ?, ?, ?, 'anonymous-kept', 'REGISTERED', ?)
+                """, participationId, roomId, botId, accountId, REQUESTED.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into trading.fee_policy_versions
+                    (id, policy_code, version, fee_rate_bps, calculation_rules_version,
+                     rules_hash, effective_from, published_at)
+                values (?, 'RETENTION', ?, 20, '1', ?, ?, ?)
+                """, feeId, suffix, "fee-" + suffix, REQUESTED.atOffset(ZoneOffset.UTC),
+                REQUESTED.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into trading.buying_power_buffer_policy_versions
+                    (id, policy_code, version, buffer_bps, rounding_rules_version,
+                     rules_hash, effective_from, published_at)
+                values (?, 'RETENTION', ?, 100, '1', ?, ?, ?)
+                """, bufferId, suffix, "buffer-" + suffix, REQUESTED.atOffset(ZoneOffset.UTC),
+                REQUESTED.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into backtest.runs
+                    (id, bot_id, owner_account_id, configuration_hash, status,
+                     evaluation_start, evaluation_end, initial_cash_amount, market_rules_version,
+                     accounting_rules_version, precision_rules_version, fee_policy_id,
+                     slippage_rate_bps, buying_power_buffer_policy_id, idempotency_key, queued_at)
+                values (?, ?, ?, ?, 'QUEUED', '2026-01-01', '2026-01-31', 100000,
+                        '1', '1', '1', ?, 5, ?, ?, ?)
+                """, runId, botId, accountId, "configuration-" + suffix, feeId, bufferId,
+                "retention-run-" + suffix, REQUESTED.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into competition.backtest_evaluation_plans
+                    (room_id, plan_version, period_count, plan_hash, commitment_hash,
+                     commitment_nonce_ciphertext, nonce_key_version, locked_at)
+                values (?, '1', 2, ?, ?, 'ciphertext', 1, ?)
+                """, roomId, "plan-" + suffix, "commitment-" + suffix,
+                REQUESTED.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into competition.backtest_evaluation_periods
+                    (id, evaluation_plan_room_id, period_sequence, evaluation_start,
+                     evaluation_end, importance_weight, input_set_hash)
+                values (?, ?, 1, '2026-01-01', '2026-01-31', 0.5, ?)
+                """, periodId, roomId, "input-" + suffix);
+        jdbc.update("""
+                insert into competition.backtest_period_runs
+                    (participation_id, evaluation_period_id, run_id)
+                values (?, ?, ?)
+                """, participationId, periodId, runId);
+
+        Instant closedAt = closeReadyAccount(accountId, "competition-retention");
+        Instant dueAt = closedAt.plus(Duration.ofDays(365));
+        assertThat(retention.findDueAccounts(100, dueAt)).contains(accountId);
+        assertThat(retention.executeAccount(accountId, UUID.randomUUID(), dueAt))
+                .contains(RetentionExecutionResult.COMPLETED);
+        assertThat(jdbc.queryForObject("select creator_account_id from competition.rooms where id = ?",
+                UUID.class, roomId)).isNull();
+        assertThat(jdbc.queryForObject("select owner_account_id from competition.participations where id = ?",
+                UUID.class, participationId)).isNull();
+        assertThat(jdbc.queryForObject("select owner_account_id from bot.bots where id = ?",
+                UUID.class, botId)).isNull();
+        assertThat(jdbc.queryForObject("select owner_account_id from backtest.runs where id = ?",
+                UUID.class, runId)).isNull();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from competition.backtest_period_runs
+                where participation_id = ? and evaluation_period_id = ? and run_id = ?
+                """, Integer.class, participationId, periodId, runId)).isOne();
+        assertThat(jdbc.queryForObject("select anonymous_alias from competition.participations where id = ?",
+                String.class, participationId)).isEqualTo("anonymous-kept");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void privateStrategyAndEvidenceFreeBotArePhysicallyDeletedAtThirtyDays() {
+        UUID accountId = activeAccount();
+        UUID botId = insertBot(accountId, "STOPPED");
+        UUID strategyId = UUID.randomUUID();
+        jdbc.update("""
+                insert into strategy.strategies
+                    (id, owner_account_id, mode, name)
+                values (?, ?, 'BASIC', 'private-strategy')
+                """, strategyId, accountId);
+
+        Instant closedAt = closeReadyAccount(accountId, "private-retention");
+        Instant dueAt = closedAt.plus(Duration.ofDays(30));
+        assertThat(retention.findDueAccounts(100, dueAt)).contains(accountId);
+        assertThat(retention.executeAccount(accountId, UUID.randomUUID(), dueAt))
+                .contains(RetentionExecutionResult.COMPLETED);
+        assertThat(jdbc.queryForObject("select count(*) from strategy.strategies where id = ?",
+                Integer.class, strategyId)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from bot.bots where id = ?",
+                Integer.class, botId)).isZero();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void partitionPositionProjectionFailsClosedBeforePrivateBotDeletion() {
+        assertPartitionProjectionFailsClosed(true);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void partitionBudgetProjectionFailsClosedBeforePrivateBotDeletion() {
+        assertPartitionProjectionFailsClosed(false);
+    }
+
+    private void assertPartitionProjectionFailsClosed(boolean positionProjection) {
+        UUID accountId = activeAccount();
+        UUID botId = insertBot(accountId, "STOPPED");
+        UUID partitionId = UUID.randomUUID();
+        UUID strategyId = UUID.randomUUID();
+        jdbc.update("""
+                insert into bot.bot_partitions
+                    (id, bot_id, name, budget_cap_bps, position_x, position_y, configuration_hash)
+                values (?, ?, 'retained-projection', 10000, 0, 0, ?)
+                """, partitionId, botId, "partition-" + partitionId);
+        jdbc.update("""
+                insert into strategy.strategies (id, owner_account_id, mode, name)
+                values (?, ?, 'BASIC', 'rollback-proof')
+                """, strategyId, accountId);
+        if (positionProjection) {
+            UUID instrumentId = UUID.randomUUID();
+            jdbc.update("""
+                    insert into market_data.instruments
+                        (id, asset_type, primary_exchange_mic, currency_code)
+                    values (?, 'STOCK', 'XNAS', 'USD')
+                    """, instrumentId);
+            jdbc.update("""
+                    insert into trading.partition_position_projections
+                        (partition_id, bot_id, instrument_id, net_quantity, average_cost,
+                         realized_pnl, valuation_status, last_bot_event_sequence, updated_at)
+                    values (?, ?, ?, 1, 10, 0, 'CURRENT', 1, ?)
+                    """, partitionId, botId, instrumentId, REQUESTED.atOffset(ZoneOffset.UTC));
+            assertThat(jdbc.queryForObject(
+                    "select count(*) from trading.partition_budget_projections where bot_id = ?",
+                    Integer.class, botId)).isZero();
+        } else {
+            jdbc.update("""
+                    insert into trading.partition_budget_projections
+                        (partition_id, bot_id, currency_code, budget_cap_amount,
+                         active_reservation_amount, invested_amount, segregated_short_proceeds_amount,
+                         short_collateral_amount, valuation_at, valuation_status,
+                         last_event_sequence, projection_hash, updated_at)
+                    values (?, ?, 'USD', 1000, 0, 0, 0, 0, ?, 'CURRENT', 1, ?, ?)
+                    """, partitionId, botId, REQUESTED.atOffset(ZoneOffset.UTC),
+                    "projection-" + partitionId, REQUESTED.atOffset(ZoneOffset.UTC));
+            assertThat(jdbc.queryForObject(
+                    "select count(*) from trading.partition_position_projections where bot_id = ?",
+                    Integer.class, botId)).isZero();
+        }
+
+        Instant dueAt = closeReadyAccount(accountId,
+                positionProjection ? "partition-position-retention" : "partition-budget-retention")
+                .plus(Duration.ofDays(30));
+
+        assertThatThrownBy(() -> retention.executeAccount(accountId, UUID.randomUUID(), dueAt))
+                .isInstanceOf(RuntimeException.class)
+                .hasStackTraceContaining("PRIVATE_BOT_EVIDENCE_CONFLICT");
+        assertThat(jdbc.queryForObject("select count(*) from bot.bots where id = ?",
+                Integer.class, botId)).isOne();
+        assertThat(jdbc.queryForObject("select count(*) from strategy.strategies where id = ?",
+                Integer.class, strategyId)).isOne();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_retention_obligations
+                where account_id = ? and status = 'COMPLETED'
+                """, Integer.class, accountId)).isZero();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void activeHeldAccountDoesNotStarveLaterActionableAccountAndReleaseRequeuesIt() {
+        UUID heldAccount = activeAccount();
+        UUID actionableAccount = activeAccount();
+        Instant heldClosedAt = closeReadyAccount(heldAccount, "held-starvation");
+        closeReadyAccount(actionableAccount, "actionable-starvation");
+        jdbc.update("""
+                update identity.account_retention_obligations
+                set status = 'COMPLETED', completed_at = ?
+                where account_id = ? and data_category <> 'CONTACT_IDENTIFIER'
+                """, heldClosedAt.atOffset(ZoneOffset.UTC), heldAccount);
+        jdbc.update("""
+                update identity.account_retention_obligations
+                set status = 'COMPLETED', completed_at = ?
+                where account_id = ? and data_category <> 'PROFILE'
+                """, heldClosedAt.atOffset(ZoneOffset.UTC), actionableAccount);
+        jdbc.update("""
+                insert into identity.account_legal_holds
+                    (account_id, data_category, blocks_identifier_reuse, basis_reference, applied_by)
+                values (?, 'CONTACT_IDENTIFIER', true, 'starvation-test', 'test')
+                """, heldAccount);
+        Instant dueAt = heldClosedAt.plus(Duration.ofDays(30));
+
+        assertThat(retention.findDueAccounts(10_000, dueAt))
+                .contains(actionableAccount)
+                .doesNotContain(heldAccount);
+        retention.executeAccount(actionableAccount, UUID.randomUUID(), dueAt);
+        assertThat(jdbc.queryForObject("""
+                select cast(status as text) from identity.account_retention_obligations
+                where account_id = ? and data_category = 'PROFILE'
+                """, String.class, actionableAccount)).isEqualTo("COMPLETED");
+
+        jdbc.update("""
+                update identity.account_legal_holds
+                set status = 'RELEASED', released_by = 'test', released_at = ?
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER' and status = 'ACTIVE'
+                """, dueAt.atOffset(ZoneOffset.UTC), heldAccount);
+        assertThat(jdbc.queryForObject("""
+                select cast(status as text) from identity.account_retention_obligations
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER'
+                """, String.class, heldAccount)).isEqualTo("PENDING");
+        assertThat(retention.findDueAccounts(10_000, dueAt)).contains(heldAccount);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void oneCategoryFailureRollsBackEveryDueObligationForTheAccount() {
+        UUID accountId = activeAccount();
+        jdbc.update("""
+                insert into identity.account_emails
+                    (account_id, email_ciphertext, email_lookup_hmac, email_lookup_key_version,
+                     encryption_key_version, status, verified_at)
+                values (?, 'ciphertext', ?, 1, 1, 'VERIFIED', ?)
+                """, accountId, "atomic-original-" + accountId, REQUESTED.atOffset(ZoneOffset.UTC));
+        Instant closedAt = closeReadyAccount(accountId, "atomic-retention");
+        jdbc.update("""
+                update identity.account_emails set email_lookup_hmac = ? where account_id = ?
+                """, "atomic-mismatch-" + accountId, accountId);
+        Instant dueAt = closedAt.plus(Duration.ofDays(30));
+
+        assertThatThrownBy(() -> retention.executeAccount(accountId, UUID.randomUUID(), dueAt))
+                .isInstanceOf(RuntimeException.class)
+                .hasStackTraceContaining("Identifier binding is missing or ambiguous");
+        assertThat(jdbc.queryForObject(
+                "select cast(status as text) from identity.account_emails where account_id = ?",
+                String.class, accountId)).isEqualTo("VERIFIED");
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_retention_obligations
+                where account_id = ? and status = 'COMPLETED'
+                """, Integer.class, accountId)).isZero();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_identifier_quarantines
+                where account_id = ? and released_at is null
+                """, Integer.class, accountId)).isOne();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void holdInsertAndWorkerAreDatabaseSerializedWithoutMutationRace() throws Exception {
+        UUID accountId = activeAccount();
+        jdbc.update("""
+                insert into identity.account_emails
+                    (account_id, email_ciphertext, email_lookup_hmac, email_lookup_key_version,
+                     encryption_key_version, status, verified_at)
+                values (?, 'ciphertext', ?, 1, 1, 'VERIFIED', ?)
+                """, accountId, "hold-race-" + accountId, REQUESTED.atOffset(ZoneOffset.UTC));
+        Instant dueAt = closeReadyAccount(accountId, "hold-race").plus(Duration.ofDays(30));
+        var holdInserted = new CountDownLatch(1);
+        var allowCommit = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var hold = executor.submit(() -> {
+                try (var connection = java.sql.DriverManager.getConnection(
+                        POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+                    connection.setAutoCommit(false);
+                    try (var statement = connection.prepareStatement("""
+                            insert into identity.account_legal_holds
+                                (account_id, data_category, blocks_identifier_reuse,
+                                 basis_reference, applied_by)
+                            values (?, 'CONTACT_IDENTIFIER', true, 'race-test', 'test')
+                            """)) {
+                        statement.setObject(1, accountId);
+                        statement.executeUpdate();
+                    }
+                    holdInserted.countDown();
+                    allowCommit.await(5, TimeUnit.SECONDS);
+                    connection.commit();
+                }
+                return null;
+            });
+            assertThat(holdInserted.await(5, TimeUnit.SECONDS)).isTrue();
+            var worker = executor.submit(() ->
+                    retention.executeAccount(accountId, UUID.randomUUID(), dueAt));
+            assertThatThrownBy(() -> worker.get(300, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(TimeoutException.class);
+            allowCommit.countDown();
+            hold.get(5, TimeUnit.SECONDS);
+            worker.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(jdbc.queryForObject("""
+                select cast(status as text) from identity.account_retention_obligations
+                where account_id = ? and data_category = 'CONTACT_IDENTIFIER'
+                """, String.class, accountId)).isEqualTo("HELD");
+        assertThat(jdbc.queryForObject("select count(*) from identity.account_emails where account_id = ?",
+                Integer.class, accountId)).isOne();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentEmailReuseAndReleaseHaveExactlyOneSerializedOutcome() throws Exception {
+        UUID closedAccount = activeAccount();
+        String fingerprint = "email-release-race-" + closedAccount;
+        jdbc.update("""
+                insert into identity.account_emails
+                    (account_id, email_ciphertext, email_lookup_hmac, email_lookup_key_version,
+                     encryption_key_version, status, verified_at)
+                values (?, 'ciphertext', ?, 1, 1, 'VERIFIED', ?)
+                """, closedAccount, fingerprint, REQUESTED.atOffset(ZoneOffset.UTC));
+        Instant dueAt = closeReadyAccount(closedAccount, "email-release-race").plus(Duration.ofDays(30));
+        UUID newAccount = UUID.randomUUID();
+        var registration = new PendingRegistration(
+                newAccount, UUID.randomUUID(), UUID.randomUUID(),
+                new ProtectedEmail("race@example.com", "new-ciphertext", fingerprint, (short) 1, (short) 1),
+                new PasswordHash("hash", "TEST", "{}"), "verification-digest-" + newAccount,
+                dueAt, dueAt.plus(Duration.ofDays(1)), UUID.randomUUID(), null);
+        var start = new CyclicBarrier(2);
+        boolean signupSucceeded;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var release = executor.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                return retention.executeAccount(closedAccount, UUID.randomUUID(), dueAt);
+            });
+            var signup = executor.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                try {
+                    identityCommands.createPending(registration);
+                    return true;
+                } catch (DuplicateEmailException rejected) {
+                    return false;
+                }
+            });
+            release.get(5, TimeUnit.SECONDS);
+            signupSucceeded = signup.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_identifier_quarantines
+                where account_id = ? and released_at is not null
+                """, Integer.class, closedAccount)).isOne();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from identity.account_emails where email_lookup_hmac = ?",
+                Integer.class, fingerprint)).isEqualTo(signupSucceeded ? 1 : 0);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void concurrentOidcReuseAndReleaseHaveExactlyOneSerializedOutcome() throws Exception {
+        jdbc.update("""
+                insert into identity.auth_providers
+                    (id, code, display_name, provider_type, issuer, is_active)
+                values (2, 'EXAMPLE', 'Example', 'OIDC', 'https://issuer.example', true)
+                on conflict (id) do nothing
+                """);
+        UUID closedAccount = activeAccount();
+        String fingerprint = "oidc-release-race-" + closedAccount;
+        jdbc.update("""
+                insert into identity.login_identities
+                    (id, account_id, provider_id, provider_subject_hmac, subject_key_version,
+                     status, created_at, activated_at)
+                values (?, ?, 2, ?, 1, 'ACTIVE', ?, ?)
+                """, UUID.randomUUID(), closedAccount, fingerprint,
+                REQUESTED.atOffset(ZoneOffset.UTC), REQUESTED.atOffset(ZoneOffset.UTC));
+        Instant dueAt = closeReadyAccount(closedAccount, "oidc-release-race").plus(Duration.ofDays(30));
+
+        UUID targetAccount = activeAccount();
+        UUID currentLogin = UUID.randomUUID();
+        jdbc.update("""
+                insert into identity.login_identities
+                    (id, account_id, provider_id, status, created_at, activated_at)
+                select ?, ?, id, 'ACTIVE', ?, ? from identity.auth_providers where code = 'PASSWORD'
+                """, currentLogin, targetAccount, REQUESTED.atOffset(ZoneOffset.UTC),
+                REQUESTED.atOffset(ZoneOffset.UTC));
+        var pending = new PendingOidcLink(UUID.randomUUID(), targetAccount, currentLogin,
+                (short) 2, fingerprint, (short) 1, UUID.randomUUID(), dueAt);
+        var start = new CyclicBarrier(2);
+        boolean linkSucceeded;
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var release = executor.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                return retention.executeAccount(closedAccount, UUID.randomUUID(), dueAt);
+            });
+            var link = executor.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                try {
+                    identityCommands.createPendingLink(pending);
+                    return true;
+                } catch (AuthenticationRejectedException rejected) {
+                    return false;
+                }
+            });
+            release.get(5, TimeUnit.SECONDS);
+            linkSucceeded = link.get(5, TimeUnit.SECONDS);
+        }
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.account_identifier_quarantines
+                where account_id = ? and identifier_kind = 'OIDC_SUBJECT' and released_at is not null
+                """, Integer.class, closedAccount)).isOne();
+        assertThat(jdbc.queryForObject("""
+                select count(*) from identity.login_identities
+                where provider_subject_hmac = ? and subject_key_version = 1
+                """, Integer.class, fingerprint)).isEqualTo(linkSucceeded ? 1 : 0);
+    }
+
+    private Instant closeReadyAccount(UUID accountId, String keyPrefix) {
+        lifecycle.executeAtomically(accountId, AccountLifecycleCommandType.REQUEST_WITHDRAWAL,
+                keyPrefix + "-request", keyPrefix + "-request-hash", UUID.randomUUID(), ignored -> Optional.of(
+                        new AccountLifecycleMutation(AccountLifecycleStatus.CLOSING, REQUESTED,
+                                AccountLifecycleStatus.ACTIVE, REQUESTED, DEADLINE, "WITHDRAWAL_REQUESTED")));
+        var candidate = new AccountClosureCandidate(accountId, DEADLINE, 2);
+        UUID correlationId = UUID.randomUUID();
+        long generation = closure.beginAttempt(candidate, correlationId, DEADLINE);
+        for (var domain : ClosureDomain.values()) {
+            closure.recordReadiness(accountId, correlationId, generation,
+                    new ClosureReadiness(domain,
+                            domain == ClosureDomain.TRADING
+                                    ? ClosureReadinessStatus.SETTLED : ClosureReadinessStatus.FROZEN,
+                            "READY", "{}", DEADLINE));
+        }
+        assertThat(closure.closeIfReady(candidate, correlationId, generation,
+                keyPrefix + "-close", DEADLINE)).isTrue();
+        return DEADLINE;
+    }
+
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import({
             AccountLifecycleJpaCommandAdapter.class,
             AccountClosureJpaStore.class,
+            AccountRetentionJpaAdapter.class,
+            IdentityJpaCommandAdapter.class,
             BotStopCommandJooqAdapter.class
     })
     static class TestApplication {}
