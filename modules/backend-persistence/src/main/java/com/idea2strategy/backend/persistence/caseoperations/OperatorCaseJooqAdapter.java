@@ -3,6 +3,7 @@ package com.idea2strategy.backend.persistence.caseoperations;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.caseoperations.CaseNotificationOutboxPort;
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionAuthorizationPort;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseAssigneePort;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseAuthorizationPort;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseCommand;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.HashSet;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -37,6 +39,7 @@ public class OperatorCaseJooqAdapter implements
         OperatorCaseQueuePort,
         OperatorCaseAssigneePort,
         OperatorCaseAuthorizationPort,
+        AccountSanctionAuthorizationPort,
         CaseNotificationOutboxPort {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
@@ -166,6 +169,57 @@ public class OperatorCaseJooqAdapter implements
         return granted != null && granted > 0
                 ? OperatorCaseAuthorizationPort.Decision.granted(catalog)
                 : OperatorCaseAuthorizationPort.Decision.rejected("CASE_PERMISSION_DENIED", catalog);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AccountSanctionAuthorizationPort.Decision authorize(
+            OperatorRequestContext context,
+            UUID requiredPermissionId,
+            Instant evaluatedAt) {
+        String catalog = jdbc.query("""
+                select catalog_version from operations.rbac_catalog_versions
+                where status = 'ACTIVE' order by activated_at desc limit 1
+                """, result -> result.next() ? result.getString(1) : null);
+        boolean activeOperator = Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists(select 1 from operations.operator_accounts
+                where id = ? and status = 'ACTIVE' and disabled_at is null)
+                """, Boolean.class, context.operatorId()));
+        if (catalog == null) {
+            return new AccountSanctionAuthorizationPort.Decision(
+                    false, "RBAC_CATALOG_NOT_ACTIVE", null, Set.of(), Set.of(), activeOperator,
+                    context.mfaCompleted());
+        }
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                select assignment.role_id, mapping.permission_id
+                from operations.operator_role_assignments assignment
+                join operations.rbac_catalog_roles role
+                  on role.catalog_version = assignment.catalog_version
+                 and role.role_id = assignment.role_id and role.role_status = 'ACTIVE'
+                join operations.rbac_catalog_role_permissions mapping
+                  on mapping.catalog_version = role.catalog_version and mapping.role_id = role.role_id
+                join operations.rbac_catalog_permissions permission
+                  on permission.catalog_version = mapping.catalog_version
+                 and permission.permission_id = mapping.permission_id
+                 and permission.permission_status = 'ACTIVE'
+                where assignment.operator_account_id = ? and assignment.catalog_version = ?
+                  and assignment.revoked_at is null
+                  and (assignment.expires_at is null or assignment.expires_at > ?)
+                """, context.operatorId(), catalog, Timestamp.from(evaluatedAt));
+        Set<UUID> roleIds = new HashSet<>();
+        Set<UUID> permissionIds = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            roleIds.add((UUID) row.get("role_id"));
+            permissionIds.add((UUID) row.get("permission_id"));
+        }
+        boolean mfa = context.mfaCompleted();
+        boolean granted = activeOperator && mfa && permissionIds.contains(requiredPermissionId);
+        String code = granted ? "SANCTION_PERMISSION_GRANTED"
+                : !activeOperator ? "OPERATOR_NOT_ACTIVE"
+                : !mfa ? "OPERATOR_MFA_REQUIRED"
+                : "SANCTION_PERMISSION_DENIED";
+        return new AccountSanctionAuthorizationPort.Decision(
+                granted, code, catalog, roleIds, permissionIds, activeOperator, mfa);
     }
 
     @Override

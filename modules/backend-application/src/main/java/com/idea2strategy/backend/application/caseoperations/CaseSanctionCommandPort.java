@@ -1,5 +1,8 @@
 package com.idea2strategy.backend.application.caseoperations;
 
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionState;
+import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -9,12 +12,17 @@ public interface CaseSanctionCommandPort {
     record Request(
             Operation operation,
             UUID sanctionId,
+            UUID accountId,
             UUID caseId,
             long expectedCaseVersion,
-            UUID actorOperatorId,
+            long expectedSanctionVersion,
+            OperatorRequestContext requestContext,
+            AccountSanctionState.Type sanctionType,
+            Instant expiresAt,
             String reasonCode,
             UUID correlationId,
-            String idempotencyKey) {}
+            String idempotencyKey,
+            String requestHash) {}
 
     enum Operation {
         APPLY,
