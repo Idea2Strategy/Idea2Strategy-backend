@@ -430,10 +430,11 @@ class AccountReactivationPersistenceIntegrationTest {
         jdbc.update("""
                 insert into identity.account_sanctions
                     (id, account_id, sanction_type, status, reason_code, applied_by_operator_id,
-                     applied_at, effective_at, status_changed_at)
-                values (?, ?, 'SUSPENSION', cast('ACTIVE' as identity.sanction_status), 'RISK_REVIEW', ?, ?, ?, ?)
+                     applied_at, effective_at, expires_at, status_changed_at)
+                values (?, ?, 'SUSPENSION', cast('ACTIVE' as identity.sanction_status), 'RISK_REVIEW', ?, ?, ?, ?, ?)
                 """, UUID.randomUUID(), accountId, OPERATOR_ID,
-                utc(NOW.minusSeconds(120)), utc(NOW.minusSeconds(60)), utc(NOW.minusSeconds(60)));
+                utc(NOW.minusSeconds(120)), utc(NOW.minusSeconds(60)), utc(NOW.plusSeconds(3600)),
+                utc(NOW.minusSeconds(60)));
     }
 
     private void assertDormantAndNonceUnused(UUID accountId, UUID challengeId) {
