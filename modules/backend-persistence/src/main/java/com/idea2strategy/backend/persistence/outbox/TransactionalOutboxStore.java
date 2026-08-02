@@ -49,6 +49,13 @@ public class TransactionalOutboxStore {
     @Transactional
     public List<ClaimedMessage> claimDue(
             String workerId, String runtimePolicyVersion, Duration leaseDuration, int limit) {
+        return claimDueMatching(workerId, runtimePolicyVersion, leaseDuration, limit, null, null);
+    }
+
+    @Transactional
+    public List<ClaimedMessage> claimDueMatching(
+            String workerId, String runtimePolicyVersion, Duration leaseDuration, int limit,
+            String ownerDomain, String eventType) {
         requireText(workerId, "workerId");
         requireText(runtimePolicyVersion, "runtimePolicyVersion");
         if (leaseDuration == null || leaseDuration.isZero() || leaseDuration.isNegative()) {
@@ -61,13 +68,15 @@ public class TransactionalOutboxStore {
         List<UUID> ids = jdbc.queryForList("""
                 select id
                 from operations.outbox_messages
-                where (delivery_status = 'PENDING'
+                where ((delivery_status = 'PENDING'
                          and (next_attempt_at is null or next_attempt_at <= clock_timestamp()))
-                   or (delivery_status = 'CLAIMED' and claim_expires_at <= clock_timestamp())
+                   or (delivery_status = 'CLAIMED' and claim_expires_at <= clock_timestamp()))
+                  and (cast(? as varchar) is null or owner_domain = ?)
+                  and (cast(? as varchar) is null or event_type = ?)
                 order by coalesce(next_attempt_at, created_at), created_at, id
                 for update skip locked
                 limit ?
-                """, UUID.class, limit);
+                """, UUID.class, ownerDomain, ownerDomain, eventType, eventType, limit);
 
         List<ClaimedMessage> claimed = new ArrayList<>(ids.size());
         for (UUID id : ids) {
