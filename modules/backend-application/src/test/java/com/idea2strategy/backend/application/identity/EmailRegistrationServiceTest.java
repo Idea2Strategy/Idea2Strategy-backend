@@ -3,6 +3,8 @@ package com.idea2strategy.backend.application.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
+import com.idea2strategy.backend.domain.identity.ThemePreference;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -29,7 +31,26 @@ class EmailRegistrationServiceTest {
             assertThat(registration.email().lookupHmac()).isEqualTo("lookup:person@example.com");
             assertThat(registration.password().encodedHash()).isEqualTo("hash:a sufficiently long passphrase");
             assertThat(registration.verificationTokenDigest()).isEqualTo("digest:raw-verification-token");
+            assertThat(registration.preferences().languageCode()).isEqualTo("ko");
+            assertThat(registration.preferences().timezoneName()).isEqualTo("America/New_York");
+            assertThat(registration.preferences().themePreference()).isEqualTo(ThemePreference.SYSTEM);
+            assertThat(registration.preferences().updatedAt()).isEqualTo(NOW);
             assertThat(registration.toString()).doesNotContain("a sufficiently long passphrase");
+        });
+    }
+
+    @Test
+    void signupCarriesConfiguredValidatedPreferenceDefaultsIntoTheAtomicRegistration() {
+        var commands = new RecordingRegistrationPort();
+        var service = service(false, commands, new AccountPreferenceDefaults("en", "America/Chicago", ThemePreference.SYSTEM));
+
+        service.signup(new SignupCommand(
+                "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null));
+
+        assertThat(commands.registrations).singleElement().satisfies(registration -> {
+            assertThat(registration.preferences().languageCode()).isEqualTo("en");
+            assertThat(registration.preferences().timezoneName()).isEqualTo("America/Chicago");
+            assertThat(registration.preferences().themePreference()).isEqualTo(ThemePreference.SYSTEM);
         });
     }
 
@@ -78,6 +99,16 @@ class EmailRegistrationServiceTest {
     }
 
     private static EmailRegistrationService service(boolean duplicate, RecordingRegistrationPort commands) {
+        return service(
+                duplicate,
+                commands,
+                new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
+    }
+
+    private static EmailRegistrationService service(
+            boolean duplicate,
+            RecordingRegistrationPort commands,
+            AccountPreferenceDefaults defaults) {
         return new EmailRegistrationService(
                 lookup -> duplicate,
                 commands,
@@ -91,6 +122,7 @@ class EmailRegistrationServiceTest {
                 raw -> new PasswordHash("hash:" + raw, "TEST", "{}"),
                 () -> new VerificationToken("raw-verification-token", "digest:raw-verification-token"),
                 raw -> "digest:" + raw,
+                defaults,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

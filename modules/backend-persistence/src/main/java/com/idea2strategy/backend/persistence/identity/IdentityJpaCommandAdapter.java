@@ -54,6 +54,21 @@ public class IdentityJpaCommandAdapter
                 .setParameter("now", now)
                 .executeUpdate();
         entityManager.createNativeQuery("""
+                        insert into identity.account_preferences
+                            (account_id, language_code, timezone_name, theme_preference,
+                             created_at, updated_at)
+                        values (:accountId, :languageCode, :timezoneName,
+                                cast(:themePreference as identity.theme_preference),
+                                :createdAt, :updatedAt)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("languageCode", registration.preferences().languageCode())
+                .setParameter("timezoneName", registration.preferences().timezoneName())
+                .setParameter("themePreference", registration.preferences().themePreference().name())
+                .setParameter("createdAt", now)
+                .setParameter("updatedAt", utc(registration.preferences().updatedAt()))
+                .executeUpdate();
+        entityManager.createNativeQuery("""
                         insert into identity.account_security_states (account_id, auth_epoch, updated_at)
                         values (:accountId, 1, :now)
                         """)

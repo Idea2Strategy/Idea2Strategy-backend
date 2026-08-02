@@ -2,11 +2,17 @@ package com.idea2strategy.backend.api.identity;
 
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
 import com.idea2strategy.backend.application.identity.EmailRegistrationService;
+import com.idea2strategy.backend.application.identity.AccountPreferencesService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
 import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
+import com.idea2strategy.backend.application.identity.PolicyConsentService;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
+import com.idea2strategy.backend.domain.identity.ThemePreference;
 import java.time.Duration;
 import com.idea2strategy.backend.persistence.identity.IdentityAccountJpaEntity;
+import com.idea2strategy.backend.persistence.identity.AccountPreferencesConsentJpaAdapter;
+import com.idea2strategy.backend.persistence.identity.AccountPreferencesConsentJooqAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityJpaCommandAdapter;
 import java.time.Clock;
@@ -25,7 +31,12 @@ import org.springframework.context.ApplicationEventPublisher;
         prefix = "identity.crypto",
         name = {"email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key"})
 @EntityScan(basePackageClasses = IdentityAccountJpaEntity.class)
-@Import({IdentityJooqQueryAdapter.class, IdentityJpaCommandAdapter.class})
+@Import({
+        IdentityJooqQueryAdapter.class,
+        IdentityJpaCommandAdapter.class,
+        AccountPreferencesConsentJooqAdapter.class,
+        AccountPreferencesConsentJpaAdapter.class
+})
 public class IdentityAuthConfiguration {
     @Bean
     Clock identityClock() {
@@ -105,7 +116,9 @@ public class IdentityAuthConfiguration {
             AesGcmEmailProtector emailProtector,
             Pbkdf2PasswordCodec passwordCodec,
             HmacVerificationTokens verificationTokens,
-            Clock identityClock) {
+            Clock identityClock,
+            @Value("${identity.preferences.default-language:ko}") String defaultLanguage,
+            @Value("${identity.preferences.default-timezone:America/New_York}") String defaultTimezone) {
         return new EmailRegistrationService(
                 queries,
                 commands,
@@ -118,6 +131,7 @@ public class IdentityAuthConfiguration {
                 passwordCodec,
                 verificationTokens,
                 verificationTokens,
+                new AccountPreferenceDefaults(defaultLanguage, defaultTimezone, ThemePreference.SYSTEM),
                 identityClock);
     }
 
@@ -150,6 +164,22 @@ public class IdentityAuthConfiguration {
             Clock identityClock,
             @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime) {
         return new SessionManagementService(queries, commands, identityClock, sessionTokens, sessionLifetime);
+    }
+
+    @Bean
+    AccountPreferencesService accountPreferencesService(
+            AccountPreferencesConsentJooqAdapter queries,
+            AccountPreferencesConsentJpaAdapter commands,
+            Clock identityClock) {
+        return new AccountPreferencesService(queries, commands, identityClock);
+    }
+
+    @Bean
+    PolicyConsentService policyConsentService(
+            AccountPreferencesConsentJooqAdapter queries,
+            AccountPreferencesConsentJpaAdapter commands,
+            Clock identityClock) {
+        return new PolicyConsentService(queries, commands, identityClock);
     }
 
     private static byte[] decode(String value) {

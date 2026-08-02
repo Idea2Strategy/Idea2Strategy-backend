@@ -52,6 +52,12 @@ gradlew :db-migration:run --args="<central-migration-dir> <empty-output-dir> [co
 
 Flyway must execute only the resulting output directory. Application startup must not collect repository directories or run owner-local fixture migrations.
 
+## A11 preference migration recovery
+
+`V20260802050054__backend_account_preferences_theme.sql` is additive and PostgreSQL applies its DDL and backfill in one Flyway transaction. Take the normal database backup before deployment. If the transaction fails, correct the cause and rerun the unchanged migration after Flyway validation; do not edit the applied file.
+
+After a successful deployment, older application versions can ignore the added column. Do not drop `theme_preference` or its enum as a rollback because that would destroy saved account preferences. Recover with a new timestamped forward-fix migration, or restore the pre-deployment backup only when the entire deployment must be reverted.
+
 각 도메인 소유자가 자신의 변경을 새 migration으로 작성하고, 중앙 통합 담당자가 순서 충돌과 `db/schema.dbml` 일치를 검토합니다.
 
 적용된 migration 파일은 수정하지 않습니다. 실제 최초 migration은 DBML과 migration 계획을 함께 검토한 PR에서 추가합니다.

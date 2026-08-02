@@ -123,6 +123,16 @@ class IdentityPersistenceIntegrationTest {
                         String.class,
                         signup.accountId()))
                 .isEqualTo("ACTIVE");
+        assertThat(jdbcTemplate.queryForMap(
+                        """
+                        select language_code, timezone_name, theme_preference::text as theme_preference
+                        from identity.account_preferences
+                        where account_id = ?
+                        """,
+                        signup.accountId()))
+                .containsEntry("language_code", "ko")
+                .containsEntry("timezone_name", "America/New_York")
+                .containsEntry("theme_preference", "SYSTEM");
         assertThat(jdbcTemplate.queryForObject(
                         """
                         select credential.password_hash
