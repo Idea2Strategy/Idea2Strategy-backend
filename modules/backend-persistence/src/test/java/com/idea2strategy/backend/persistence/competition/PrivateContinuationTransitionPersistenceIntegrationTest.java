@@ -8,6 +8,8 @@ import com.idea2strategy.backend.application.competition.FinalRoomResult;
 import com.idea2strategy.backend.application.competition.FinalRoomResultWriteDecision;
 import com.idea2strategy.backend.application.competition.PrivateContinuationTransitionConflictException;
 import com.idea2strategy.backend.application.competition.PrivateContinuationTransitionDecision;
+import com.idea2strategy.backend.application.competition.PostEvaluationStopTransitionDecision;
+import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -50,6 +52,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
 
     @Autowired PrivateContinuationTransitionJooqAdapter adapter;
     @Autowired FinalRoomResultJooqAdapter finalResultAdapter;
+    @Autowired PostEvaluationStopTransitionJooqAdapter stopTransitionAdapter;
     @Autowired JdbcTemplate jdbc;
 
     @BeforeEach
@@ -65,6 +68,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
         jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.rooms");
+        jdbc.update("delete from bot.launch_snapshots");
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from competition.scoring_template_versions where id = ?", TEMPLATE_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
@@ -218,6 +222,78 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
                 .isEqualTo(CUTOFF);
     }
 
+    @Test
+    void dispatchesTheEstablishedStopFlowOnlyAfterOfficialFinalization() {
+        String resultHash = jdbc.queryForObject(
+                "select result_hash from competition.leaderboard_snapshots where id = ?",
+                String.class, FINAL_SNAPSHOT_ID);
+        jdbc.update("update competition.participations set post_room_action = 'STOP' where id = ?", PARTICIPATION_ID);
+
+        assertThat(stopTransitionAdapter.transitionNext(OBSERVED_AT))
+                .isEqualTo(PostEvaluationStopTransitionDecision.APPLIED);
+
+        assertThat(jdbc.queryForObject(
+                "select lifecycle_status::text from bot.bots where id = ?", String.class, BOT_ID))
+                .isEqualTo("STOPPING");
+        assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_STOP_COMMAND'"))
+                .isOne();
+        assertThat(jdbc.queryForObject(
+                "select payload_document->>'reasonCode' from operations.outbox_messages "
+                        + "where event_type = 'BOT_STOP_COMMAND'",
+                String.class)).isEqualTo("ROOM_EVALUATION_ENDED");
+        assertThat(count("select count(*) from competition.participation_events where event_type = "
+                + "'POST_EVALUATION_STOP_DISPATCHED'")).isOne();
+        assertThat(count("select count(*) from bot.continuation_deadlines")).isZero();
+        assertThat(jdbc.queryForObject(
+                "select result_hash from competition.leaderboard_snapshots where id = ?",
+                String.class, FINAL_SNAPSHOT_ID)).isEqualTo(resultHash);
+        assertThat(stopTransitionAdapter.transitionNext(OBSERVED_AT.plusSeconds(1)))
+                .isEqualTo(PostEvaluationStopTransitionDecision.NO_READY_CANDIDATE);
+        assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_STOP_COMMAND'"))
+                .isOne();
+    }
+
+    @Test
+    void treatsALockedMissingChoiceAsStopAndExcludesContinuePrivate() {
+        jdbc.update(
+                "update competition.participations set post_room_action = null, action_recorded_at = null where id = ?",
+                PARTICIPATION_ID);
+        assertThat(stopTransitionAdapter.transitionNext(OBSERVED_AT))
+                .isEqualTo(PostEvaluationStopTransitionDecision.APPLIED);
+        assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_STOP_COMMAND'"))
+                .isOne();
+
+        prepare();
+        assertThat(stopTransitionAdapter.transitionNext(OBSERVED_AT))
+                .isEqualTo(PostEvaluationStopTransitionDecision.NO_READY_CANDIDATE);
+        assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_STOP_COMMAND'"))
+                .isZero();
+    }
+
+    @Test
+    void twoStopWorkersDispatchExactlyOnce() throws Exception {
+        jdbc.update("update competition.participations set post_room_action = 'STOP' where id = ?", PARTICIPATION_ID);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var results = executor.invokeAll(List.of(
+                            () -> stopTransitionAdapter.transitionNext(OBSERVED_AT),
+                            () -> stopTransitionAdapter.transitionNext(OBSERVED_AT)))
+                    .stream().map(future -> {
+                        try {
+                            return future.get();
+                        } catch (Exception exception) {
+                            throw new RuntimeException(exception);
+                        }
+                    }).toList();
+            assertThat(results).containsExactlyInAnyOrder(
+                    PostEvaluationStopTransitionDecision.APPLIED,
+                    PostEvaluationStopTransitionDecision.NO_READY_CANDIDATE);
+        }
+        assertThat(count("select count(*) from operations.outbox_messages where event_type = 'BOT_STOP_COMMAND'"))
+                .isOne();
+        assertThat(count("select count(*) from competition.participation_events where event_type = "
+                + "'POST_EVALUATION_STOP_DISPATCHED'")).isOne();
+    }
+
     private void assertNotReady() {
         assertThat(adapter.transitionNext(OBSERVED_AT))
                 .isEqualTo(PrivateContinuationTransitionDecision.NO_READY_CANDIDATE);
@@ -271,6 +347,12 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
                         + "execution_eligible_from, created_at, edit_sequence, updated_at) "
                         + "values (?, ?, 'BASIC', 'Continuation bot', 'RUNNING', ?, ?, ?, 0, ?)",
                 BOT_ID, OWNER_ID, utc(publishedAt), utc(publishedAt), utc(publishedAt), utc(publishedAt));
+        jdbc.update(
+                "insert into bot.launch_snapshots "
+                        + "(bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, "
+                        + "semantic_hash, presentation_hash, snapshot_hash, created_at) "
+                        + "values (?, 'basic-launch-snapshot.v1', '{}'::jsonb, '{}'::jsonb, ?, ?, ?, ?)",
+                BOT_ID, "semantic", "presentation", "launch", utc(publishedAt));
         jdbc.update(
                 "insert into competition.participations "
                         + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at, "
@@ -336,6 +418,11 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({PrivateContinuationTransitionJooqAdapter.class, FinalRoomResultJooqAdapter.class})
+    @Import({
+        PrivateContinuationTransitionJooqAdapter.class,
+        FinalRoomResultJooqAdapter.class,
+        PostEvaluationStopTransitionJooqAdapter.class,
+        BotStopCommandJooqAdapter.class
+    })
     static class TestApplication {}
 }
