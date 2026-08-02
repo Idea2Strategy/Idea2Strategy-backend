@@ -66,6 +66,9 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
         }
 
         var applied = mutation.orElseThrow();
+        String retentionPolicyVersion = commandType == AccountLifecycleCommandType.CLOSE
+                ? latestCompleteEffectivePolicy(applied.occurredAt())
+                : null;
         long nextVersion = account.version() + 1;
         UUID eventId = UUID.randomUUID();
         OffsetDateTime occurredAt = utc(applied.occurredAt());
@@ -74,13 +77,13 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                             (id, account_id, event_sequence, previous_event_id, lifecycle_version,
                              previous_status, new_status, command_type, actor_type, actor_id,
                              correlation_id, idempotency_key, request_hash, reason_code,
-                             cancellation_deadline_at, dormancy_basis_at, occurred_at)
+                             retention_policy_version, cancellation_deadline_at, dormancy_basis_at, occurred_at)
                         values (:id, :accountId, :version, :previousEventId, :version,
                                 cast(:previousStatus as identity.account_lifecycle_status),
                                 cast(:newStatus as identity.account_lifecycle_status),
                                 :commandType, :actorType, :actorId, :correlationId,
                                 :idempotencyKey, :requestHash, :reasonCode,
-                                :cancellationDeadlineAt, :dormancyBasisAt, :occurredAt)
+                                :retentionPolicyVersion, :cancellationDeadlineAt, :dormancyBasisAt, :occurredAt)
                         """)
                 .setParameter("id", eventId)
                 .setParameter("accountId", accountId)
@@ -89,14 +92,17 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                 .setParameter("previousStatus", account.status().name())
                 .setParameter("newStatus", applied.status().name())
                 .setParameter("commandType", persistedCommandType)
-                .setParameter("actorType", commandType == AccountLifecycleCommandType.MARK_DORMANT ? "SYSTEM" : "ACCOUNT")
-                .setParameter("actorId", commandType == AccountLifecycleCommandType.MARK_DORMANT
-                        ? "dormancy-scheduler"
-                        : accountId.toString())
+                .setParameter("actorType", systemCommand(commandType) ? "SYSTEM" : "ACCOUNT")
+                .setParameter("actorId", switch (commandType) {
+                    case MARK_DORMANT -> "dormancy-scheduler";
+                    case CLOSE -> "account-closure-coordinator";
+                    default -> accountId.toString();
+                })
                 .setParameter("correlationId", correlationId)
                 .setParameter("idempotencyKey", idempotencyKey)
                 .setParameter("requestHash", requestHash)
                 .setParameter("reasonCode", applied.reasonCode())
+                .setParameter("retentionPolicyVersion", retentionPolicyVersion)
                 .setParameter("cancellationDeadlineAt", utc(applied.cancellationDeadlineAt()))
                 .setParameter("dormancyBasisAt", commandType == AccountLifecycleCommandType.MARK_DORMANT
                         ? utc(account.lastSuccessfulAuthAt())
@@ -138,6 +144,10 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                 .executeUpdate();
         if (projectionUpdates != 1) {
             throw new IllegalStateException("Account lifecycle projection changed concurrently");
+        }
+
+        if (commandType == AccountLifecycleCommandType.CLOSE) {
+            createClosureArtifacts(accountId, eventId, retentionPolicyVersion, occurredAt);
         }
 
         if (invalidatesSessions(applied.status())) {
@@ -340,12 +350,115 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
         return commandType == AccountLifecycleCommandType.REQUEST_WITHDRAWAL ? 202 : 200;
     }
 
+    private String latestCompleteEffectivePolicy(Instant at) {
+        @SuppressWarnings("unchecked")
+        List<String> versions = entityManager.createNativeQuery("""
+                        select policy.version
+                        from identity.account_retention_policy_versions policy
+                        join identity.account_retention_policy_rules rule
+                          on rule.policy_version = policy.version
+                        where policy.effective_from <= :at and policy.approved_at <= :at
+                        group by policy.version, policy.effective_from
+                        having count(*) = cardinality(enum_range(NULL::identity.account_data_category))
+                           and count(distinct rule.data_category) =
+                               cardinality(enum_range(NULL::identity.account_data_category))
+                        order by policy.effective_from desc, policy.version desc limit 1
+                        """)
+                .setParameter("at", utc(at))
+                .getResultList();
+        return versions.isEmpty() ? null : versions.getFirst();
+    }
+
+    private void createClosureArtifacts(
+            UUID accountId, UUID eventId, String policyVersion, OffsetDateTime closedAt) {
+        if (policyVersion == null) {
+            int inserted = entityManager.createNativeQuery("""
+                            insert into identity.account_retention_obligations
+                                (account_id, lifecycle_event_id, data_category, status, failure_code)
+                            select :accountId, :eventId, category, 'FAILED', 'RETENTION_POLICY_MISSING'
+                            from unnest(enum_range(NULL::identity.account_data_category)) category
+                            """)
+                    .setParameter("accountId", accountId)
+                    .setParameter("eventId", eventId)
+                    .executeUpdate();
+            if (inserted != 8) {
+                throw new IllegalStateException("Eight fail-closed retention evidence rows are required");
+            }
+        } else {
+            int inserted = entityManager.createNativeQuery("""
+                            insert into identity.account_retention_obligations
+                                (account_id, lifecycle_event_id, retention_policy_version, data_category,
+                                 disposition, retention_days, retain_until, status)
+                            select :accountId, :eventId, rule.policy_version, rule.data_category,
+                                   rule.disposition, rule.retention_days,
+                                   case when rule.retention_days is null then null
+                                        else cast(:closedAt as timestamptz)
+                                             + make_interval(days => rule.retention_days) end,
+                                   'PENDING'
+                            from identity.account_retention_policy_rules rule
+                            where rule.policy_version = :policyVersion
+                            """)
+                    .setParameter("accountId", accountId)
+                    .setParameter("eventId", eventId)
+                    .setParameter("closedAt", closedAt)
+                    .setParameter("policyVersion", policyVersion)
+                    .executeUpdate();
+            if (inserted != 8) {
+                throw new IllegalStateException("Approved retention policy must contain exactly eight rules");
+            }
+        }
+        quarantineIdentifiers(accountId, eventId, closedAt);
+    }
+
+    private void quarantineIdentifiers(UUID accountId, UUID eventId, OffsetDateTime closedAt) {
+        entityManager.createNativeQuery("""
+                        insert into identity.account_identifier_quarantines
+                            (account_id, lifecycle_event_id, identifier_kind, provider_code,
+                             identifier_fingerprint, fingerprint_key_version,
+                             quarantined_at, reuse_eligible_at)
+                        select :accountId, :eventId, 'EMAIL', 'EMAIL', email_lookup_hmac,
+                               email_lookup_key_version, cast(:closedAt as timestamptz),
+                               cast(:closedAt as timestamptz) + interval '30 days'
+                        from identity.account_emails
+                        where account_id = :accountId and email_lookup_hmac is not null
+                        on conflict do nothing
+                        """)
+                .setParameter("accountId", accountId)
+                .setParameter("eventId", eventId)
+                .setParameter("closedAt", closedAt)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_identifier_quarantines
+                            (account_id, lifecycle_event_id, identifier_kind, provider_code,
+                             identifier_fingerprint, fingerprint_key_version,
+                             quarantined_at, reuse_eligible_at)
+                        select :accountId, :eventId, 'OIDC_SUBJECT', provider.code,
+                               login.provider_subject_hmac, login.subject_key_version,
+                               cast(:closedAt as timestamptz),
+                               cast(:closedAt as timestamptz) + interval '30 days'
+                        from identity.login_identities login
+                        join identity.auth_providers provider on provider.id = login.provider_id
+                        where login.account_id = :accountId and login.provider_subject_hmac is not null
+                        on conflict do nothing
+                        """)
+                .setParameter("accountId", accountId)
+                .setParameter("eventId", eventId)
+                .setParameter("closedAt", closedAt)
+                .executeUpdate();
+    }
+
+    private static boolean systemCommand(AccountLifecycleCommandType commandType) {
+        return commandType == AccountLifecycleCommandType.MARK_DORMANT
+                || commandType == AccountLifecycleCommandType.CLOSE;
+    }
+
     private static String persistedCommandType(AccountLifecycleCommandType commandType) {
         return switch (commandType) {
             case REQUEST_WITHDRAWAL -> "WITHDRAWAL_REQUESTED";
             case CANCEL_WITHDRAWAL -> "WITHDRAWAL_CANCELLED";
             case MARK_DORMANT -> "ACCOUNT_DORMANT";
             case REACTIVATE -> "ACCOUNT_REACTIVATED";
+            case CLOSE -> "ACCOUNT_CLOSED";
         };
     }
 
