@@ -102,6 +102,7 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
                             reason_code = excluded.reason_code,
                             evidence = excluded.evidence,
                             observed_at = excluded.observed_at
+                        where identity.account_closure_readiness.observed_at <= excluded.observed_at
                         """)
                 .setParameter("correlationId", correlationId)
                 .setParameter("generation", generation)
@@ -113,7 +114,7 @@ public class AccountClosureJpaStore implements AccountClosureStore, AccountClosu
                 .setParameter("observedAt", utc(readiness.observedAt()))
                 .executeUpdate();
         if (recorded != 1) {
-            throw new IllegalStateException("Stale account closure readiness generation");
+            throw new IllegalStateException("Stale account closure readiness generation or observation");
         }
     }
 
