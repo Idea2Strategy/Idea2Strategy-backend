@@ -82,8 +82,8 @@ class UserRoomConfigurationServiceTest {
                         NOW.plusSeconds(120),
                         NOW.plusSeconds(240),
                         NOW.plusSeconds(180),
-                        NOW.plusSeconds(300),
-                        NOW.plusSeconds(360),
+                        NOW.plusSeconds(7440),
+                        NOW.plusSeconds(7500),
                         "UTC"));
     }
 

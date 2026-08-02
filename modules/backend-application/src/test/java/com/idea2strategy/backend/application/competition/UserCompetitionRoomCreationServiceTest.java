@@ -108,6 +108,15 @@ class UserCompetitionRoomCreationServiceTest {
                         -1)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("minimumFillCount");
+        assertThatThrownBy(() -> service.create(command(
+                        RoomAccessType.PUBLIC,
+                        validSchedule(),
+                        new BigDecimal("100000"),
+                        10,
+                        3601,
+                        5)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("evaluation window");
         assertThat(saved).isEmpty();
     }
 
@@ -164,8 +173,8 @@ class UserCompetitionRoomCreationServiceTest {
                 NOW.plusSeconds(120),
                 NOW.plusSeconds(240),
                 NOW.plusSeconds(180),
-                NOW.plusSeconds(300),
-                NOW.plusSeconds(360),
+                NOW.plusSeconds(3840),
+                NOW.plusSeconds(3900),
                 "UTC");
     }
 

@@ -51,8 +51,8 @@ class CompetitionRoomControllerTest {
                           "participationOpensAt":"2026-08-01T14:02:00Z",
                           "evaluationStartsAt":"2026-08-01T14:04:00Z",
                           "participationClosesAt":"2026-08-01T14:03:00Z",
-                          "evaluationEndsAt":"2026-08-01T14:05:00Z",
-                          "finalizationDeadlineAt":"2026-08-01T14:06:00Z",
+                          "evaluationEndsAt":"2026-08-01T15:04:00Z",
+                          "finalizationDeadlineAt":"2026-08-01T15:05:00Z",
                           "timezoneName":"UTC"
                         }
                         """))
