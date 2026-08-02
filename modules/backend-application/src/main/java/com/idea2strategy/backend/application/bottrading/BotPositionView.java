@@ -13,6 +13,7 @@ public record BotPositionView(
         UUID flowId,
         UUID partitionId,
         UUID instrumentId,
+        String currentSymbol,
         BigDecimal longQuantity,
         BigDecimal shortQuantity,
         BigDecimal costBasisAmount,

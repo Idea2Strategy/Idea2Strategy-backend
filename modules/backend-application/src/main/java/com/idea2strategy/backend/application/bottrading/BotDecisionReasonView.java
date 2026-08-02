@@ -16,6 +16,8 @@ public record BotDecisionReasonView(
         UUID partitionId,
         UUID flowId,
         UUID instrumentId,
+        String symbol,
+        String currentSymbol,
         String decision,
         String reasonCode,
         BigDecimal requestedQuantity,

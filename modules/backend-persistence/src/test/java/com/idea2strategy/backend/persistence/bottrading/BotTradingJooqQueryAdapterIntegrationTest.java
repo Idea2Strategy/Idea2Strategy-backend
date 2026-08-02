@@ -45,7 +45,9 @@ class BotTradingJooqQueryAdapterIntegrationTest {
     private static final UUID APPROVED_INTENT = UUID.fromString("3b000000-0000-4000-8000-00000000000b");
     private static final UUID CLOSE_ACTION = UUID.fromString("3c000000-0000-4000-8000-00000000000a");
     private static final String HASH = "a".repeat(64);
-    private static final String AT = "2026-08-03T12:00:00+00";
+    /** The trades sit before the rename below, and the rename before now, so both reads differ. */
+    private static final String AT = "2026-07-01T12:00:00+00";
+    private static final String RENAMED_AT = "2026-07-15T00:00:00+00";
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -77,6 +79,20 @@ class BotTradingJooqQueryAdapterIntegrationTest {
 
         insertAccount(OWNER);
         insertAccount(OTHER_OWNER);
+
+        // The instrument was renamed after the trades below, which is the whole reason a trading
+        // record resolves its ticker as of when it happened rather than as of now.
+        jdbc.update("delete from market_data.instrument_symbols where instrument_id = ?", INSTRUMENT);
+        jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
+        jdbc.update("insert into market_data.instruments (id, asset_type, primary_exchange_mic,"
+                + " currency_code) values (?, 'STOCK', 'XNAS', 'USD')", INSTRUMENT);
+        jdbc.update("insert into market_data.instrument_symbols (instrument_id, exchange_mic,"
+                + " symbol, effective_from, effective_to)"
+                + " values (?, 'XNAS', 'OLDT', '2026-01-01T00:00:00+00', ?::timestamptz)",
+                INSTRUMENT, RENAMED_AT);
+        jdbc.update("insert into market_data.instrument_symbols (instrument_id, exchange_mic,"
+                + " symbol, effective_from, effective_to)"
+                + " values (?, 'XNAS', 'NEWT', ?::timestamptz, null)", INSTRUMENT, RENAMED_AT);
         jdbc.update("insert into bot.bots (id, owner_account_id, mode, name, lifecycle_status,"
                 + " lifecycle_changed_at, created_at, execution_eligible_from)"
                 + " values (?, ?, 'BASIC', 'Trading bot', 'RUNNING', ?::timestamptz,"
@@ -159,6 +175,36 @@ class BotTradingJooqQueryAdapterIntegrationTest {
         assertThat(fills.getFirst().instrumentId()).isEqualTo(INSTRUMENT);
         assertThat(fills.getFirst().fillPrice()).isEqualByComparingTo("10");
         assertThat(fills.getFirst().settlementCashDelta()).isEqualByComparingTo("-30.06");
+    }
+
+    /**
+     * The trades happened while the instrument was still OLDT, and it is NEWT now. A record read
+     * under today's name would disagree with the confirmation the owner saw at the time, so the
+     * trading surfaces report both and let the screen show the change.
+     */
+    @Test
+    void tradingSurfacesCarryTheTickerOfTheirOwnMomentAndTheCurrentOne() {
+        var order = adapter.findOwnedOrders(BOT, OWNER, 50).orElseThrow().getFirst();
+        var fill = adapter.findOwnedFills(BOT, OWNER, 50).orElseThrow().getFirst();
+        var reason = adapter.findOwnedDecisionReasons(BOT, OWNER, 50).orElseThrow().getFirst();
+        var action = adapter.findOwnedStopSettlement(BOT, OWNER).orElseThrow().getFirst();
+
+        assertThat(order.symbol()).isEqualTo("OLDT");
+        assertThat(order.currentSymbol()).isEqualTo("NEWT");
+        assertThat(fill.symbol()).isEqualTo("OLDT");
+        assertThat(fill.currentSymbol()).isEqualTo("NEWT");
+        assertThat(reason.symbol()).isEqualTo("OLDT");
+        assertThat(reason.currentSymbol()).isEqualTo("NEWT");
+        assertThat(action.symbol()).isEqualTo("OLDT");
+        assertThat(action.currentSymbol()).isEqualTo("NEWT");
+    }
+
+    /** A projection sums many lots, so there is no one moment to read a ticker as of. */
+    @Test
+    void aPositionCarriesOnlyTheCurrentTicker() {
+        var position = adapter.findOwnedPositions(BOT, OWNER).orElseThrow().getFirst();
+
+        assertThat(position.currentSymbol()).isEqualTo("NEWT");
     }
 
     @Test
