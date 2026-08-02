@@ -37,10 +37,13 @@ class RoomTerminationServiceTest {
                 .isInstanceOf(OperatorAuthorizationException.class);
 
         var authorized = new PlatformRoomInvalidationService(port, () -> Optional.of(OPERATOR_ID), fixedClock());
-        authorized.invalidate(ROOM_ID, "LEDGER_INTEGRITY");
+        authorized.invalidate(ROOM_ID, "OFFICIAL_LEDGER_INTEGRITY");
         assertThat(port.operatorId).isEqualTo(OPERATOR_ID);
         assertThatThrownBy(() -> authorized.invalidate(ROOM_ID, " "))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> authorized.invalidate(ROOM_ID, "CREATOR_REQUESTED"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("legal, safety, or ledger-integrity");
     }
 
     private static Clock fixedClock() {
