@@ -59,6 +59,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
 
     @BeforeEach
     void prepare() {
+        jdbc.update("delete from competition.room_final_access_grants");
         jdbc.update("delete from competition.leaderboard_entries");
         jdbc.update("delete from competition.leaderboard_snapshots");
         jdbc.update("delete from competition.room_events");
@@ -220,9 +221,14 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     }
 
     @Test
-    void allowsPublicAndValidSecretParticipantsButRejectsOtherSecretViewers() {
-        seedSnapshot(SECRET_ROOM_ID, id(40), "PUBLISHED", CUTOFF);
+    void usesFrozenFinalSecretGrantsInsteadOfMutableParticipationStatus() {
+        seedSnapshot(SECRET_ROOM_ID, id(40), "FINAL", CUTOFF);
         seedBotParticipation(SECRET_ROOM_ID, VIEWER_ID, id(41), id(42), "secret-member", "REGISTERED");
+        jdbc.update(
+                "insert into competition.room_final_access_grants "
+                        + "(room_id, account_id, snapshot_id, eligibility_basis, granted_at) "
+                        + "values (?, ?, ?, 'ACTIVE_PARTICIPANT', ?)",
+                SECRET_ROOM_ID, VIEWER_ID, id(40), CUTOFF.atOffset(ZoneOffset.UTC));
 
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10))).isNotNull();
         assertThat(adapter.query(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
@@ -238,8 +244,30 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         jdbc.update(
                 "update competition.participations set status = 'WITHDRAWN', withdrawn_at = ? where id = ?",
                 CUTOFF.atOffset(ZoneOffset.UTC), id(42));
-        assertThatThrownBy(() -> adapter.query(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)))
-                .isInstanceOf(LeaderboardAccessException.class);
+        assertThat(adapter.query(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
+                .isEqualTo(id(40));
+    }
+
+    @Test
+    void closesEndedRoomQueriesAtTheExactOneYearBoundaryAndRechecksCursors() {
+        seedLeaderboard();
+        var first = adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 1));
+        jdbc.update(
+                "update competition.rooms set ended_at = current_timestamp - interval '1 year' where id = ?",
+                ROOM_ID);
+
+        assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId()).isNull();
+        assertThat(adapter.query(query(
+                ROOM_ID, VIEWER_ID, SNAPSHOT_ID,
+                new Cursor(first.rows().getFirst().item().rank(), first.rows().getFirst().cursorAnchor()), 10
+        )).snapshotId()).isNull();
+
+        jdbc.update(
+                "update competition.rooms set ended_at = "
+                        + "current_timestamp - interval '1 year' + interval '1 second' where id = ?",
+                ROOM_ID);
+        assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
+                .isEqualTo(SNAPSHOT_ID);
     }
 
     @Test
@@ -358,9 +386,10 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         jdbc.update(
                 "insert into competition.rooms "
                         + "(id, competition_type, organizer_type, creator_account_id, name, access_type, "
-                        + "status, created_at) values (?, 'LIVE_PAPER', 'USER', ?, ?, "
-                        + "?::competition.room_access_type, 'ENDED', ?)",
-                roomId, VIEWER_ID, "room-" + roomId, access, CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC));
+                        + "status, created_at, ended_at) values (?, 'LIVE_PAPER', 'USER', ?, ?, "
+                        + "?::competition.room_access_type, 'ENDED', ?, ?)",
+                roomId, VIEWER_ID, "room-" + roomId, access,
+                CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC), CUTOFF.atOffset(ZoneOffset.UTC));
     }
 
     private void seedSnapshot(UUID roomId, UUID snapshotId, String status, Instant cutoff) {

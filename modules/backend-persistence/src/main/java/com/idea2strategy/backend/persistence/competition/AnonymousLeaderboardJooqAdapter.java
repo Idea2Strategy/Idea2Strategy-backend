@@ -47,7 +47,7 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
             throw new LeaderboardAuthenticationException("An active authenticated account is required");
         }
         Record room = dsl.fetchOne(
-                "select access_type::text as access_type, status::text as status "
+                "select access_type::text as access_type, status::text as status, ended_at "
                         + "from competition.rooms where id = ?",
                 query.roomId());
         if (room == null) {
@@ -55,12 +55,13 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
         }
         String roomStatus = room.get("status", String.class);
         if ((!"EVALUATING".equals(roomStatus) && !"ENDED".equals(roomStatus))
-                || endedForInsufficientParticipation(query.roomId())) {
+                || endedForInsufficientParticipation(query.roomId())
+                || finalAccessExpired(room)) {
             return LeaderboardQueryResult.empty();
         }
         if ("SECRET".equals(room.get("access_type", String.class))
-                && !isValidParticipant(query.roomId(), query.viewerAccountId())) {
-            throw new LeaderboardAccessException("Secret room leaderboard requires an active room participation");
+                && !canAccessSecretRoom(query.roomId(), query.viewerAccountId(), roomStatus)) {
+            throw new LeaderboardAccessException("Secret room leaderboard requires frozen final access");
         }
 
         Record snapshot = query.snapshotId() == null
@@ -70,9 +71,10 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
                                 + "join competition.rooms r on r.id = ls.room_id "
                                 + "where ls.room_id = ? and r.status in "
                                 + "('EVALUATING'::competition.room_status, 'ENDED'::competition.room_status) "
-                                + "and ls.status in "
-                                + "('PUBLISHED'::competition.leaderboard_status, "
-                                + "'FINAL'::competition.leaderboard_status) "
+                                + "and ((r.status = 'EVALUATING'::competition.room_status and "
+                                + "ls.status = 'PUBLISHED'::competition.leaderboard_status) or "
+                                + "(r.status = 'ENDED'::competition.room_status and "
+                                + "ls.status = 'FINAL'::competition.leaderboard_status)) "
                                 + "and not exists(select 1 from competition.room_events re "
                                 + "where re.room_id = r.id and re.reason_code = 'INSUFFICIENT_PARTICIPATION') "
                                 + "order by ls.cutoff_at desc, ls.created_at desc, ls.id desc limit 1",
@@ -83,9 +85,10 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
                                 + "join competition.rooms r on r.id = ls.room_id "
                                 + "where ls.id = ? and ls.room_id = ? and r.status in "
                                 + "('EVALUATING'::competition.room_status, 'ENDED'::competition.room_status) "
-                                + "and ls.status in "
-                                + "('PUBLISHED'::competition.leaderboard_status, "
-                                + "'FINAL'::competition.leaderboard_status) "
+                                + "and ((r.status = 'EVALUATING'::competition.room_status and "
+                                + "ls.status = 'PUBLISHED'::competition.leaderboard_status) or "
+                                + "(r.status = 'ENDED'::competition.room_status and "
+                                + "ls.status = 'FINAL'::competition.leaderboard_status)) "
                                 + "and not exists(select 1 from competition.room_events re "
                                 + "where re.room_id = r.id and re.reason_code = 'INSUFFICIENT_PARTICIPATION')",
                         query.snapshotId(), query.roomId());
@@ -136,18 +139,20 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
             throw new LeaderboardAuthenticationException("An active authenticated account is required");
         }
         Record currentRoom = dsl.fetchOne(
-                "select access_type::text as access_type, status::text as status "
+                "select access_type::text as access_type, status::text as status, ended_at "
                         + "from competition.rooms where id = ?",
                 query.roomId());
         if (currentRoom == null
                 || (!"EVALUATING".equals(currentRoom.get("status", String.class))
                         && !"ENDED".equals(currentRoom.get("status", String.class)))
-                || endedForInsufficientParticipation(query.roomId())) {
+                || endedForInsufficientParticipation(query.roomId())
+                || finalAccessExpired(currentRoom)) {
             return LeaderboardQueryResult.empty();
         }
         if ("SECRET".equals(currentRoom.get("access_type", String.class))
-                && !isValidParticipant(query.roomId(), query.viewerAccountId())) {
-            throw new LeaderboardAccessException("Secret room leaderboard requires an active room participation");
+                && !canAccessSecretRoom(
+                        query.roomId(), query.viewerAccountId(), currentRoom.get("status", String.class))) {
+            throw new LeaderboardAccessException("Secret room leaderboard requires frozen final access");
         }
         return new LeaderboardQueryResult(
                 snapshotId,
@@ -209,6 +214,25 @@ public class AnonymousLeaderboardJooqAdapter implements LeaderboardQueryPort, Ow
                         + "'EXPELLED'::competition.participation_status))",
                 roomId,
                 viewerAccountId));
+    }
+
+    private boolean canAccessSecretRoom(UUID roomId, UUID viewerAccountId, String roomStatus) {
+        if ("EVALUATING".equals(roomStatus)) {
+            return isValidParticipant(roomId, viewerAccountId);
+        }
+        return Boolean.TRUE.equals(dsl.fetchValue(
+                "select exists(select 1 from competition.room_final_access_grants "
+                        + "where room_id = ? and account_id = ?)",
+                roomId, viewerAccountId));
+    }
+
+    private boolean finalAccessExpired(Record room) {
+        if (!"ENDED".equals(room.get("status", String.class))) {
+            return false;
+        }
+        OffsetDateTime endedAt = room.get("ended_at", OffsetDateTime.class);
+        return endedAt == null || !Boolean.TRUE.equals(dsl.fetchValue(
+                "select ?::timestamptz + interval '1 year' > current_timestamp", endedAt));
     }
 
     private UUID resolveAnchorParticipation(UUID snapshotId, int rank, String anchor, UUID ownerScope) {
