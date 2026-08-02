@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.common.CurrentOperatorPrincipal;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQueryService;
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.OwnedBotComparisonQueryService;
 import com.idea2strategy.backend.application.competition.PlatformRoomInvalidationService;
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
@@ -70,6 +71,15 @@ public class CompetitionRoomConfiguration {
     AnonymousLeaderboardQueryService anonymousLeaderboardQueryService(
             AnonymousLeaderboardJooqAdapter adapter, ObjectProvider<CurrentPrincipal> principalProvider) {
         return new AnonymousLeaderboardQueryService(adapter, () -> {
+            CurrentPrincipal principal = principalProvider.getIfAvailable();
+            return principal == null ? null : principal.accountId();
+        });
+    }
+
+    @Bean
+    OwnedBotComparisonQueryService ownedBotComparisonQueryService(
+            AnonymousLeaderboardJooqAdapter adapter, ObjectProvider<CurrentPrincipal> principalProvider) {
+        return new OwnedBotComparisonQueryService(adapter, () -> {
             CurrentPrincipal principal = principalProvider.getIfAvailable();
             return principal == null ? null : principal.accountId();
         });

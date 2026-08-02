@@ -32,7 +32,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     RoomTerminationController.class,
     RoomConfigurationController.class,
     PostEvaluationChoiceController.class,
-    AnonymousLeaderboardController.class
+    AnonymousLeaderboardController.class,
+    OwnedBotComparisonController.class
 })
 public class CompetitionRoomExceptionHandler {
     @ExceptionHandler(InvalidLeaderboardCursorException.class)

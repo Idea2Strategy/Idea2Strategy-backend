@@ -113,6 +113,46 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     }
 
     @Test
+    void comparesEveryViewerOwnedBotWithoutRequiringACommonSymbolOrLeakingOtherBots() {
+        seedLeaderboard();
+        jdbc.update(
+                "update competition.leaderboard_entries set eligibility_status = 'INELIGIBLE_PRIVATE' "
+                        + "where snapshot_id = ? and participation_id = ?",
+                SNAPSHOT_ID, id(12));
+
+        var owned = adapter.queryOwned(query(ROOM_ID, VIEWER_ID, null, null, 10));
+
+        assertThat(owned.rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("alpha", "gamma");
+        assertThat(owned.rows()).allSatisfy(row -> {
+            assertThat(row.item().viewerEvidence()).isNotNull();
+            assertThat(row.item().viewerEvidence().botId()).isIn(id(20), id(22));
+        });
+        assertThat(owned.rows().getLast().item().eligibilityStatus()).isEqualTo("INELIGIBLE_PRIVATE");
+    }
+
+    @Test
+    void keepsOwnedPaginationViewerScopedAndRejectsAnAnonymousLeaderboardCursor() {
+        seedLeaderboard();
+        var first = adapter.queryOwned(query(ROOM_ID, VIEWER_ID, null, null, 1));
+        var continued = adapter.queryOwned(query(
+                ROOM_ID, VIEWER_ID, SNAPSHOT_ID,
+                new Cursor(first.rows().getFirst().item().rank(), first.rows().getFirst().cursorAnchor()), 10));
+
+        assertThat(continued.rows())
+                .extracting(row -> row.item().anonymousAlias())
+                .containsExactly("gamma");
+
+        String anonymousAnchor = adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 1))
+                .rows().getFirst().cursorAnchor();
+        assertThatThrownBy(() -> adapter.queryOwned(query(
+                        ROOM_ID, VIEWER_ID, SNAPSHOT_ID, new Cursor(1, anonymousAnchor), 10)))
+                .isInstanceOf(InvalidLeaderboardCursorException.class)
+                .hasMessageContaining("anchor");
+    }
+
+    @Test
     void continuesAfterTheExactJointRankBotWithoutMergingAnOwnersBots() {
         seedLeaderboard();
         String firstAnchor = adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10))
@@ -177,9 +217,13 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10))).isNotNull();
         assertThat(adapter.query(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
                 .isEqualTo(id(40));
+        assertThat(adapter.queryOwned(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
+                .isEqualTo(id(40));
         assertThatThrownBy(() -> adapter.query(query(SECRET_ROOM_ID, null, null, null, 10)))
                 .isInstanceOf(LeaderboardAuthenticationException.class);
         assertThatThrownBy(() -> adapter.query(query(SECRET_ROOM_ID, OUTSIDER_ID, null, null, 10)))
+                .isInstanceOf(LeaderboardAccessException.class);
+        assertThatThrownBy(() -> adapter.queryOwned(query(SECRET_ROOM_ID, OUTSIDER_ID, null, null, 10)))
                 .isInstanceOf(LeaderboardAccessException.class);
         jdbc.update(
                 "update competition.participations set status = 'WITHDRAWN', withdrawn_at = ? where id = ?",
@@ -228,6 +272,7 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
 
         jdbc.update("update competition.rooms set status = 'INVALIDATED' where id = ?", ROOM_ID);
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).rows()).isEmpty();
+        assertThat(adapter.queryOwned(query(ROOM_ID, VIEWER_ID, null, null, 10)).rows()).isEmpty();
         jdbc.update("update competition.rooms set status = 'CANCELLED' where id = ?", ROOM_ID);
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).rows()).isEmpty();
         jdbc.update("update competition.rooms set status = 'ENDED' where id = ?", ROOM_ID);
