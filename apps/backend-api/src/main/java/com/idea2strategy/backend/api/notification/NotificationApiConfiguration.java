@@ -1,15 +1,27 @@
 package com.idea2strategy.backend.api.notification;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
 import com.idea2strategy.backend.application.notification.NotificationQueryService;
 import com.idea2strategy.backend.application.notification.NotificationService;
 import com.idea2strategy.backend.persistence.notification.NotificationPersistenceAdapter;
 import java.time.Clock;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 
-@Configuration
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnBean(JdbcTemplate.class)
 public class NotificationApiConfiguration {
+    @Bean
+    @ConditionalOnMissingBean(NotificationPersistenceAdapter.class)
+    NotificationPersistenceAdapter notificationPersistenceAdapter(
+            JdbcTemplate jdbc, ObjectMapper objectMapper) {
+        return new NotificationPersistenceAdapter(jdbc, objectMapper);
+    }
+
     @Bean
     NotificationService notificationService(NotificationPersistenceAdapter adapter, Clock identityClock) {
         return new NotificationService(adapter, adapter, adapter, identityClock);

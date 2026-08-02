@@ -12,6 +12,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/account/notifications")
+@ConditionalOnBean(JdbcTemplate.class)
 public class NotificationController {
     private static final String BEARER_PREFIX = "Bearer ";
 
