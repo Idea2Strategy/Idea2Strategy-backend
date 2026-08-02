@@ -238,29 +238,40 @@ class AccountClosurePersistenceIntegrationTest {
                         new AccountLifecycleMutation(AccountLifecycleStatus.CLOSING, REQUESTED,
                                 AccountLifecycleStatus.ACTIVE, REQUESTED, DEADLINE, "WITHDRAWAL_REQUESTED")));
 
-        var beginBarrier = new CyclicBarrier(2);
+        var target = new AccountClosureCandidate(accountId, DEADLINE, 2);
+        UUID preparedCorrelation = UUID.randomUUID();
+        long preparedGeneration = closure.beginAttempt(target, preparedCorrelation, DEADLINE);
+        for (var domain : ClosureDomain.values()) {
+            closure.recordReadiness(accountId, preparedCorrelation, preparedGeneration,
+                    new ClosureReadiness(domain,
+                            domain == ClosureDomain.TRADING
+                                    ? ClosureReadinessStatus.SETTLED
+                                    : ClosureReadinessStatus.FROZEN,
+                            "READY", "{}", DEADLINE));
+        }
+        var closeBarrier = new CyclicBarrier(2);
         AccountClosureStore racingStore = new AccountClosureStore() {
             @Override public List<AccountClosureCandidate> findClosingCandidates(int limit) {
-                return closure.findClosingCandidates(limit);
+                return List.of(target);
             }
             @Override public long beginAttempt(
                     AccountClosureCandidate candidate, UUID correlationId, Instant startedAt) {
-                long generation = closure.beginAttempt(candidate, correlationId, startedAt);
-                try {
-                    beginBarrier.await(10, TimeUnit.SECONDS);
-                } catch (Exception exception) {
-                    throw new IllegalStateException(exception);
-                }
-                return generation;
+                return preparedGeneration;
             }
             @Override public void recordReadiness(
                     UUID id, UUID correlationId, long generation, ClosureReadiness readiness) {
-                closure.recordReadiness(id, correlationId, generation, readiness);
+                // Readiness for the shared generation is prepared before the close race.
             }
             @Override public boolean closeIfReady(
                     AccountClosureCandidate candidate, UUID correlationId, long generation,
                     String idempotencyKey, Instant closedAt) {
-                return closure.closeIfReady(candidate, correlationId, generation, idempotencyKey, closedAt);
+                try {
+                    closeBarrier.await(10, TimeUnit.SECONDS);
+                } catch (Exception exception) {
+                    throw new IllegalStateException(exception);
+                }
+                return closure.closeIfReady(
+                        candidate, preparedCorrelation, preparedGeneration, idempotencyKey, closedAt);
             }
         };
         List<AccountClosureReadinessProbe> probes = Arrays.stream(ClosureDomain.values())
