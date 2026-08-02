@@ -29,7 +29,7 @@ class TransactionalOutboxUpgradeMigrationIntegrationTest {
         Path beforeA17 = Files.createDirectories(temporaryDirectory.resolve("before-a17"));
         try (var files = Files.list(central)) {
             for (Path source : files.filter(Files::isRegularFile).toList()) {
-                if (!MIGRATION.equals(source.getFileName().toString())) {
+                if (source.getFileName().toString().compareTo(MIGRATION) < 0) {
                     Files.copy(source, beforeA17.resolve(source.getFileName()));
                 }
             }
