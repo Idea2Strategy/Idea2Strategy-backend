@@ -2,7 +2,9 @@ package com.idea2strategy.backend.persistence.botcontrol;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.domain.botcontrol.BotLifecycleStatus;
+import com.idea2strategy.backend.messaging.strategybot.v1.StrategyBotContractFixtures;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -23,6 +25,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = BotStopCommandPersistenceIntegrationTest.TestApplication.class)
 class BotStopCommandPersistenceIntegrationTest {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000024");
     private static final UUID BOT_ID = UUID.fromString("20000000-0000-4000-8000-000000000024");
     private static final Instant NOW = Instant.parse("2026-08-02T09:00:00Z");
@@ -75,7 +78,7 @@ class BotStopCommandPersistenceIntegrationTest {
     }
 
     @Test
-    void atomicallyBlocksEvaluationAndEmitsOneRetrySafeStopCommand() {
+    void atomicallyBlocksEvaluationAndEmitsOneRetrySafeStopCommand() throws Exception {
         var first = adapter.issueOwned(BOT_ID, OWNER_ID, "USER_REQUESTED", NOW).orElseThrow();
         jdbc.update(
                 "update operations.outbox_messages set publish_attempt_count = 1, last_failure_code = 'BROKER_UNAVAILABLE' "
@@ -103,6 +106,44 @@ class BotStopCommandPersistenceIntegrationTest {
                         String.class,
                         first.messageId()))
                 .isEqualTo("USER_REQUESTED");
+        var transported = OBJECT_MAPPER.readValue(
+                jdbc.queryForObject(
+                        "select payload_document::text from operations.outbox_messages where id = ?",
+                        String.class,
+                        first.messageId()),
+                StrategyBotContractFixtures.BotStopCommand.class);
+        assertThat(transported.metadata().contractVersion()).isEqualTo("strategy-bot.v1");
+        assertThat(transported.metadata().messageType()).isEqualTo("BOT_STOP_COMMAND");
+        assertThat(transported.metadata().messageId()).isEqualTo(first.messageId().toString());
+        assertThat(transported.metadata().idempotencyKey()).isEqualTo(first.idempotencyKey());
+        assertThat(transported.botId()).isEqualTo(BOT_ID.toString());
+        assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + SNAPSHOT_HASH);
+        assertThat(transported.reasonCode()).isEqualTo("USER_REQUESTED");
+        assertThat(jdbc.queryForObject(
+                        "select event_schema_version from operations.outbox_messages where id = ?",
+                        String.class,
+                        first.messageId()))
+                .isEqualTo(transported.metadata().contractVersion());
+        assertThat(jdbc.queryForObject(
+                        "select event_type from operations.outbox_messages where id = ?",
+                        String.class,
+                        first.messageId()))
+                .isEqualTo(transported.metadata().messageType());
+        assertThat(jdbc.queryForObject(
+                        "select id::text from operations.outbox_messages where id = ?",
+                        String.class,
+                        first.messageId()))
+                .isEqualTo(transported.metadata().messageId());
+        assertThat(jdbc.queryForObject(
+                        "select idempotency_key from operations.outbox_messages where id = ?",
+                        String.class,
+                        first.messageId()))
+                .isEqualTo(transported.metadata().idempotencyKey());
+        assertThat("sha256:" + jdbc.queryForObject(
+                        "select snapshot_hash from bot.launch_snapshots where bot_id = ?",
+                        String.class,
+                        BOT_ID))
+                .isEqualTo(transported.expectedSnapshotHash());
         assertThat(jdbc.queryForObject(
                         "select aggregate_sequence from operations.outbox_messages where id = ?",
                         Long.class,

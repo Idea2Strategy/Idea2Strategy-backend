@@ -3,9 +3,11 @@ package com.idea2strategy.backend.persistence.strategy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
+import com.idea2strategy.backend.messaging.strategybot.v1.StrategyBotContractFixtures;
 import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -31,6 +33,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = ImmutableStrategyReleasePersistenceIntegrationTest.TestApplication.class)
 class ImmutableStrategyReleasePersistenceIntegrationTest {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000011");
     private static final UUID STRATEGY_ID = UUID.fromString("20000000-0000-4000-8000-000000000011");
     private static final UUID RUN_ID = UUID.fromString("30000000-0000-4000-8000-000000000011");
@@ -148,7 +151,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     }
 
     @Test
-    void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() {
+    void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() throws Exception {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
                 release, HASH_C, DATASET_ID);
@@ -172,6 +175,45 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
                                 + "where aggregate_id = ?", String.class, BOT_ID))
                 .isEqualTo(DATASET_ID.toString());
+        var transported = OBJECT_MAPPER.readValue(
+                jdbc.queryForObject(
+                        "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        BOT_ID),
+                StrategyBotContractFixtures.OfficialBacktestRequest.class);
+        assertThat(transported.metadata().contractVersion()).isEqualTo("strategy-bot.v1");
+        assertThat(transported.metadata().messageType()).isEqualTo("OFFICIAL_BACKTEST_REQUESTED");
+        assertThat(transported.metadata().messageId()).isEqualTo(request.metadata().messageId().toString());
+        assertThat(transported.metadata().idempotencyKey()).isEqualTo(request.metadata().idempotencyKey());
+        assertThat(transported.botId()).isEqualTo(BOT_ID.toString());
+        assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_D);
+        assertThat(transported.compiledPlanChecksum()).isEqualTo("sha256:" + HASH_C);
+        assertThat(transported.datasetManifestId()).isEqualTo(DATASET_ID.toString());
+        assertThat(jdbc.queryForObject(
+                        "select event_schema_version from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        BOT_ID))
+                .isEqualTo(transported.metadata().contractVersion());
+        assertThat(jdbc.queryForObject(
+                        "select event_type from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        BOT_ID))
+                .isEqualTo(transported.metadata().messageType());
+        assertThat(jdbc.queryForObject(
+                        "select id::text from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        BOT_ID))
+                .isEqualTo(transported.metadata().messageId());
+        assertThat(jdbc.queryForObject(
+                        "select idempotency_key from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        BOT_ID))
+                .isEqualTo(transported.metadata().idempotencyKey());
+        assertThat("sha256:" + jdbc.queryForObject(
+                        "select snapshot_hash from bot.launch_snapshots where bot_id = ?",
+                        String.class,
+                        BOT_ID))
+                .isEqualTo(transported.expectedSnapshotHash());
         assertThat(jdbc.queryForObject(
                         "select started_at is null from bot.bots where id = ?", Boolean.class, BOT_ID))
                 .isTrue();

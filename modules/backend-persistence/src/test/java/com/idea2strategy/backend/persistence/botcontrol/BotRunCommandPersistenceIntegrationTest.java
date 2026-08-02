@@ -2,7 +2,9 @@ package com.idea2strategy.backend.persistence.botcontrol;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.botcontrol.BotRunDispatchMode;
+import com.idea2strategy.backend.messaging.strategybot.v1.StrategyBotContractFixtures;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -23,6 +25,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = BotRunCommandPersistenceIntegrationTest.TestApplication.class)
 class BotRunCommandPersistenceIntegrationTest {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000022");
     private static final UUID PERSONAL_BOT_ID = UUID.fromString("20000000-0000-4000-8000-000000000022");
     private static final UUID WAITING_BOT_ID = UUID.fromString("30000000-0000-4000-8000-000000000022");
@@ -82,7 +85,7 @@ class BotRunCommandPersistenceIntegrationTest {
     }
 
     @Test
-    void emitsOneStableImmediateOrWaitingCommandPerBot() {
+    void emitsOneStableImmediateOrWaitingCommandPerBot() throws Exception {
         var personalFirst = adapter.issueOwned(PERSONAL_BOT_ID, OWNER_ID, NOW).orElseThrow();
         var personalRetry = adapter.issueOwned(PERSONAL_BOT_ID, OWNER_ID, NOW.plusSeconds(30)).orElseThrow();
         var waitingFirst = adapter.issueOwned(WAITING_BOT_ID, OWNER_ID, NOW).orElseThrow();
@@ -107,6 +110,44 @@ class BotRunCommandPersistenceIntegrationTest {
                         String.class,
                         WAITING_BOT_ID))
                 .isEqualTo(ROOM_START.toString());
+        var transported = OBJECT_MAPPER.readValue(
+                jdbc.queryForObject(
+                        "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        WAITING_BOT_ID),
+                StrategyBotContractFixtures.BotRunCommand.class);
+        assertThat(transported.metadata().contractVersion()).isEqualTo("strategy-bot.v1");
+        assertThat(transported.metadata().messageType()).isEqualTo("BOT_RUN_COMMAND");
+        assertThat(transported.metadata().messageId()).isEqualTo(waitingFirst.messageId().toString());
+        assertThat(transported.metadata().idempotencyKey()).isEqualTo(waitingFirst.idempotencyKey());
+        assertThat(transported.botId()).isEqualTo(WAITING_BOT_ID.toString());
+        assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_B);
+        assertThat(transported.executionEligibleFrom()).isEqualTo(ROOM_START.toString());
+        assertThat(jdbc.queryForObject(
+                        "select event_schema_version from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        WAITING_BOT_ID))
+                .isEqualTo(transported.metadata().contractVersion());
+        assertThat(jdbc.queryForObject(
+                        "select event_type from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        WAITING_BOT_ID))
+                .isEqualTo(transported.metadata().messageType());
+        assertThat(jdbc.queryForObject(
+                        "select id::text from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        WAITING_BOT_ID))
+                .isEqualTo(transported.metadata().messageId());
+        assertThat(jdbc.queryForObject(
+                        "select idempotency_key from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        WAITING_BOT_ID))
+                .isEqualTo(transported.metadata().idempotencyKey());
+        assertThat("sha256:" + jdbc.queryForObject(
+                        "select snapshot_hash from bot.launch_snapshots where bot_id = ?",
+                        String.class,
+                        WAITING_BOT_ID))
+                .isEqualTo(transported.expectedSnapshotHash());
         assertThat(jdbc.queryForObject(
                         "select execution_eligible_from from bot.bots where id = ?",
                         java.time.OffsetDateTime.class,
