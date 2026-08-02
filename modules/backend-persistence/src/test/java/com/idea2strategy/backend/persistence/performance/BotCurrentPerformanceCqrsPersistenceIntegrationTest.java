@@ -2,11 +2,21 @@ package com.idea2strategy.backend.persistence.performance;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.idea2strategy.backend.domain.performance.BotCurrentPerformance;
+import com.idea2strategy.backend.application.performance.BotCurrentPerformanceCommandService;
+import com.idea2strategy.backend.application.performance.EquityObservation;
+import com.idea2strategy.backend.application.performance.LivePerformanceProjectionInput;
+import com.idea2strategy.backend.application.performance.LivePerformanceSource;
+import com.idea2strategy.backend.application.performance.ProjectionWriteDecision;
+import com.idea2strategy.backend.domain.competition.CompetitionType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.UUID;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,8 +61,14 @@ class BotCurrentPerformanceCqrsPersistenceIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    private DSLContext dsl;
+
+    private BotCurrentPerformanceCommandService commandService;
+
     @BeforeEach
     void prepareBot() {
+        commandService = new BotCurrentPerformanceCommandService(commandAdapter);
         jdbcTemplate.update("delete from performance.bot_current_projections where bot_id = ?", BOT_ID);
         jdbcTemplate.update("delete from bot.bots where id = ?", BOT_ID);
         jdbcTemplate.update("delete from identity.accounts where id = ?", OWNER_ID);
@@ -74,29 +90,86 @@ class BotCurrentPerformanceCqrsPersistenceIntegrationTest {
 
     @Test
     void savedCurrentPerformanceCanBeReadThroughJooq() {
-        var performance = new BotCurrentPerformance(
-                BOT_ID,
-                new BigDecimal("104250.00000000"),
-                new BigDecimal("4.25000000"),
-                new BigDecimal("1.50000000"),
-                new BigDecimal("1.20000000"),
-                "{\"cashAmount\":\"25000.00000000\"}",
-                "ledger-state-v1",
-                "position-state-v1",
-                "performance-v1",
-                42,
-                "projection-v1",
-                UPDATED_AT);
-
-        commandAdapter.save(performance);
+        assertThat(commandService.project(input(42, "104250.00000000", UPDATED_AT)))
+                .isEqualTo(ProjectionWriteDecision.APPLIED);
         var loaded = queryAdapter.findByBotId(BOT_ID).orElseThrow();
 
         assertThat(loaded.equityAmount()).isEqualByComparingTo("104250.00000000");
         assertThat(loaded.totalReturnPct()).isEqualByComparingTo("4.25000000");
-        assertThat(loaded.maxDrawdownPct()).isEqualByComparingTo("1.50000000");
-        assertThat(loaded.metricsDocument()).contains("cashAmount");
+        assertThat(loaded.maxDrawdownPct()).isEqualByComparingTo("0.00000000");
+        assertThat(loaded.metricsDocument()).contains("tradeCount");
         assertThat(loaded.lastEventSequence()).isEqualTo(42);
         assertThat(loaded.updatedAt()).isEqualTo(UPDATED_AT);
+    }
+
+    @Test
+    void duplicateAndOutOfOrderEventsCannotOverwriteLatestProjectionAfterRestart() {
+        var sequence42 = input(42, "104250.00000000", UPDATED_AT);
+        var duplicate42 = input(42, "999999.00000000", UPDATED_AT.plusSeconds(1));
+        var stale41 = input(41, "25001.00000000", UPDATED_AT.plusSeconds(2));
+
+        assertThat(commandService.project(sequence42)).isEqualTo(ProjectionWriteDecision.APPLIED);
+
+        var restartedService = new BotCurrentPerformanceCommandService(
+                new BotCurrentPerformanceJpaCommandAdapter(dsl));
+        assertThat(restartedService.project(duplicate42))
+                .isEqualTo(ProjectionWriteDecision.IGNORED_STALE_OR_DUPLICATE);
+        assertThat(restartedService.project(stale41))
+                .isEqualTo(ProjectionWriteDecision.IGNORED_STALE_OR_DUPLICATE);
+
+        var loaded = queryAdapter.findByBotId(BOT_ID).orElseThrow();
+        assertThat(loaded.lastEventSequence()).isEqualTo(42);
+        assertThat(loaded.equityAmount()).isEqualByComparingTo("104250.00000000");
+        assertThat(loaded.updatedAt()).isEqualTo(UPDATED_AT);
+    }
+
+    @Test
+    void concurrentWritersAlwaysLeaveTheHighestEventSequence() throws Exception {
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var lower = executor.submit(() -> saveAfterBarrier(
+                    input(50, "105000.00000000", UPDATED_AT.plusSeconds(50)), ready, start));
+            var higher = executor.submit(() -> saveAfterBarrier(
+                    input(51, "105100.00000000", UPDATED_AT.plusSeconds(51)), ready, start));
+
+            ready.await();
+            start.countDown();
+            lower.get();
+            higher.get();
+        }
+
+        var loaded = queryAdapter.findByBotId(BOT_ID).orElseThrow();
+        assertThat(loaded.lastEventSequence()).isEqualTo(51);
+        assertThat(loaded.equityAmount()).isEqualByComparingTo("105100.00000000");
+    }
+
+    private ProjectionWriteDecision saveAfterBarrier(
+            LivePerformanceProjectionInput input,
+            CountDownLatch ready,
+            CountDownLatch start) throws InterruptedException {
+        ready.countDown();
+        start.await();
+        return commandService.project(input);
+    }
+
+    private LivePerformanceProjectionInput input(long sequence, String equity, Instant updatedAt) {
+        BigDecimal equityAmount = new BigDecimal(equity);
+        return new LivePerformanceProjectionInput(
+                BOT_ID,
+                CompetitionType.LIVE_PAPER,
+                LivePerformanceSource.LIVE_TRADING,
+                new BigDecimal("100000.00000000"),
+                new BigDecimal("25000.00000000"),
+                List.of(equityAmount.subtract(new BigDecimal("25000.00000000"))),
+                List.of(new EquityObservation(sequence, equityAmount)),
+                new BigDecimal("1.20000000"),
+                Map.of("tradeCount", sequence),
+                "sha256:" + "a".repeat(64),
+                "sha256:" + "b".repeat(64),
+                "performance-v1",
+                sequence,
+                updatedAt);
     }
 
     @SpringBootConfiguration
