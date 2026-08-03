@@ -13,6 +13,7 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation(testFixtures(project(":modules:backend-application")))
+    testImplementation(project(":db-migration"))
     testImplementation(project(":modules:backend-messaging"))
     testImplementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))

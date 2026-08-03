@@ -6,7 +6,15 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-/** The versioned, deterministic request emitted once for an immutable strategy release. */
+/**
+ * The versioned, deterministic request emitted once for an immutable strategy release.
+ *
+ * <p>The request carries no run id. D owns {@code backtest.runs} and addresses the run it creates as
+ * {@code uuid5(namespace, idempotencyKey)} from the metadata below, so the identity of the official
+ * run is a function of this message rather than something the backend assigns. B correlates a
+ * release to its run through {@code bot_id}, which is how {@code StrategyLibraryJooqQueryAdapter}
+ * reads the status back.
+ */
 public record OfficialBacktestRequest(
         MessageMetadata metadata,
         UUID botId,
@@ -54,10 +62,6 @@ public record OfficialBacktestRequest(
         return new OfficialBacktestRequest(
                 metadata, release.botId(), snapshotHash, planChecksum, datasetManifestId,
                 release.launchConfiguration().accountingRulesVersion(), REQUEST_REASON);
-    }
-
-    public UUID runId() {
-        return derivedId(botId, "official-backtest-run");
     }
 
     private static UUID derivedId(UUID botId, String component) {
