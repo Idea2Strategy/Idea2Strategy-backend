@@ -8,6 +8,7 @@ dependencies {
     implementation(project(":modules:backend-application"))
     implementation(project(":modules:backend-persistence"))
     implementation(project(":modules:backend-messaging"))
+    implementation(project(":modules:backend-operator-trust"))
     implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
@@ -19,6 +20,7 @@ dependencies {
     testImplementation("org.flywaydb:flyway-core")
     testImplementation("org.flywaydb:flyway-database-postgresql")
     testImplementation("org.springframework.boot:spring-boot-flyway")
+    testImplementation("org.springframework.security:spring-security-oauth2-jose")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
 }

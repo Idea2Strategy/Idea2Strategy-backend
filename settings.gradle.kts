@@ -11,5 +11,6 @@ include(
     "modules:backend-persistence",
     "modules:backend-messaging",
     "modules:backend-common",
+    "modules:backend-operator-trust",
     "db-migration",
 )

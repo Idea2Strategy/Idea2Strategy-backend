@@ -12,3 +12,21 @@ management:
     web:
       exposure:
         include: health,info
+
+idea2strategy:
+  operator-auth:
+    enabled: ${OPERATOR_AUTH_ENABLED:false}
+    issuer: ${OPERATOR_AUTH_ISSUER:}
+    jwk-set-uri: ${OPERATOR_AUTH_JWK_SET_URI:}
+    audience: ${OPERATOR_AUTH_AUDIENCE:}
+    algorithm: ${OPERATOR_AUTH_ALGORITHM:RS256}
+    maximum-token-age: ${OPERATOR_AUTH_MAXIMUM_TOKEN_AGE:PT5M}
+    maximum-mfa-age: ${OPERATOR_AUTH_MAXIMUM_MFA_AGE:PT10M}
+    clock-skew: ${OPERATOR_AUTH_CLOCK_SKEW:PT30S}
+    allowed-acr-values: ${OPERATOR_AUTH_ALLOWED_ACR_VALUES:}
+    allowed-amr-values: ${OPERATOR_AUTH_ALLOWED_AMR_VALUES:mfa}
+    current-subject-hmac-key-version: ${OPERATOR_AUTH_CURRENT_HMAC_KEY_VERSION:0}
+    current-subject-hmac-key: ${OPERATOR_AUTH_CURRENT_HMAC_KEY:}
+    # Optional rotation uses Spring's direct relaxed-binding names:
+    # IDEA2STRATEGY_OPERATOR_AUTH_PREVIOUS_SUBJECT_HMAC_KEY_VERSION and
+    # IDEA2STRATEGY_OPERATOR_AUTH_PREVIOUS_SUBJECT_HMAC_KEY.
