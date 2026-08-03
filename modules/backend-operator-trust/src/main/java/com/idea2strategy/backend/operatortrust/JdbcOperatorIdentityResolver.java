@@ -48,6 +48,10 @@ public final class JdbcOperatorIdentityResolver {
                       and (last_mfa_verified_at is null or last_mfa_verified_at < ?)
                     """, authenticatedAt, operatorId, authenticatedAt);
         }
-        return Optional.of(new OperatorRequestContext(operatorId, true, identity.currentMfa()));
+        return Optional.of(new OperatorRequestContext(
+                operatorId,
+                true,
+                identity.currentMfa(),
+                identity.currentMfa() ? identity.authenticatedAt() : null));
     }
 }

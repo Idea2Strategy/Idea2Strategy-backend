@@ -30,3 +30,11 @@ idea2strategy:
     # Optional rotation uses Spring's direct relaxed-binding names:
     # IDEA2STRATEGY_OPERATOR_AUTH_PREVIOUS_SUBJECT_HMAC_KEY_VERSION and
     # IDEA2STRATEGY_OPERATOR_AUTH_PREVIOUS_SUBJECT_HMAC_KEY.
+  operator-rbac:
+    read-guard:
+      enabled: ${OPERATOR_RBAC_READ_ENABLED:false}
+      catalog-version: ${OPERATOR_RBAC_CATALOG_VERSION:}
+      catalog-read-permission-id: ${OPERATOR_RBAC_CATALOG_READ_PERMISSION_ID:}
+      assignment-read-permission-id: ${OPERATOR_RBAC_ASSIGNMENT_READ_PERMISSION_ID:}
+      catalog-read-mfa-required: ${OPERATOR_RBAC_CATALOG_READ_MFA_REQUIRED:true}
+      assignment-read-mfa-required: ${OPERATOR_RBAC_ASSIGNMENT_READ_MFA_REQUIRED:true}
