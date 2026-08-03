@@ -96,6 +96,15 @@ public class RoomStrategyBotProvisioningJooqAdapter implements RoomStrategyBotPr
                         + "values (?, 'basic-launch-snapshot.v1', ?::jsonb, ?::jsonb, ?, ?, ?, ?::timestamptz)",
                 release.botId(), release.semanticSnapshot(), release.presentationSnapshot(), release.semanticHash(),
                 release.presentationHash(), release.snapshotHash(), admittedAt);
+        // Root #190: a room bot is evaluated by the same runtime as a personal bot, so it needs the same
+        // published plan. Written beside the snapshot it pins, for the same reason.
+        var contractPlan = release.contractPlan();
+        dsl.execute(
+                "insert into bot.launch_contract_plans "
+                        + "(bot_id, contract_version, plan_schema_version, plan_checksum, plan_document, created_at) "
+                        + "values (?, ?, ?, ?, ?::jsonb, ?::timestamptz)",
+                release.botId(), contractPlan.contractVersion(), contractPlan.planSchemaVersion(),
+                contractPlan.planChecksum(), contractPlan.planDocument(), admittedAt);
         dsl.execute(
                 "insert into bot.launch_configurations "
                         + "(bot_id, initial_cash_amount, currency_code, broker_rules_version, "

@@ -19,8 +19,10 @@ public record ImmutableStrategyRelease(
         String snapshotHash,
         LaunchConfiguration launchConfiguration,
         Partition partition,
+        ContractPlan contractPlan,
         Instant releasedAt) {
     private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern PREFIXED_SHA_256 = Pattern.compile("sha256:[0-9a-f]{64}");
 
     public ImmutableStrategyRelease {
         Objects.requireNonNull(botId, "botId");
@@ -36,7 +38,32 @@ public record ImmutableStrategyRelease(
         requireHash(snapshotHash, "snapshotHash");
         Objects.requireNonNull(launchConfiguration, "launchConfiguration");
         Objects.requireNonNull(partition, "partition");
+        Objects.requireNonNull(contractPlan, "contractPlan");
         Objects.requireNonNull(releasedAt, "releasedAt");
+    }
+
+    /**
+     * The published {@code strategy-bot.v1} compiled plan the evaluation runtime loads this bot from.
+     *
+     * <p>It travels with the release rather than being derived later because it pins {@code snapshotHash}
+     * — the same hash the RUN and STOP commands carry — so producing it anywhere other than the
+     * transaction that writes the snapshot would allow a plan and a command to name different releases.
+     */
+    public record ContractPlan(
+            String contractVersion,
+            String planSchemaVersion,
+            String planChecksum,
+            String planDocument) {
+        public ContractPlan {
+            requireText(contractVersion, "contractVersion");
+            requireText(planSchemaVersion, "planSchemaVersion");
+            requireText(planDocument, "planDocument");
+            Objects.requireNonNull(planChecksum, "planChecksum");
+            if (!PREFIXED_SHA_256.matcher(planChecksum).matches()) {
+                throw new IllegalArgumentException(
+                        "planChecksum must be a sha256-prefixed lowercase digest, as the contract publishes it");
+            }
+        }
     }
 
     public record LaunchConfiguration(

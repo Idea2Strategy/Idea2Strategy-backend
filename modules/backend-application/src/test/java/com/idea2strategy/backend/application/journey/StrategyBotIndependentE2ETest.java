@@ -34,6 +34,7 @@ import com.idea2strategy.backend.domain.strategy.ElementCatalogVersion;
 import com.idea2strategy.backend.domain.strategy.Strategy;
 import com.idea2strategy.backend.domain.strategy.StrategyDocument;
 import com.idea2strategy.backend.domain.strategy.StrategyElementDefinition;
+import com.idea2strategy.backend.domain.strategy.StrategyFeatureDefinition;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationRun;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationStatus;
 import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
@@ -62,6 +63,7 @@ class StrategyBotIndependentE2ETest {
     private static final UUID FEE_POLICY_ID = UUID.fromString("80000000-0000-4000-8000-000000000027");
     private static final UUID BUFFER_POLICY_ID = UUID.fromString("90000000-0000-4000-8000-000000000027");
     private static final UUID DATASET_ID = UUID.fromString("a0000000-0000-4000-8000-000000000027");
+    private static final UUID FEATURE_ID = UUID.fromString("b0000000-0000-4000-8000-000000000027");
     private static final Instant NOW = Instant.parse("2026-08-02T09:00:00Z");
     private static final String LEASE_TOKEN = "e2e-lease-token";
 
@@ -154,7 +156,7 @@ class StrategyBotIndependentE2ETest {
     }
 
     private static BacktestDataCoverage exactCoverage() {
-        return new BacktestDataCoverage("data/v1", Set.of(), Set.of());
+        return new BacktestDataCoverage("data/v1", Set.of(), Set.of("RSI_14"));
     }
 
     private static BasicStrategyCatalog catalog() {
@@ -169,22 +171,47 @@ class StrategyBotIndependentE2ETest {
                         NOW.minusSeconds(3600),
                         null),
                 List.of(
-                        element("MARKET_OPEN", "{}", "{\"signal\":{\"type\":\"BOOLEAN\"}}"),
-                        element("BUY_ORDER", "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}")),
-                List.of(),
+                        element("BASIC_RSI_READ", "{\"properties\":{\"resolution\":{\"type\":\"string\"}},"
+                                        + "\"required\":[\"resolution\"]}",
+                                "{}", "{\"signal\":{\"type\":\"BOOLEAN\"}}",
+                                "LOAD_FEATURE", "{\"feature\":\"RSI_14\",\"resolution\":\"$resolution\"}",
+                                "[\"RSI_14\"]"),
+                        element("BASIC_VALUE_COMPARE",
+                                "{\"properties\":{\"operator\":{\"type\":\"string\"},"
+                                        + "\"threshold\":{\"type\":\"string\"}},"
+                                        + "\"required\":[\"operator\",\"threshold\"]}",
+                                "{\"input\":{\"type\":\"BOOLEAN\"}}", "{\"result\":{\"type\":\"BOOLEAN\"}}",
+                                "COMPARE", "{\"operator\":\"$operator\",\"threshold\":\"$threshold\"}", "[]"),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", "{\"properties\":{},\"required\":[]}",
+                                "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}",
+                                "EMIT_ORDER_CANDIDATE",
+                                "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\",\"side\":\"$container\"}",
+                                "[]")),
+                List.of(new StrategyFeatureDefinition(
+                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "1m", "{\"period\":14}",
+                        "NUMBER", 15, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")),
                 List.of(new SupportedInstrument(INSTRUMENT_ID, "STOCK", "XNAS", "USD", "AAPL")));
     }
 
-    private static StrategyElementDefinition element(String code, String inputs, String outputs) {
+    private static StrategyElementDefinition element(
+            String code,
+            String parameterSchema,
+            String inputs,
+            String outputs,
+            String operation,
+            String arguments,
+            String features) {
         return new StrategyElementDefinition(
                 UUID.nameUUIDFromBytes(code.getBytes(StandardCharsets.UTF_8)),
                 CATALOG_ID,
                 code,
                 "BLOCK",
-                "{}",
+                parameterSchema,
                 inputs,
                 outputs,
-                "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[]}}",
+                "{\"containers\":[\"BUY\"],\"runtime\":{\"operation\":\"" + operation + "\","
+                        + "\"arguments\":" + arguments + "},"
+                        + "\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":" + features + "}}",
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     }
 
@@ -193,9 +220,15 @@ class StrategyBotIndependentE2ETest {
                 + "\"id\":\"buy\",\"container\":\"BUY\",\"evaluationMode\":\"INDEPENDENT\","
                 + "\"allocationMode\":\"EQUAL\",\"instrumentIds\":[\"" + INSTRUMENT_ID + "\"],"
                 + "\"blocks\":["
-                + "{\"id\":\"trigger\",\"elementCode\":\"MARKET_OPEN\",\"parameters\":{}},"
-                + "{\"id\":\"order\",\"elementCode\":\"BUY_ORDER\",\"parameters\":{}}],"
-                + "\"connections\":[{\"fromBlockId\":\"trigger\",\"outputPort\":\"signal\","
+                + "{\"id\":\"trigger\",\"elementCode\":\"BASIC_RSI_READ\","
+                + "\"parameters\":{\"resolution\":\"1m\"}},"
+                + "{\"id\":\"condition\",\"elementCode\":\"BASIC_VALUE_COMPARE\","
+                + "\"parameters\":{\"operator\":\"LT\",\"threshold\":\"30\"}},"
+                + "{\"id\":\"order\",\"elementCode\":\"BASIC_EQUAL_ALLOCATION_ORDER\",\"parameters\":{}}],"
+                + "\"connections\":["
+                + "{\"fromBlockId\":\"trigger\",\"outputPort\":\"signal\","
+                + "\"toBlockId\":\"condition\",\"inputPort\":\"input\"},"
+                + "{\"fromBlockId\":\"condition\",\"outputPort\":\"result\","
                 + "\"toBlockId\":\"order\",\"inputPort\":\"input\"}]}]}";
     }
 

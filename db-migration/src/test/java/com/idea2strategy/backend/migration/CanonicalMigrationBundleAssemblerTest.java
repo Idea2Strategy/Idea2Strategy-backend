@@ -69,7 +69,8 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802232000__backend_operator_trust.sql",
                         "V20260802232100__backend_operator_bootstrap_evidence.sql",
                         "V20260804090000__backend_seed_basic_element_catalog.sql",
-                        "V20260804090100__pipeline_register_official_rsi_14.sql"),
+                        "V20260804090100__pipeline_register_official_rsi_14.sql",
+                        "V20260804100000__backend_bot_launch_contract_plans.sql"),
                 result.orderedFileNames());
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));

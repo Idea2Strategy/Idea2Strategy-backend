@@ -47,6 +47,12 @@ class OfficialBacktestRequestTest {
                 UUID.randomUUID(), "partition", null, 10_000, HASH_A, List.of(flow));
         return new ImmutableStrategyRelease(
                 botId, ownerId, "Bot", null, "{}", "{}", HASH_A, HASH_B, HASH_C,
-                configuration, partition, Instant.parse("2026-08-01T09:00:00Z"));
+                configuration, partition, contractPlan(), Instant.parse("2026-08-01T09:00:00Z"));
+    }
+
+    private static ImmutableStrategyRelease.ContractPlan contractPlan() {
+        return new ImmutableStrategyRelease.ContractPlan(
+                "strategy-bot.v1", "basic-compiled-plan.v1", "sha256:" + "c".repeat(64),
+                "{\"contractVersion\":\"strategy-bot.v1\"}");
     }
 }
