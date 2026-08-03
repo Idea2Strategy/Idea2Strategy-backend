@@ -10,6 +10,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.testcontainers.junit.jupiter.Container;
@@ -39,7 +40,15 @@ class OperatorTrustUpgradeMigrationIntegrationTest {
         migrate(beforeA22);
         UUID legacy = insertOperator("legacy-map", null);
 
-        migrate(central);
+        Path throughTrust = Files.createDirectories(temporaryDirectory.resolve("through-trust"));
+        try (var files = Files.list(central)) {
+            for (Path source : files.filter(Files::isRegularFile).toList()) {
+                if (source.getFileName().toString().compareTo(MIGRATION) <= 0) {
+                    Files.copy(source, throughTrust.resolve(source.getFileName()));
+                }
+            }
+        }
+        migrate(throughTrust);
 
         assertNull(scalar("select external_identity_key_version from operations.operator_accounts where id = ?", legacy));
         assertEquals("operations.operator_bootstrap_receipts",
@@ -66,6 +75,7 @@ class OperatorTrustUpgradeMigrationIntegrationTest {
         UUID anotherAudit = createAuditEvent(anotherOperator);
         assertThrows(SQLException.class, () -> insertReceipt(
                 "bootstrap-b", "b".repeat(64), anotherOperator, assignment, 2, anotherAudit));
+        assertThrows(FlywayException.class, () -> migrate(central));
     }
 
     private UUID insertOperator(String digest, Integer version) throws Exception {

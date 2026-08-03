@@ -32,7 +32,15 @@ strategy edit preview --strategy-id ID --authorization-id ID --credential-id ID 
 strategy edit apply --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE --preview-hash HASH
 strategy validate --strategy-id ID
 strategy release --strategy-id ID --validation-run-id ID
+operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
+
+`operator bootstrap` is a one-shot SSM/deployment command, never an HTTP bootstrap route. The reviewed manifest
+must name the dedicated PostgreSQL role expected for the deployment and contain only HMAC-protected operator
+identity material. Supply database connectivity only through `I2S_BOOTSTRAP_JDBC_URL`,
+`I2S_BOOTSTRAP_DB_USER`, and `I2S_BOOTSTRAP_DB_PASSWORD`; errors and output never echo the manifest, database
+credentials, identity digest, deployment actor, or grant provenance. The command rejects files over 1 MiB,
+duplicate JSON keys, unknown fields, and any mismatch with the separately reviewed SHA-256.
 
 External AI tools must call `tool-contract` first. The returned JSON describes the allowed Basic edit operations,
 forbidden capabilities, stable exit codes, and the required two-step edit flow. An AI tool must inspect the preview
