@@ -8,7 +8,6 @@ import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRe
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
-import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -170,6 +169,17 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         return release;
     }
 
+    /**
+     * Publishes B's official backtest request and nothing else.
+     *
+     * <p>{@code backtest} is D's schema: {@link
+     * com.idea2strategy.backend.migration.DatabaseAccessPolicy} registers it to {@code
+     * MigrationOwner.BACKTEST} and denies the backend role every access but {@code READ}. This
+     * method therefore writes only {@code operations.outbox_messages}, which the backend owns, and
+     * D's {@code OfficialBacktestIntake} turns that message into the run row through its own
+     * lifecycle. The outbox row is the single record of "this release has been requested", so its
+     * idempotency key alone decides whether the request was already published.
+     */
     private void saveOfficialBacktestOnce(
             ImmutableStrategyRelease release,
             OfficialBacktestRequest request) {
@@ -181,40 +191,22 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         }
 
         String idempotencyKey = request.metadata().idempotencyKey();
-        boolean runExists = dsl.fetchOne(
-                "select 1 from backtest.runs where idempotency_key = ?", idempotencyKey) != null;
-        boolean outboxExists = dsl.fetchOne(
+        boolean alreadyPublished = dsl.fetchOne(
                 "select 1 from operations.outbox_messages where idempotency_key = ?", idempotencyKey) != null;
-        if (runExists && outboxExists) {
+        if (alreadyPublished) {
             return;
         }
 
-        var dataset = dsl.fetchOne(
-                "select period_start, period_end from market_data.dataset_manifests "
+        boolean datasetAvailable = dsl.fetchOne(
+                "select 1 from market_data.dataset_manifests "
                         + "where id = ? and status = 'AVAILABLE' and available_at is not null "
-                        + "and available_at <= ?::timestamptz for share",
-                request.datasetManifestId(), release.releasedAt().atOffset(ZoneOffset.UTC));
-        if (dataset == null) {
+                        + "and available_at <= ?::timestamptz",
+                request.datasetManifestId(), release.releasedAt().atOffset(ZoneOffset.UTC)) != null;
+        if (!datasetAvailable) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset must be available at the release instant");
         }
-        OffsetDateTime periodStart = dataset.get("period_start", OffsetDateTime.class);
-        OffsetDateTime periodEnd = dataset.get("period_end", OffsetDateTime.class);
-        var config = release.launchConfiguration();
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
-
-        dsl.execute(
-                "insert into backtest.runs "
-                        + "(id, bot_id, owner_account_id, configuration_hash, status, evaluation_start, "
-                        + "evaluation_end, initial_cash_amount, market_rules_version, accounting_rules_version, "
-                        + "precision_rules_version, fee_policy_id, slippage_rate_bps, "
-                        + "buying_power_buffer_policy_id, idempotency_key, queued_at) "
-                        + "values (?, ?, ?, ?, 'QUEUED', ?::date, ?::date, ?, ?, ?, ?, ?, 5, ?, ?, "
-                        + "?::timestamptz) on conflict (idempotency_key) do nothing",
-                request.runId(), release.botId(), release.ownerAccountId(), config.configurationHash(),
-                periodStart.toLocalDate(), periodEnd.toLocalDate(), config.initialCashAmount(),
-                config.brokerRulesVersion(), config.accountingRulesVersion(), config.precisionRulesVersion(),
-                config.feePolicyId(), config.buyingPowerBufferPolicyId(), idempotencyKey, queuedAt);
 
         dsl.execute(
                 "insert into operations.outbox_messages "

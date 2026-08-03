@@ -166,11 +166,8 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("bot.flows")).isEqualTo(1);
         assertThat(count("bot.flow_instruments")).isEqualTo(1);
         assertThat(count("bot.flow_feature_requirements")).isEqualTo(1);
-        assertThat(count("backtest.runs")).isEqualTo(1);
+        assertThat(count("backtest.runs")).isZero();
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
-        assertThat(jdbc.queryForObject(
-                        "select status::text from backtest.runs where bot_id = ?", String.class, BOT_ID))
-                .isEqualTo("QUEUED");
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
                                 + "where aggregate_id = ?", String.class, BOT_ID))
@@ -235,7 +232,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("bot.launch_configurations")).isEqualTo(2);
         assertThat(count("bot.bot_partitions")).isEqualTo(2);
         assertThat(count("bot.flows")).isEqualTo(2);
-        assertThat(count("backtest.runs")).isEqualTo(1);
+        assertThat(count("backtest.runs")).isZero();
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                         "select execution_eligible_from from bot.bots where id = ?",
