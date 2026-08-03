@@ -37,6 +37,7 @@ public final class ImmutableStrategyReleaseCommandService {
     private final Clock clock;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+    private final StrategyBotCompiledPlanAssembler planAssembler = new StrategyBotCompiledPlanAssembler();
 
     public ImmutableStrategyReleaseCommandService(
             ImmutableStrategyReleaseCommandPort releasePort,
@@ -131,10 +132,23 @@ public final class ImmutableStrategyReleaseCommandService {
         String semanticHash = StrategyDocumentJson.sha256(semanticSnapshot);
         String presentationHash = StrategyDocumentJson.sha256(presentationSnapshot);
         String snapshotHash = snapshotHash(semanticHash, presentationHash, configurationHash);
+        // Assembled last, because the published plan pins the snapshot hash the RUN and STOP commands
+        // will carry. Producing it here keeps the plan and those commands naming one release.
+        var contractPlan = planAssembler.assemble(
+                planRoot,
+                catalog,
+                partition.id(),
+                command.budgetCapBps(),
+                command.initialCashAmount(),
+                flows,
+                semanticHash,
+                snapshotHash,
+                SNAPSHOT_SCHEMA_VERSION,
+                releasedAt);
         var release = new ImmutableStrategyRelease(
                 command.botId(), ownerId, strategy.name(), strategy.description(), semanticSnapshot,
                 presentationSnapshot, semanticHash, presentationHash, snapshotHash, configuration, partition,
-                releasedAt);
+                contractPlan, releasedAt);
         return release;
     }
 

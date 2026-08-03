@@ -166,6 +166,13 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("bot.flows")).isEqualTo(1);
         assertThat(count("bot.flow_instruments")).isEqualTo(1);
         assertThat(count("bot.flow_feature_requirements")).isEqualTo(1);
+        // Root #190: the plan the evaluation runtime loads the bot from lands in the same transaction as
+        // the snapshot whose hash it pins, and a redelivered release adds no second one.
+        assertThat(count("bot.launch_contract_plans")).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select plan_checksum from bot.launch_contract_plans where bot_id = ?",
+                        String.class, BOT_ID))
+                .isEqualTo(release.contractPlan().planChecksum());
         assertThat(count("backtest.runs")).isZero();
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         assertThat(jdbc.queryForObject(
@@ -262,7 +269,13 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 partitionId, "Momentum", null, 10_000, HASH_C, List.of(flow));
         return new ImmutableStrategyRelease(
                 botId, OWNER_ID, "Momentum", null, "{\"mode\":\"BASIC\"}", "{\"name\":\"Momentum\"}",
-                HASH_A, HASH_B, snapshotHash, configuration, partition, NOW);
+                HASH_A, HASH_B, snapshotHash, configuration, partition, contractPlan(), NOW);
+    }
+
+    private static ImmutableStrategyRelease.ContractPlan contractPlan() {
+        return new ImmutableStrategyRelease.ContractPlan(
+                "strategy-bot.v1", "basic-compiled-plan.v1", "sha256:" + "c".repeat(64),
+                "{\"contractVersion\":\"strategy-bot.v1\"}");
     }
 
     @SpringBootConfiguration

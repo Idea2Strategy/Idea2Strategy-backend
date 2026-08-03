@@ -88,6 +88,74 @@ class ImmutableStrategyReleaseCommandServiceTest {
         assertThat(releases.backtestRequest.metadata().idempotencyKey()).startsWith("sha256:").hasSize(71);
     }
 
+    /**
+     * Root #190: the release publishes the compiled plan the evaluation runtime loads the bot from.
+     *
+     * <p>The assertions that matter are the translations, because nothing else in the document could be
+     * wrong without the release itself being wrong: the element catalog's runtime operations replace its
+     * element codes, the block parameters fill the placeholders, the trade container becomes the order
+     * side, and the feature catalog's own vocabulary becomes the consumer's — {@code rsi:1.0.0} to an
+     * exact version, {@code 1m} to a normalised duration, and a fifteen-point window to the fourteen
+     * observations warm-up has to supply before the live bar completes it.
+     */
+    @Test
+    void publishesTheCompiledPlanContractTheEvaluationRuntimeLoadsTheBotFrom() {
+        var release = releaseService().release(RUN_ID, catalog(), command());
+
+        var plan = release.contractPlan();
+        assertThat(plan.contractVersion()).isEqualTo("strategy-bot.v1");
+        assertThat(plan.planSchemaVersion()).isEqualTo("basic-compiled-plan.v1");
+        assertThat(plan.planChecksum()).matches("sha256:[0-9a-f]{64}");
+        assertThat(plan.planDocument())
+                .contains("\"snapshotHash\":\"sha256:" + release.snapshotHash() + "\"")
+                .contains("\"semanticHash\":\"sha256:" + release.semanticHash() + "\"")
+                .contains("\"operation\":\"LOAD_FEATURE\"")
+                .contains("\"operation\":\"COMPARE\"")
+                .contains("\"operation\":\"EMIT_ORDER_CANDIDATE\"")
+                .contains("\"threshold\":\"30\"")
+                .contains("\"side\":\"BUY\"")
+                .contains("\"featureVersion\":\"1.0.0\"")
+                .contains("\"resolution\":\"PT1M\"")
+                .contains("\"requirementId\":\"rsi-14-pt1m\"")
+                .contains("\"requiredObservations\":14")
+                .contains("\"key\":\"" + release.partition().id() + "\"")
+                .contains("\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-01\"");
+    }
+
+    /**
+     * The whole point of publishing the plan at release time: the plan and the RUN command that starts
+     * the bot name one release. If they could be produced separately, a redeployed assembler could
+     * publish a plan pinning a hash no command ever carries, and every start would fail verification.
+     */
+    @Test
+    void publishesOnePlanPerReleaseWithTheSameHashItsCommandsCarry() {
+        var release = releaseService().release(RUN_ID, catalog(), command());
+        var again = releaseService().release(RUN_ID, catalog(), command());
+
+        assertThat(release.contractPlan()).isEqualTo(again.contractPlan());
+        assertThat(release.contractPlan().planDocument())
+                .contains("\"snapshotHash\":\"sha256:" + release.snapshotHash() + "\"");
+    }
+
+    private ImmutableStrategyReleaseCommandService releaseService() {
+        StrategyDocument document = document();
+        StrategyValidationRun validation = validation(document);
+        Strategy strategy = Strategy.createBasic(
+                STRATEGY_ID, OWNER_ID, "Momentum", "Long momentum", NOW.minusSeconds(60));
+        StrategyQueryPort strategies = (id, owner) -> Optional.of(strategy)
+                .filter(value -> id.equals(STRATEGY_ID) && owner.equals(OWNER_ID));
+        StrategyDocumentQueryPort documents = (id, owner) -> Optional.of(document)
+                .filter(value -> id.equals(STRATEGY_ID) && owner.equals(OWNER_ID));
+        StrategyValidationRunQueryPort validations = (id, owner) -> Optional.of(validation)
+                .filter(value -> id.equals(RUN_ID) && owner.equals(OWNER_ID));
+        var planService = new BasicExecutionPlanCommandService(
+                new InMemoryPlanPort(), validations, strategies, documents, new TestPrincipal(OWNER_ID),
+                () -> PLAN_ID, Clock.fixed(NOW, ZoneOffset.UTC));
+        return new ImmutableStrategyReleaseCommandService(
+                new CapturingReleasePort(), planService, validations, strategies, documents,
+                new TestPrincipal(OWNER_ID), Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
     private static ImmutableStrategyReleaseCommand command() {
         return new ImmutableStrategyReleaseCommand(
                 RELEASE_ID, new BigDecimal("100000.00"), 10_000, "broker/v1", "accounting/v1",
@@ -99,9 +167,11 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 + "\"id\":\"buy\",\"container\":\"BUY\",\"evaluationMode\":\"INDEPENDENT\","
                 + "\"allocationMode\":\"EQUAL\",\"instrumentIds\":[\"" + AAPL_ID + "\"],"
                 + "\"blocks\":["
-                + "{\"id\":\"trigger\",\"elementCode\":\"MARKET_OPEN\",\"parameters\":{}},"
-                + "{\"id\":\"condition\",\"elementCode\":\"RSI\",\"parameters\":{}},"
-                + "{\"id\":\"order\",\"elementCode\":\"BUY_ORDER\",\"parameters\":{}}],"
+                + "{\"id\":\"trigger\",\"elementCode\":\"BASIC_RSI_READ\","
+                + "\"parameters\":{\"resolution\":\"1m\"}},"
+                + "{\"id\":\"condition\",\"elementCode\":\"BASIC_VALUE_COMPARE\","
+                + "\"parameters\":{\"operator\":\"LT\",\"threshold\":\"30\"}},"
+                + "{\"id\":\"order\",\"elementCode\":\"BASIC_EQUAL_ALLOCATION_ORDER\",\"parameters\":{}}],"
                 + "\"connections\":["
                 + "{\"fromBlockId\":\"trigger\",\"outputPort\":\"signal\",\"toBlockId\":\"condition\",\"inputPort\":\"input\"},"
                 + "{\"fromBlockId\":\"condition\",\"outputPort\":\"result\",\"toBlockId\":\"order\",\"inputPort\":\"input\"}]}]}");
@@ -125,30 +195,61 @@ class ImmutableStrategyReleaseCommandServiceTest {
                         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         NOW.minusSeconds(3600), null),
                 List.of(
-                        element("MARKET_OPEN", "{}", "{\"signal\":{\"type\":\"BOOLEAN\"}}", noFeatures()),
-                        element("RSI", "{\"input\":{\"type\":\"BOOLEAN\"}}",
-                                "{\"result\":{\"type\":\"BOOLEAN\"}}", rsiFeature()),
-                        element("BUY_ORDER", "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}", noFeatures())),
+                        element("BASIC_RSI_READ", parameters("resolution"), "{}",
+                                "{\"signal\":{\"type\":\"BOOLEAN\"}}",
+                                contract("LOAD_FEATURE",
+                                        "{\"feature\":\"RSI_14\",\"resolution\":\"$resolution\"}",
+                                        "[\"RSI_14\"]")),
+                        element("BASIC_VALUE_COMPARE", parameters("operator", "threshold"),
+                                "{\"input\":{\"type\":\"BOOLEAN\"}}",
+                                "{\"result\":{\"type\":\"BOOLEAN\"}}",
+                                contract("COMPARE",
+                                        "{\"operator\":\"$operator\",\"threshold\":\"$threshold\"}", "[]")),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", parameters(),
+                                "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}",
+                                contract("EMIT_ORDER_CANDIDATE",
+                                        "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\",\"side\":\"$container\"}",
+                                        "[]"))),
                 List.of(new StrategyFeatureDefinition(
-                        FEATURE_ID, CATALOG_ID, "RSI_14", "1.0.0", "1m", "{\"period\":14}",
-                        "NUMBER", 14, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")),
+                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "1m", "{\"period\":14}",
+                        "NUMBER", 15, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")),
                 List.of(new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
     }
 
     private static StrategyElementDefinition element(
-            String code, String inputs, String outputs, String executionContract) {
+            String code, String parameterSchema, String inputs, String outputs, String executionContract) {
         return new StrategyElementDefinition(
                 UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8)), CATALOG_ID,
-                code, "BLOCK", "{}", inputs, outputs, executionContract,
+                code, "BLOCK", parameterSchema, inputs, outputs, executionContract,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     }
 
-    private static String rsiFeature() {
-        return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[\"RSI_14\"]}}";
+    private static String parameters(String... names) {
+        if (names.length == 0) {
+            return "{\"properties\":{},\"required\":[]}";
+        }
+        var properties = new StringBuilder();
+        var required = new StringBuilder();
+        for (String name : names) {
+            if (!properties.isEmpty()) {
+                properties.append(',');
+                required.append(',');
+            }
+            properties.append('"').append(name).append("\":{\"type\":\"string\"}");
+            required.append('"').append(name).append('"');
+        }
+        return "{\"properties\":{" + properties + "},\"required\":[" + required + "]}";
     }
 
-    private static String noFeatures() {
-        return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[]}}";
+    /**
+     * An element contract in the shape the seeded catalog publishes: the backtest features it needs and
+     * the runtime operation it becomes, with {@code $name} placeholders the assembler fills from the
+     * block's parameters.
+     */
+    private static String contract(String operation, String arguments, String features) {
+        return "{\"containers\":[\"BUY\"],\"runtime\":{\"operation\":\"" + operation + "\","
+                + "\"arguments\":" + arguments + "},"
+                + "\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":" + features + "}}";
     }
 
     private static final class InMemoryPlanPort implements CompiledFlowPlanCommandPort {

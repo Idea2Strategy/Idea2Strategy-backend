@@ -264,7 +264,13 @@ class RoomBotRealProvisioningAcceptanceE2ETest {
                 partitionId, "E90", null, 10_000, HASH_C, List.of(flow));
         return new ImmutableStrategyRelease(
                 botId, ownerId, "E90", null, "{\"mode\":\"BASIC\"}", "{\"name\":\"E90\"}",
-                HASH_A, HASH_B, LAUNCH_HASH, configuration, partition, ADMISSION_AT);
+                HASH_A, HASH_B, LAUNCH_HASH, configuration, partition, contractPlan(), ADMISSION_AT);
+    }
+
+    private static ImmutableStrategyRelease.ContractPlan contractPlan() {
+        return new ImmutableStrategyRelease.ContractPlan(
+                "strategy-bot.v1", "basic-compiled-plan.v1", "sha256:" + "c".repeat(64),
+                "{\"contractVersion\":\"strategy-bot.v1\"}");
     }
 
     private void seedReferences() {

@@ -8,6 +8,7 @@ import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRe
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -121,6 +122,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 release.botId(), "basic-launch-snapshot.v1", release.semanticSnapshot(),
                 release.presentationSnapshot(), release.semanticHash(), release.presentationHash(),
                 release.snapshotHash(), at);
+        insertContractPlan(release, at);
 
         dsl.execute(
                 "insert into bot.launch_configurations "
@@ -167,6 +169,23 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         }
         saveOfficialBacktestOnce(release, backtestRequest);
         return release;
+    }
+
+    /**
+     * The published compiled plan, written in the same transaction as the snapshot it pins.
+     *
+     * <p>Root #190: the evaluation runtime reads this row to load a bot. Splitting it from the snapshot
+     * write would leave a window where a bot exists, its RUN command is publishable, and the plan the
+     * command names cannot be found.
+     */
+    private void insertContractPlan(ImmutableStrategyRelease release, OffsetDateTime at) {
+        var plan = release.contractPlan();
+        dsl.execute(
+                "insert into bot.launch_contract_plans "
+                        + "(bot_id, contract_version, plan_schema_version, plan_checksum, plan_document, created_at) "
+                        + "values (?, ?, ?, ?, ?::jsonb, ?::timestamptz)",
+                release.botId(), plan.contractVersion(), plan.planSchemaVersion(), plan.planChecksum(),
+                plan.planDocument(), at);
     }
 
     /**
