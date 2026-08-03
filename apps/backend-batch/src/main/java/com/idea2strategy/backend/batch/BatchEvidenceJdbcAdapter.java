@@ -38,6 +38,12 @@ public class BatchEvidenceJdbcAdapter implements BatchFailureHandoffPort, BatchR
                 "batch-run:" + summary.runId(), hash(summary));
     }
 
+    public void recordDurableRun(DurableDeadlineBatchRuntime.RunReport report) {
+        record(report.runId(), report.correlationId(), "DURABLE_BATCH_RUN_COMPLETED",
+                "DURABLE_BATCH_RUN", report.runId().toString(), report.terminalStatus(),
+                "durable-batch-run:" + report.runId(), hash(report));
+    }
+
     private void record(
             UUID actorId, UUID correlationId, String action, String domain, String stableTarget,
             String reason, String idempotencyKey, String afterHash) {

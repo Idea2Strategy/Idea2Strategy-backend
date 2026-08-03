@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionCommandService;
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionAuthorizationPort;
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
-import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator;
+import com.idea2strategy.backend.persistence.batch.DurableBatchStore;
 import com.idea2strategy.backend.persistence.caseoperations.CaseResponseDeadlineJooqAdapter;
 import com.idea2strategy.backend.persistence.identity.IdentityExpiryJdbcAdapter;
 import com.idea2strategy.backend.persistence.notification.EmailDeliveryGateway;
@@ -101,28 +101,36 @@ public class DeadlineBatchConfiguration {
         return new BatchEvidenceJdbcAdapter(jdbc, json);
     }
 
-    @Bean
+    @Bean(initMethod = "initialize")
     @ConditionalOnBean(BatchEvidenceJdbcAdapter.class)
-    DeadlineBatchOrchestrator deadlineBatchOrchestrator(
+    DurableDeadlineBatchRuntime durableDeadlineBatchRuntime(
+            DurableBatchStore store,
             List<BatchCategoryPort> ports,
             BatchEvidenceJdbcAdapter evidence,
-            @Value("${batch.runtime.maximum-size:100}") int maximumBatchSize) {
-        return new DeadlineBatchOrchestrator(ports, evidence, evidence, maximumBatchSize);
+            @Value("${idea2strategy.batch.deadline.job-code}") String jobCode,
+            @Value("${idea2strategy.batch.deadline.job-version}") String jobVersion,
+            @Value("${idea2strategy.batch.deadline.job-content-hash}") String jobContentHash,
+            @Value("${idea2strategy.batch.deadline.runtime-policy-version}")
+                    String runtimePolicyVersion,
+            @Value("${idea2strategy.batch.deadline.worker-id}") String workerId,
+            @Value("${idea2strategy.batch.deadline.lease-duration}") Duration leaseDuration,
+            @Value("${idea2strategy.batch.deadline.retry-delay}") Duration retryDelay,
+            @Value("${idea2strategy.batch.deadline.discovery-overlap}") Duration discoveryOverlap,
+            @Value("${idea2strategy.batch.deadline.trigger-window}") Duration triggerWindow,
+            @Value("${idea2strategy.batch.deadline.batch-size}") int batchSize,
+            @Value("${idea2strategy.batch.deadline.maximum-attempts}") int maximumAttempts) {
+        return new DurableDeadlineBatchRuntime(
+                store, ports, evidence::recordDurableRun,
+                new DurableDeadlineBatchRuntime.Settings(
+                        jobCode, jobVersion, jobContentHash, runtimePolicyVersion, workerId,
+                        leaseDuration, retryDelay, discoveryOverlap, triggerWindow,
+                        batchSize, maximumAttempts));
     }
 
     @Bean
-    @ConditionalOnBean(DeadlineBatchOrchestrator.class)
-    DeadlineBatchRunner deadlineBatchRunner(
-            DeadlineBatchOrchestrator orchestrator,
-            List<BatchCategoryPort> ports,
-            @Value("${idea2strategy.batch.deadline.worker-id:backend-batch}") String workerId,
-            @Value("${idea2strategy.batch.deadline.runtime-policy-version:deadline-batch-v1}")
-                    String runtimePolicyVersion,
-            @Value("${idea2strategy.batch.deadline.lease-duration:PT2M}") Duration leaseDuration,
-            @Value("${batch.runtime.maximum-size:100}") int batchSize) {
-        return new DeadlineBatchRunner(
-                orchestrator, workerId, runtimePolicyVersion, leaseDuration, batchSize,
-                ports.stream().map(BatchCategoryPort::category).collect(java.util.stream.Collectors.toUnmodifiableSet()));
+    @ConditionalOnBean(DurableDeadlineBatchRuntime.class)
+    DeadlineBatchRunner deadlineBatchRunner(DurableDeadlineBatchRuntime runtime) {
+        return new DeadlineBatchRunner(runtime);
     }
 
     private static final class DatabaseClock extends Clock {

@@ -15,6 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class DurableBatchStore {
+    private static final UUID DEPLOYMENT_ACTOR =
+            UUID.fromString("a2100000-0000-4000-8000-000000000001");
+
     public record ClaimedItem(
             UUID itemId,
             UUID runId,
@@ -57,6 +60,17 @@ public class DurableBatchStore {
                 || !Boolean.TRUE.equals(registered.get("categories_match"))) {
             throw new BatchConflictException("job version conflicts with the published registry");
         }
+        UUID targetId = UUID.nameUUIDFromBytes(
+                (jobCode + "|" + jobVersion).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        jdbc.update("""
+                insert into operations.audit_events
+                    (id, actor_type, actor_id, action_type, target_domain, target_id,
+                     reason_code, correlation_id, idempotency_key, after_hash, occurred_at)
+                values (?, 'SYSTEM', ?, 'BATCH_JOB_VERSION_PUBLISHED', 'BATCH_JOB_VERSION', ?,
+                        'DEPLOYMENT_CONFIGURATION', ?, ?, ?, clock_timestamp())
+                on conflict (idempotency_key) do nothing
+                """, UUID.randomUUID(), DEPLOYMENT_ACTOR, targetId, targetId,
+                "batch-job-version:" + jobCode + ":" + jobVersion, contentHash);
     }
 
     @Transactional
@@ -152,6 +166,34 @@ public class DurableBatchStore {
                 where category_code = ? and source_key = ? and source_version = ?
                   and due_at = ? and replay_sequence = 0
                 """, UUID.class, categoryCode, sourceKey, sourceVersion, Timestamp.from(dueAt));
+    }
+
+    public String runStatus(UUID runId) {
+        Objects.requireNonNull(runId, "runId");
+        return jdbc.queryForObject(
+                "select status::text from operations.batch_runs where id = ?",
+                String.class, runId);
+    }
+
+    @Transactional
+    public void completeRun(UUID runId, String status) {
+        Objects.requireNonNull(runId, "runId");
+        requireText(status, "status");
+        if (!List.of("SUCCEEDED", "PARTIAL_FAILED", "FAILED", "CANCELLED").contains(status)) {
+            throw new IllegalArgumentException("unsupported terminal run status");
+        }
+        int updated = jdbc.update("""
+                update operations.batch_runs
+                   set status = cast(? as operations.batch_run_status),
+                       completed_at = clock_timestamp()
+                 where id = ? and status = 'RUNNING'
+                """, status, runId);
+        if (updated == 0) {
+            String current = runStatus(runId);
+            if (!status.equals(current)) {
+                throw new BatchConflictException("batch run already has a different terminal status");
+            }
+        }
     }
 
     @Transactional
@@ -347,7 +389,7 @@ public class DurableBatchStore {
         }
     }
 
-    private Instant databaseNow() {
+    public Instant databaseNow() {
         return jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
     }
 
