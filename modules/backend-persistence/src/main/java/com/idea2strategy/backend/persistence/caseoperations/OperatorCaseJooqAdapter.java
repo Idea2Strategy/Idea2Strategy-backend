@@ -280,8 +280,9 @@ public class OperatorCaseJooqAdapter implements
                 UserCaseStatus.valueOf((String) row.get("status")),
                 ((Number) row.get("case_version")).longValue(),
                 evidence.stream().map(OperatorCaseState.Evidence::evidenceId).toList(),
-                ((OffsetDateTime) row.get("updated_at")).toInstant());
-        Instant deadline = instant(row.get("response_deadline_at"));
+                instant(row.get("updated_at")));
+        Object deadlineValue = row.get("response_deadline_at");
+        Instant deadline = deadlineValue == null ? null : instant(deadlineValue);
         return Optional.of(new OperatorCaseState(
                 view, (UUID) row.get("assignee_operator_id"), evidence,
                 instant(row.get("database_now")), deadline,
@@ -321,8 +322,8 @@ public class OperatorCaseJooqAdapter implements
                 set status = cast(? as operations.case_status), assignee_operator_id = ?,
                     case_version = ?, current_event_sequence = ?, last_case_event_id = ?, updated_at = ?,
                     response_deadline_at = ?, deadline_policy_version = ?,
-                    closed_at = case when ? then ? else null end,
-                    resolution_code = case when ? then ? else null end
+                    closed_at = case when ? then cast(? as timestamptz) else null end,
+                    resolution_code = case when ? then cast(? as text) else null end
                 where id = ? and case_version = ?
                 """, mutation.status().name(), mutation.assigneeOperatorId(), mutation.nextVersion(),
                 Math.toIntExact(mutation.nextVersion()), eventId, Timestamp.from(evaluatedAt),

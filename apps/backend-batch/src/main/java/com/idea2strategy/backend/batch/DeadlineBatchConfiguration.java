@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,7 +40,13 @@ public class DeadlineBatchConfiguration {
     private static final UUID LIFT_PERMISSION = UUID.fromString("50000000-0000-4000-8000-000000000005");
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
+    @ConditionalOnMissingBean(ObjectMapper.class)
+    ObjectMapper deadlineBatchObjectMapper() {
+        return new ObjectMapper().findAndRegisterModules();
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "spring.datasource", name = "url")
     SanctionExpiryBatchCategoryPort sanctionExpiryBatchCategoryPort(
             JdbcTemplate jdbc, ObjectMapper json) {
         AccountSanctionJdbcAdapter adapter = new AccountSanctionJdbcAdapter(jdbc, json);
@@ -67,7 +74,7 @@ public class DeadlineBatchConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
+    @ConditionalOnProperty(prefix = "spring.datasource", name = "url")
     CaseDeadlineBatchCategoryPort caseDeadlineBatchCategoryPort(
             JdbcTemplate jdbc, ObjectMapper json) {
         return new CaseDeadlineBatchCategoryPort(
@@ -75,7 +82,7 @@ public class DeadlineBatchConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
+    @ConditionalOnProperty(prefix = "spring.datasource", name = "url")
     IdentityExpiryJdbcAdapter identityExpiryJdbcAdapter(
             JdbcTemplate jdbc, PlatformTransactionManager transactions) {
         return new IdentityExpiryJdbcAdapter(jdbc, transactions);
@@ -96,7 +103,7 @@ public class DeadlineBatchConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(JdbcTemplate.class)
+    @ConditionalOnProperty(prefix = "spring.datasource", name = "url")
     BatchEvidenceJdbcAdapter batchEvidenceJdbcAdapter(JdbcTemplate jdbc, ObjectMapper json) {
         return new BatchEvidenceJdbcAdapter(jdbc, json);
     }

@@ -9,6 +9,7 @@ import com.idea2strategy.backend.application.caseoperations.OperatorCaseQuerySer
 import com.idea2strategy.backend.application.caseoperations.OperatorEvidenceRedactor;
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionCommandService;
 import com.idea2strategy.backend.persistence.caseoperations.OperatorCaseJooqAdapter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.EnumMap;
@@ -16,12 +17,51 @@ import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @Configuration(proxyBeanMethods = false)
 public class OperatorCaseConfiguration {
+    @Bean
+    @ConditionalOnProperty(prefix = "spring.datasource", name = "url")
+    @ConditionalOnMissingBean(OperatorCaseJooqAdapter.class)
+    OperatorCaseJooqAdapter operatorCaseJooqAdapter(JdbcTemplate jdbc, ObjectMapper json) {
+        return new OperatorCaseJooqAdapter(jdbc, json);
+    }
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "idea2strategy.operator-case.guard",
+            name = {"queue-permission-id", "detail-permission-id"})
+    OperatorCaseApiGuardCatalog configuredOperatorCaseApiGuardCatalog(
+            @Value("${idea2strategy.operator-case.guard.queue-permission-id}") UUID queuePermissionId,
+            @Value("${idea2strategy.operator-case.guard.detail-permission-id}") UUID detailPermissionId,
+            @Value("${idea2strategy.operator-case.guard.assign-permission-id}") UUID assign,
+            @Value("${idea2strategy.operator-case.guard.reassign-permission-id}") UUID reassign,
+            @Value("${idea2strategy.operator-case.guard.unassign-permission-id}") UUID unassign,
+            @Value("${idea2strategy.operator-case.guard.start-review-permission-id}") UUID startReview,
+            @Value("${idea2strategy.operator-case.guard.request-information-permission-id}") UUID requestInformation,
+            @Value("${idea2strategy.operator-case.guard.resolve-permission-id}") UUID resolve,
+            @Value("${idea2strategy.operator-case.guard.reject-permission-id}") UUID reject,
+            @Value("${idea2strategy.operator-case.guard.apply-sanction-permission-id}") UUID applySanction,
+            @Value("${idea2strategy.operator-case.guard.release-sanction-permission-id}") UUID releaseSanction) {
+        var permissions = new EnumMap<OperatorCaseCommand.Action, UUID>(OperatorCaseCommand.Action.class);
+        permissions.put(OperatorCaseCommand.Action.ASSIGN, assign);
+        permissions.put(OperatorCaseCommand.Action.REASSIGN, reassign);
+        permissions.put(OperatorCaseCommand.Action.UNASSIGN, unassign);
+        permissions.put(OperatorCaseCommand.Action.START_REVIEW, startReview);
+        permissions.put(OperatorCaseCommand.Action.REQUEST_INFORMATION, requestInformation);
+        permissions.put(OperatorCaseCommand.Action.RESOLVE, resolve);
+        permissions.put(OperatorCaseCommand.Action.REJECT, reject);
+        permissions.put(OperatorCaseCommand.Action.APPLY_SANCTION, applySanction);
+        permissions.put(OperatorCaseCommand.Action.RELEASE_SANCTION, releaseSanction);
+        var guard = new OperatorCaseApiGuardCatalog.Guard(queuePermissionId, detailPermissionId, permissions);
+        return () -> guard;
+    }
+
     @Bean
     @ConditionalOnMissingBean(OperatorCaseApiGuardCatalog.class)
     OperatorCaseApiGuardCatalog operatorCaseApiGuardCatalog() {

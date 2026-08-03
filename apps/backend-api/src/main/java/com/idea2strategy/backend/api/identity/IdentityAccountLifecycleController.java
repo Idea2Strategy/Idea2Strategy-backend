@@ -14,7 +14,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -24,7 +24,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/account")
-@ConditionalOnBean({AccountLifecycleService.class, LifecyclePasswordStepUpService.class})
+@ConditionalOnProperty(prefix = "identity.crypto", name = {
+        "email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key"})
 public class IdentityAccountLifecycleController {
     private static final String REQUEST_WITHDRAWAL = "REQUEST_WITHDRAWAL";
     private static final String CANCEL_WITHDRAWAL = "CANCEL_WITHDRAWAL";
