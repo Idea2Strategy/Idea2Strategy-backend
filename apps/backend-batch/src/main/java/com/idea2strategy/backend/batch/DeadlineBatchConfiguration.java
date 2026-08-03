@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.accountsanction.AccountSanctionComm
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionAuthorizationPort;
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
 import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator;
+import com.idea2strategy.backend.persistence.caseoperations.CaseResponseDeadlineJooqAdapter;
 import com.idea2strategy.backend.persistence.notification.EmailDeliveryGateway;
 import com.idea2strategy.backend.persistence.notification.NotificationEmailWorker;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
@@ -54,6 +55,14 @@ public class DeadlineBatchConfiguration {
         TransactionalOutboxStore outbox = new TransactionalOutboxStore(jdbc);
         NotificationEmailWorker worker = new NotificationEmailWorker(jdbc, json, outbox, gateway);
         return new NotificationDeliveryBatchCategoryPort(outbox, worker, maximumAttempts, retryDelay, jdbc);
+    }
+
+    @Bean
+    @ConditionalOnBean(JdbcTemplate.class)
+    CaseDeadlineBatchCategoryPort caseDeadlineBatchCategoryPort(
+            JdbcTemplate jdbc, ObjectMapper json) {
+        return new CaseDeadlineBatchCategoryPort(
+                new CaseResponseDeadlineJooqAdapter(jdbc, json), jdbc);
     }
 
     @Bean
