@@ -1,6 +1,8 @@
 package com.idea2strategy.backend.api.journey;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -13,15 +15,24 @@ import com.idea2strategy.backend.api.identity.VerificationEmailRequested;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRbacCommand;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
 import com.idea2strategy.backend.persistence.operatorrbac.OperatorRbacPersistenceAdapter;
+import com.idea2strategy.backend.operatortrust.VersionedOperatorSubjectHmac;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.event.ApplicationEvents;
@@ -36,6 +47,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @RecordApplicationEvents
 @SpringBootTest
+@Import(AccountHttpPersistenceJourneyIntegrationTest.OperatorJwtTestConfiguration.class)
 class AccountHttpPersistenceJourneyIntegrationTest {
     private static final UUID CORRELATION = id(1);
     private static final String EMAIL = "a22-http@example.com";
@@ -65,7 +77,13 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         registry.add("identity.crypto.lookup-hmac-key", () -> key);
         registry.add("identity.crypto.verification-hmac-key", () -> key);
         registry.add("identity.crypto.session-hmac-key", () -> key);
-        registry.add("idea2strategy.operator-auth.external-subject-hmac-key", () -> key);
+        registry.add("idea2strategy.operator-auth.enabled", () -> "true");
+        registry.add("idea2strategy.operator-auth.issuer", () -> "https://operator.example");
+        registry.add("idea2strategy.operator-auth.jwk-set-uri", () -> "https://operator.example/jwks");
+        registry.add("idea2strategy.operator-auth.audience", () -> "operator-api");
+        registry.add("idea2strategy.operator-auth.current-subject-hmac-key-version", () -> "1");
+        registry.add("idea2strategy.operator-auth.current-subject-hmac-key", () -> key);
+        registry.add("idea2strategy.operator-auth.allowed-amr-values", () -> "mfa");
         registry.add("idea2strategy.operator-auth.mfa-maximum-age", () -> "PT10M");
         registry.add("idea2strategy.operator-rbac.guard.catalog-version", () -> CATALOG);
         registry.add("idea2strategy.operator-rbac.guard.grant-permission-id", () -> GRANT_PERMISSION.toString());
@@ -77,6 +95,8 @@ class AccountHttpPersistenceJourneyIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ApplicationEvents events;
     @Autowired OperatorRbacPersistenceAdapter rbac;
+    @Autowired VersionedOperatorSubjectHmac operatorSubjects;
+    @Autowired JwtDecoder operatorJwtDecoder;
 
     @Test
     void executesSignupSessionPreferencesAndCaseThroughHttpAndPostgres() throws Exception {
@@ -170,6 +190,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
     @Test
     void grantsAndRevokesOperatorRoleThroughAuthenticatedHttpRbacAndImmutableAudit() throws Exception {
         seedRbac();
+        when(operatorJwtDecoder.decode("operator-jwt")).thenReturn(operatorJwt());
         MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
         OperatorRequestContext actor = new OperatorRequestContext(ACTOR, true, true);
         String grantHash = rbac.canonicalRequestHash(new OperatorRbacCommand(
@@ -178,8 +199,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 "a22-rbac-grant", "0".repeat(64)));
 
         mvc.perform(post("/api/v1/operations/rbac/assignments/grants")
-                        .principal(() -> OPERATOR_SUBJECT)
-                        .with(request -> { request.addUserRole("MFA"); return request; })
+                        .header("Authorization", "Bearer operator-jwt")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"targetOperatorId":"%s","roleId":"%s","reasonCode":"A22_GRANT",
@@ -197,8 +217,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 REVOKE_PERMISSION, CATALOG, null, "A22_REVOKE", CORRELATION,
                 "a22-rbac-revoke", "0".repeat(64)));
         mvc.perform(post("/api/v1/operations/rbac/assignments/revocations")
-                        .principal(() -> OPERATOR_SUBJECT)
-                        .with(request -> { request.addUserRole("MFA"); return request; })
+                        .header("Authorization", "Bearer operator-jwt")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"targetOperatorId":"%s","assignmentId":"%s","reasonCode":"A22_REVOKE",
@@ -216,13 +235,8 @@ class AccountHttpPersistenceJourneyIntegrationTest {
     private void seedRbac() throws Exception {
         Instant now = Instant.now();
         java.sql.Timestamp timestamp = java.sql.Timestamp.from(now);
-        String key = Base64.getEncoder().encodeToString(
-                "01234567890123456789012345678901".getBytes(StandardCharsets.UTF_8));
-        byte[] rawKey = Base64.getDecoder().decode(key);
-        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-        mac.init(new javax.crypto.spec.SecretKeySpec(rawKey, "HmacSHA256"));
-        String subjectHash = java.util.HexFormat.of().formatHex(
-                mac.doFinal(OPERATOR_SUBJECT.getBytes(StandardCharsets.UTF_8)));
+        String subjectHash = operatorSubjects
+                .protect("https://operator.example", OPERATOR_SUBJECT).getFirst().digest();
         jdbc.update("insert into operations.roles (id, code, hierarchy_rank, status) values (?, 'A22_ADMIN', 100, 'ACTIVE'), (?, 'A22_REVIEWER', 10, 'ACTIVE')",
                 ACTOR_ROLE, TARGET_ROLE);
         jdbc.update("insert into operations.permissions (id, code, description, sensitivity) values (?, 'A22_GRANT', 'grant', 'HIGH'), (?, 'A22_REVOKE', 'revoke', 'HIGH')",
@@ -240,6 +254,32 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         jdbc.update("update operations.rbac_catalog_versions set status = 'ACTIVE', activated_at = ? where catalog_version = ?", timestamp, CATALOG);
         jdbc.update("insert into operations.operator_role_assignments (id, operator_account_id, role_id, catalog_version, granted_by_operator_id, granted_at) values (?, ?, ?, ?, ?, ?)",
                 id(46), ACTOR, ACTOR_ROLE, CATALOG, ACTOR, timestamp);
+    }
+
+    private Jwt operatorJwt() {
+        Instant now = Instant.now();
+        return Jwt.withTokenValue("operator-jwt")
+                .header("alg", "RS256")
+                .header("kid", "operator-key-1")
+                .issuer("https://operator.example")
+                .subject(OPERATOR_SUBJECT)
+                .audience(List.of("operator-api"))
+                .issuedAt(now.minusSeconds(30))
+                .notBefore(now.minusSeconds(30))
+                .expiresAt(now.plusSeconds(120))
+                .claim("amr", List.of("mfa"))
+                .claim("auth_time", now.minusSeconds(30))
+                .build();
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class OperatorJwtTestConfiguration {
+        @Bean
+        @Primary
+        @Qualifier("operatorJwtDecoder")
+        JwtDecoder testOperatorJwtDecoder() {
+            return mock(JwtDecoder.class);
+        }
     }
 
     private long count(String sql, Object... args) {
