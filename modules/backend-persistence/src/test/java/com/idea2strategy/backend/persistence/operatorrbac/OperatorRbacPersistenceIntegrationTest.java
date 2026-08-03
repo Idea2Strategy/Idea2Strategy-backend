@@ -184,8 +184,9 @@ class OperatorRbacPersistenceIntegrationTest {
         UUID id = UUID.randomUUID();
         jdbc.update("""
                 insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, status, mfa_enrolled_at, created_at)
-                values (?, ?, ?, ?, clock_timestamp())
+                    (id, external_identity_key_hmac, external_identity_key_version,
+                     status, mfa_enrolled_at, created_at)
+                values (?, ?, 1, ?, ?, clock_timestamp())
                 """, id, key + id, active ? "ACTIVE" : "DISABLED",
                 mfa ? Timestamp.from(NOW.minusSeconds(60)) : null);
         return id;

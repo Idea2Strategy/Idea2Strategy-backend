@@ -411,8 +411,9 @@ class AccountReactivationPersistenceIntegrationTest {
                 """, POLICY_ID, "a".repeat(64), utc(NOW.minusSeconds(3600)));
         jdbc.update("""
                 insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, status, mfa_enrolled_at, created_at)
-                values (?, ?, 'ACTIVE', ?, ?)
+                    (id, external_identity_key_hmac, external_identity_key_version,
+                     status, mfa_enrolled_at, created_at)
+                values (?, ?, 1, 'ACTIVE', ?, ?)
                 on conflict (id) do nothing
                 """, OPERATOR_ID, "operator-130", utc(NOW.minusSeconds(3600)), utc(NOW.minusSeconds(3600)));
     }

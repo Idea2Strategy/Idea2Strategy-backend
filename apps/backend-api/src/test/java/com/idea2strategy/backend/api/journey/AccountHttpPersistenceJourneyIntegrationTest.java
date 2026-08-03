@@ -227,7 +227,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 ACTOR_ROLE, TARGET_ROLE);
         jdbc.update("insert into operations.permissions (id, code, description, sensitivity) values (?, 'A22_GRANT', 'grant', 'HIGH'), (?, 'A22_REVOKE', 'revoke', 'HIGH')",
                 GRANT_PERMISSION, REVOKE_PERMISSION);
-        jdbc.update("insert into operations.operator_accounts (id, external_identity_key_hmac, status, mfa_enrolled_at, last_mfa_verified_at, created_at) values (?, ?, 'ACTIVE', ?, ?, ?), (?, ?, 'ACTIVE', ?, ?, ?)",
+        jdbc.update("insert into operations.operator_accounts (id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, last_mfa_verified_at, created_at) values (?, ?, 1, 'ACTIVE', ?, ?, ?), (?, ?, 1, 'ACTIVE', ?, ?, ?)",
                 ACTOR, subjectHash, timestamp, timestamp, timestamp,
                 TARGET, "b".repeat(64), timestamp, timestamp, timestamp);
         jdbc.update("insert into operations.rbac_catalog_versions (catalog_version, content_hash, status, activated_at) values (?, ?, 'DRAFT', null)", CATALOG, "c".repeat(64));

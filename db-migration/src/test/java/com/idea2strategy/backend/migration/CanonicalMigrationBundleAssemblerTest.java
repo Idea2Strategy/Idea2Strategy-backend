@@ -65,7 +65,8 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802231600__backend_account_sanction_commands.sql",
                         "V20260802231700__backend_operator_case_workflow.sql",
                         "V20260802231800__backend_case_response_deadline.sql",
-                        "V20260802231900__backend_durable_batch_execution.sql"),
+                        "V20260802231900__backend_durable_batch_execution.sql",
+                        "V20260802232000__backend_operator_trust.sql"),
                 result.orderedFileNames());
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));
