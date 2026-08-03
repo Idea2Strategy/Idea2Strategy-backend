@@ -87,7 +87,8 @@ class MigrationPolicyTest {
                         "V20260802231700__backend_operator_case_workflow.sql",
                         "V20260802231800__backend_case_response_deadline.sql",
                         "V20260802231900__backend_durable_batch_execution.sql",
-                        "V20260802232000__backend_operator_trust.sql"),
+                        "V20260802232000__backend_operator_trust.sql",
+                        "V20260802232100__backend_operator_bootstrap_evidence.sql"),
                 plan.orderedFileNames());
     }
 

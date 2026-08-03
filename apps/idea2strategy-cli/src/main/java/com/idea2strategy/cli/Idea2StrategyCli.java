@@ -49,7 +49,7 @@ public final class Idea2StrategyCli {
         try {
             Invocation invocation = Invocation.parse(args, environment);
             commandName = invocation.commandName();
-            JsonNode data = execute(invocation, stdin);
+            JsonNode data = execute(invocation, stdin, environment);
             ObjectNode envelope = JSON.createObjectNode().put("ok", true).put("command", commandName);
             envelope.set("data", data);
             out.println(JSON.writeValueAsString(envelope));
@@ -64,8 +64,11 @@ public final class Idea2StrategyCli {
         }
     }
 
-    private static JsonNode execute(Invocation invocation, InputStream stdin) {
+    private static JsonNode execute(Invocation invocation, InputStream stdin, Map<String, String> environment) {
         Arguments arguments = Arguments.parse(invocation.commandArguments());
+        if (arguments.positionals().equals(List.of("operator", "bootstrap"))) {
+            return OperatorBootstrapCommand.execute(arguments, environment);
+        }
         ApiClient api = new ApiClient(invocation.baseUrl());
         CredentialStore credentials = new CredentialStore(invocation.configDirectory());
         List<String> command = arguments.positionals();
@@ -293,6 +296,7 @@ public final class Idea2StrategyCli {
                 case "login" -> 1;
                 case "delegation" -> 2;
                 case "strategy" -> words.size() >= 2 && "edit".equals(words.get(1)) ? 3 : 2;
+                case "operator" -> 2;
                 default -> 1;
             };
             if (words.size() < commandWordCount) {

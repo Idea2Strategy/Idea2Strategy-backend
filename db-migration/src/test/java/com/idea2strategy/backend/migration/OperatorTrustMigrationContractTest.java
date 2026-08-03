@@ -26,4 +26,22 @@ class OperatorTrustMigrationContractTest {
                 "guard_operator_bootstrap_receipt_immutable"
         }) assertTrue(sql.contains(fragment), "missing migration contract: " + fragment);
     }
+
+    @Test
+    void bindsBootstrapReceiptToRestrictedDeploymentEvidence() throws Exception {
+        String sql;
+        try (var input = getClass().getClassLoader().getResourceAsStream(
+                "db/migration/V20260802232100__backend_operator_bootstrap_evidence.sql")) {
+            assertTrue(input != null, "operator bootstrap evidence migration must exist");
+            sql = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        for (String fragment : new String[] {
+                "guard_operator_bootstrap_audit_immutable",
+                "require_complete_operator_bootstrap_evidence",
+                "existing bootstrap receipts require reviewed forward-fix",
+                "BOOTSTRAP_DEPLOYMENT", "databaseRole", "deploymentActorId",
+                "grantProvenance", "technicalGrantorOperatorId",
+                "audit.request_hash", "audit.evidence_hash"
+        }) assertTrue(sql.contains(fragment), "missing bootstrap evidence contract: " + fragment);
+    }
 }
