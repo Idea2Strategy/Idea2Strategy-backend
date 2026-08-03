@@ -145,7 +145,9 @@ class UserCaseJooqStoreIntegrationTest {
                 UUID.randomUUID(), NOW.plusSeconds(1).atOffset(ZoneOffset.UTC));
         jdbc.update("""
                 update operations.cases set status = 'NEEDS_INFORMATION', case_version = 2,
-                    current_event_sequence = 2, last_case_event_id = ?, updated_at = ? where id = ?
+                    current_event_sequence = 2, last_case_event_id = ?, updated_at = ?,
+                    response_deadline_at = clock_timestamp() + interval '1 hour',
+                    deadline_policy_version = 'case-response-v1' where id = ?
                 """, requestEvent, NOW.plusSeconds(1).atOffset(ZoneOffset.UTC), submitted.id());
 
         var result = store.supplement(new UserCaseSupplementCommand(
