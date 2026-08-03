@@ -12,6 +12,7 @@ import com.idea2strategy.backend.application.bottrading.BotPositionView;
 import com.idea2strategy.backend.application.bottrading.BotStopSettlementView;
 import com.idea2strategy.backend.application.bottrading.BotTradingQueryPort;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -116,13 +117,45 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
                         field(name("fp", "long_quantity"), BigDecimal.class),
                         field(name("fp", "short_quantity"), BigDecimal.class),
                         field(name("fp", "cost_basis_amount"), BigDecimal.class),
+                        latestMark(field(name("fp", "instrument_id"), UUID.class)),
                         field(name("fp", "last_event_sequence"), Long.class))
                 .from(table(name("trading", "flow_position_projections")).as("fp"))
                 .where(field(name("fp", "bot_id"), UUID.class).eq(botId))
                 .orderBy(field(name("fp", "flow_id")).asc(), field(name("fp", "instrument_id")).asc())
-                .fetch(record -> new BotPositionView(
+                .fetch(record -> valued(
                         record.value1(), record.value2(), record.value3(), record.value4(),
-                        record.value5(), record.value6(), record.value7(), record.value8())));
+                        record.value5(), record.value6(), record.value7(), record.value8(),
+                        record.value9())));
+    }
+
+    /**
+     * The position with its v1 valuation: net exposure at the mark against the remaining basis.
+     *
+     * <p>A short lot's basis is the value it was opened at, so its gain is the basis minus what
+     * covering costs now — the same subtraction as a long's, with the sign of the net quantity
+     * carrying the direction. A flow that holds both sides at once nets its exposure against its
+     * whole remaining basis, which is the coarsest reading the single projection basis allows; the
+     * per-side split waits for a per-side basis. The products are exact, and only the percentage,
+     * which a division forces to round, is scaled.
+     */
+    private static BotPositionView valued(
+            UUID flowId, UUID partitionId, UUID instrumentId, String currentSymbol,
+            BigDecimal longQuantity, BigDecimal shortQuantity, BigDecimal costBasisAmount,
+            BigDecimal currentPrice, Long lastEventSequence) {
+        BigDecimal unrealisedPnl = null;
+        BigDecimal returnPct = null;
+        if (currentPrice != null) {
+            BigDecimal netQuantity = longQuantity.subtract(shortQuantity);
+            unrealisedPnl = netQuantity.multiply(currentPrice)
+                    .subtract(costBasisAmount.multiply(BigDecimal.valueOf(netQuantity.signum())));
+            if (costBasisAmount.signum() != 0) {
+                returnPct = unrealisedPnl.multiply(BigDecimal.valueOf(100))
+                        .divide(costBasisAmount, 8, RoundingMode.HALF_EVEN);
+            }
+        }
+        return new BotPositionView(
+                flowId, partitionId, instrumentId, currentSymbol, longQuantity, shortQuantity,
+                costBasisAmount, currentPrice, unrealisedPnl, returnPct, lastEventSequence);
     }
 
     /**
@@ -262,6 +295,29 @@ public class BotTradingJooqQueryAdapter implements BotTradingQueryPort {
     /** The ticker the instrument goes by now. */
     private static Field<String> currentSymbol(Field<UUID> instrumentId) {
         return symbolAsOf(instrumentId, DSL.field("now()", OffsetDateTime.class));
+    }
+
+    /**
+     * The v1 mark: the latest official fill reference price for the instrument, engine-wide.
+     *
+     * <p>This is the same rule, subquery shape and tie-break as the F93 quote producer's
+     * {@code LATEST_MARK}, read at the instant of the query rather than at a segment cutoff. Any
+     * bot's fill will do — the price is the engine's observation of the instrument, not the
+     * holder's — and a position normally cannot exist without the fill that opened it, so the
+     * subquery is empty only for a row no fill has ever touched.
+     */
+    private static Field<BigDecimal> latestMark(Field<UUID> instrumentId) {
+        return DSL.field(
+                """
+                (select mark_f.reference_price
+                   from trading.fills mark_f
+                   join trading.orders mark_o on mark_o.id = mark_f.order_id
+                  where mark_o.instrument_id = {0}
+                    and mark_f.occurred_at < now()
+                  order by mark_f.occurred_at desc, mark_f.id
+                  limit 1)
+                """,
+                BigDecimal.class, instrumentId);
     }
 
     private <T> Optional<T> owned(UUID botId, UUID ownerAccountId, Supplier<T> read) {
