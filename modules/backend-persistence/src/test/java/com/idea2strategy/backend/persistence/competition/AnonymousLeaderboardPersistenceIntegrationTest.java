@@ -90,8 +90,8 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
                 VIEWER_ID, OTHER_ID, OUTSIDER_ID);
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
-                        + "values (?, 'leaderboard-sanction-operator', 'ACTIVE', ?, ?)",
+                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, created_at) "
+                        + "values (?, 'leaderboard-sanction-operator', 1, 'ACTIVE', ?, ?)",
                 OPERATOR_ID, CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC),
                 CUTOFF.minusSeconds(3600).atOffset(ZoneOffset.UTC));
         jdbc.update(

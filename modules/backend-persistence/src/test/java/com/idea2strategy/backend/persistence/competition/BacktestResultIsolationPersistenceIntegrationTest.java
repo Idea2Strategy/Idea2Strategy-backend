@@ -98,8 +98,8 @@ class BacktestResultIsolationPersistenceIntegrationTest {
                 OWNER_ID, utc(AT.minusSeconds(10)), OUTSIDER_ID, utc(AT.minusSeconds(10)));
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
-                        + "values (?, 'e92-operator', 'ACTIVE', ?, ?)",
+                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, created_at) "
+                        + "values (?, 'e92-operator', 1, 'ACTIVE', ?, ?)",
                 OPERATOR_ID, utc(AT.minusSeconds(10)), utc(AT.minusSeconds(10)));
         jdbc.update(
                 "insert into competition.scoring_template_versions "

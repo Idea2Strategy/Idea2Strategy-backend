@@ -122,8 +122,8 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 at.minusDays(1));
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, status, mfa_enrolled_at, created_at) "
-                        + "values (?, 'operator-e10', 'ACTIVE', ?, ?)",
+                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, created_at) "
+                        + "values (?, 'operator-e10', 1, 'ACTIVE', ?, ?)",
                 OPERATOR_ID,
                 at.minusDays(2),
                 at.minusDays(2));

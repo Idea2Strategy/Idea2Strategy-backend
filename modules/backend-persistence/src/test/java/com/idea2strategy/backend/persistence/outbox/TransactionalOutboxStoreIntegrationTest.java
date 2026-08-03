@@ -159,9 +159,9 @@ class TransactionalOutboxStoreIntegrationTest {
         String catalogVersion = "outbox-test-" + UUID.randomUUID();
         jdbc.update("""
                 insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, status, mfa_enrolled_at,
+                    (id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at,
                      last_mfa_verified_at, created_at)
-                values (?, ?, 'ACTIVE', clock_timestamp(), clock_timestamp(), clock_timestamp())
+                values (?, ?, 1, 'ACTIVE', clock_timestamp(), clock_timestamp(), clock_timestamp())
                 """, operator, "outbox-test-" + operator);
         jdbc.update("insert into operations.roles (id, code, hierarchy_rank, status) values (?, 'OUTBOX_OPERATOR', 1, 'ACTIVE')", role);
         jdbc.update("insert into operations.permissions (id, code, description, sensitivity) values (?, 'OPERATIONS_OUTBOX_REPLAY', 'Replay dead letters', 'HIGH')", permission);
