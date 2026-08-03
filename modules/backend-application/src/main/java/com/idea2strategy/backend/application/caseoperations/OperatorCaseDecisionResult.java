@@ -34,7 +34,14 @@ public record OperatorCaseDecisionResult(
             UserCaseStatus status,
             long nextVersion,
             String eventType,
-            String sanctionResultReference) {}
+            String sanctionResultReference,
+            Instant responseDeadlineAt,
+            String deadlinePolicyVersion) {
+        public Mutation(UUID assigneeOperatorId, UserCaseStatus status, long nextVersion,
+                String eventType, String sanctionResultReference) {
+            this(assigneeOperatorId, status, nextVersion, eventType, sanctionResultReference, null, null);
+        }
+    }
 
     public record AuditEvidence(
             UUID actorOperatorId,

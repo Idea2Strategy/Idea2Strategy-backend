@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.api.caseoperations;
 
 import com.idea2strategy.backend.application.caseoperations.CaseSanctionCommandPort;
+import com.idea2strategy.backend.application.caseoperations.CaseResponseDeadlinePolicy;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseCommandService;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseCommand;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseApiGuardCatalog;
@@ -9,6 +10,7 @@ import com.idea2strategy.backend.application.caseoperations.OperatorEvidenceReda
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionCommandService;
 import com.idea2strategy.backend.persistence.caseoperations.OperatorCaseJooqAdapter;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.EnumMap;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
@@ -16,6 +18,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 
 @Configuration(proxyBeanMethods = false)
 public class OperatorCaseConfiguration {
@@ -42,10 +45,13 @@ public class OperatorCaseConfiguration {
     @ConditionalOnBean({OperatorCaseJooqAdapter.class, CaseSanctionCommandPort.class})
     OperatorCaseCommandService operatorCaseCommandService(
             OperatorCaseJooqAdapter adapter,
-            CaseSanctionCommandPort sanctions) {
+            CaseSanctionCommandPort sanctions,
+            @Value("${idea2strategy.case.response-deadline.policy-version:case-response-v1}") String policyVersion,
+            @Value("${idea2strategy.case.response-deadline.window:PT168H}") Duration responseWindow) {
         return new OperatorCaseCommandService(
                 adapter, adapter, adapter, sanctions, adapter,
-                new OperatorEvidenceRedactor(), Clock.systemUTC());
+                new OperatorEvidenceRedactor(),
+                new CaseResponseDeadlinePolicy(policyVersion, responseWindow), Clock.systemUTC());
     }
 
     @Bean

@@ -10,10 +10,21 @@ import java.util.UUID;
 public record OperatorCaseState(
         UserCaseView caseView,
         UUID assigneeOperatorId,
-        List<Evidence> evidence) {
+        List<Evidence> evidence,
+        Instant databaseNow,
+        Instant responseDeadlineAt,
+        String deadlinePolicyVersion) {
     public OperatorCaseState {
         Objects.requireNonNull(caseView, "caseView");
         evidence = List.copyOf(evidence);
+        Objects.requireNonNull(databaseNow, "databaseNow");
+        if ((responseDeadlineAt == null) != (deadlinePolicyVersion == null)) {
+            throw new IllegalArgumentException("CASE_DEADLINE_PAIR_INVALID");
+        }
+    }
+
+    public OperatorCaseState(UserCaseView caseView, UUID assigneeOperatorId, List<Evidence> evidence) {
+        this(caseView, assigneeOperatorId, evidence, caseView.updatedAt(), null, null);
     }
 
     public record Evidence(

@@ -8,6 +8,7 @@ import com.idea2strategy.backend.application.usercase.UserCaseStatus;
 import com.idea2strategy.backend.application.usercase.UserCaseType;
 import com.idea2strategy.backend.application.usercase.UserCaseView;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -112,12 +113,27 @@ class OperatorCaseServiceTest {
 
         assertThat(result.mutation().status()).isEqualTo(UserCaseStatus.NEEDS_INFORMATION);
         assertThat(result.mutation().nextVersion()).isEqualTo(9);
+        assertThat(result.mutation().responseDeadlineAt()).isEqualTo(NOW.plus(Duration.ofDays(7)));
+        assertThat(result.mutation().deadlinePolicyVersion()).isEqualTo("case-response-v1");
         assertThat(fixture.notifications.intents).singleElement().satisfies(intent -> {
             assertThat(intent.eventType()).isEqualTo("CASE_INFORMATION_REQUESTED");
             assertThat(intent.publicPayload()).containsOnlyKeys("caseId", "status");
         });
         assertThat(result.auditEvidence().beforeStatus()).isEqualTo(UserCaseStatus.UNDER_REVIEW);
         assertThat(result.auditEvidence().afterStatus()).isEqualTo(UserCaseStatus.NEEDS_INFORMATION);
+    }
+
+    @Test
+    void canRequestInformationDirectlyFromOpenWithoutCallerSuppliedDuration() {
+        var fixture = fixture(state(UserCaseStatus.OPEN, 2, OPERATOR));
+
+        OperatorCaseDecisionResult result = fixture.commandService().execute(command(
+                OperatorCaseCommand.Action.REQUEST_INFORMATION, 2, null, null,
+                "request-open", hash('0')));
+
+        assertThat(result.status()).isEqualTo(OperatorCaseDecisionResult.Status.APPLIED);
+        assertThat(result.mutation().status()).isEqualTo(UserCaseStatus.NEEDS_INFORMATION);
+        assertThat(result.mutation().responseDeadlineAt()).isEqualTo(NOW.plus(Duration.ofDays(7)));
     }
 
     @Test
@@ -230,7 +246,8 @@ class OperatorCaseServiceTest {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         return new Fixture(
                 new OperatorCaseCommandService(
-                        commands, authorization, assignees, sanctions, notifications, redactor, clock),
+                        commands, authorization, assignees, sanctions, notifications, redactor,
+                        new CaseResponseDeadlinePolicy("case-response-v1", Duration.ofDays(7)), clock),
                 new OperatorCaseQueryService(queue, authorization, redactor, clock),
                 authorization, assignees, sanctions, notifications, commands, queue);
     }

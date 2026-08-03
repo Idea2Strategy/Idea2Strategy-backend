@@ -67,9 +67,9 @@ public class OperatorCaseJooqAdapter implements
         OperatorCaseDecisionResult result = decision.decide(state);
         UUID eventId = null;
         if (result.mutation() != null) {
-            eventId = applyMutation(command, state, result, evaluatedAt);
+            eventId = applyMutation(command, state, result, state.databaseNow());
         }
-        insertReceipt(command, result, eventId, evaluatedAt);
+        insertReceipt(command, result, eventId, state.databaseNow());
         return result;
     }
 
@@ -242,7 +242,8 @@ public class OperatorCaseJooqAdapter implements
     private Optional<OperatorCaseState> loadCase(UUID caseId, boolean lock) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 select id, account_id, case_type::text, status::text, case_version,
-                       assignee_operator_id, updated_at
+                       assignee_operator_id, updated_at, response_deadline_at,
+                       deadline_policy_version, clock_timestamp() as database_now
                 from operations.cases where id = ?
                 """ + (lock ? " for update" : ""), caseId);
         if (rows.isEmpty()) {
@@ -280,7 +281,11 @@ public class OperatorCaseJooqAdapter implements
                 ((Number) row.get("case_version")).longValue(),
                 evidence.stream().map(OperatorCaseState.Evidence::evidenceId).toList(),
                 ((OffsetDateTime) row.get("updated_at")).toInstant());
-        return Optional.of(new OperatorCaseState(view, (UUID) row.get("assignee_operator_id"), evidence));
+        Instant deadline = instant(row.get("response_deadline_at"));
+        return Optional.of(new OperatorCaseState(
+                view, (UUID) row.get("assignee_operator_id"), evidence,
+                instant(row.get("database_now")), deadline,
+                (String) row.get("deadline_policy_version")));
     }
 
     private UUID applyMutation(
@@ -315,11 +320,14 @@ public class OperatorCaseJooqAdapter implements
                 update operations.cases
                 set status = cast(? as operations.case_status), assignee_operator_id = ?,
                     case_version = ?, current_event_sequence = ?, last_case_event_id = ?, updated_at = ?,
+                    response_deadline_at = ?, deadline_policy_version = ?,
                     closed_at = case when ? then ? else null end,
                     resolution_code = case when ? then ? else null end
                 where id = ? and case_version = ?
                 """, mutation.status().name(), mutation.assigneeOperatorId(), mutation.nextVersion(),
-                Math.toIntExact(mutation.nextVersion()), eventId, Timestamp.from(evaluatedAt), terminal,
+                Math.toIntExact(mutation.nextVersion()), eventId, Timestamp.from(evaluatedAt),
+                mutation.responseDeadlineAt() == null ? null : Timestamp.from(mutation.responseDeadlineAt()),
+                mutation.deadlinePolicyVersion(), terminal,
                 Timestamp.from(evaluatedAt), terminal, mutation.eventType(), command.caseId(), command.expectedVersion());
         if (changed != 1) {
             throw new IllegalStateException("CASE_CONCURRENT_MUTATION");
@@ -385,6 +393,12 @@ public class OperatorCaseJooqAdapter implements
             case "CASE_SANCTION_RELEASED" -> "SANCTION_RELEASED";
             default -> throw new IllegalStateException("Unsupported operator case event: " + eventType);
         };
+    }
+
+    private static Instant instant(Object value) {
+        if (value instanceof OffsetDateTime offset) return offset.toInstant();
+        if (value instanceof Timestamp timestamp) return timestamp.toInstant();
+        throw new IllegalStateException("CASE_TIMESTAMP_INVALID");
     }
 
     private static void appendIn(StringBuilder sql, List<Object> arguments, List<String> values) {

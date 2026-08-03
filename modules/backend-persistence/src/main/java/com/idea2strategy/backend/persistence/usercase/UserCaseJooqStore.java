@@ -100,7 +100,7 @@ public class UserCaseJooqStore implements UserCaseStore {
         Record current = dsl.fetchOne("""
                 select id, account_id, case_type::text as case_type, status::text as status,
                        subject, case_version, current_event_sequence, last_case_event_id,
-                       updated_at
+                       updated_at, response_deadline_at, deadline_policy_version
                 from operations.cases where id = ? and account_id = ? for update
                 """, command.caseId(), command.accountId());
         if (current == null) {
@@ -109,12 +109,18 @@ public class UserCaseJooqStore implements UserCaseStore {
         if (!"NEEDS_INFORMATION".equals(current.get("status", String.class))) {
             return failed(CommandResult.Outcome.TRANSITION_NOT_ALLOWED);
         }
+        Instant databaseNow = dsl.fetchOne("select clock_timestamp()")
+                .get(0, OffsetDateTime.class).toInstant();
+        OffsetDateTime responseDeadline = current.get("response_deadline_at", OffsetDateTime.class);
+        if (responseDeadline == null || !databaseNow.isBefore(responseDeadline.toInstant())) {
+            return failed(CommandResult.Outcome.TRANSITION_NOT_ALLOWED);
+        }
         long version = current.get("case_version", Long.class);
         if (version != command.expectedVersion()) {
             return failed(CommandResult.Outcome.STALE_VERSION);
         }
         List<VerifiedUserCaseEvidence> evidence = verify(
-                command.accountId(), command.evidenceReferences(), now);
+                command.accountId(), command.evidenceReferences(), databaseNow);
         if (evidence == null) {
             return failed(CommandResult.Outcome.RESOURCE_NOT_AVAILABLE);
         }
@@ -122,14 +128,15 @@ public class UserCaseJooqStore implements UserCaseStore {
         int sequence = current.get("current_event_sequence", Integer.class) + 1;
         UUID previousEventId = current.get("last_case_event_id", UUID.class);
         UUID eventId = UUID.randomUUID();
-        OffsetDateTime at = utc(now);
+        OffsetDateTime at = utc(databaseNow);
         ObjectNode eventPayload = json.createObjectNode().put("evidenceCount", evidence.size());
         insertEvent(eventId, command.caseId(), command.accountId(), sequence, previousEventId,
                 "EVIDENCE_ADDED", "OPEN", command.correlationId(), eventPayload, at);
         dsl.execute("""
                 update operations.cases
                 set status = 'OPEN', case_version = case_version + 1,
-                    current_event_sequence = ?, last_case_event_id = ?, updated_at = ?::timestamptz
+                    current_event_sequence = ?, last_case_event_id = ?, updated_at = ?::timestamptz,
+                    response_deadline_at = null, deadline_policy_version = null
                 where id = ? and account_id = ? and case_version = ?
                 """, sequence, eventId, at, command.caseId(), command.accountId(), command.expectedVersion());
         insertEvidence(command.caseId(), eventId, command.accountId(), evidence, at);
@@ -137,7 +144,7 @@ public class UserCaseJooqStore implements UserCaseStore {
         UserCaseView view = new UserCaseView(
                 command.caseId(), command.accountId(),
                 UserCaseType.valueOf(current.get("case_type", String.class)),
-                UserCaseStatus.OPEN, version + 1, allEvidence, now);
+                UserCaseStatus.OPEN, version + 1, allEvidence, databaseNow);
         insertOutbox(command.caseId(), sequence, "USER_CASE_EVIDENCE_ADDED",
                 command.accountId() + ":" + ADD_EVIDENCE + ":" + command.idempotencyKey(), view, at);
         insertReceipt(command.accountId(), ADD_EVIDENCE, command.idempotencyKey(), command.requestHash(),

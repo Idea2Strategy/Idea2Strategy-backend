@@ -15,6 +15,7 @@ public final class OperatorCaseCommandService {
     private final CaseSanctionCommandPort sanctions;
     private final CaseNotificationOutboxPort notifications;
     private final OperatorEvidenceRedactor redactor;
+    private final CaseResponseDeadlinePolicy deadlinePolicy;
     private final Clock clock;
 
     public OperatorCaseCommandService(
@@ -24,6 +25,7 @@ public final class OperatorCaseCommandService {
             CaseSanctionCommandPort sanctions,
             CaseNotificationOutboxPort notifications,
             OperatorEvidenceRedactor redactor,
+            CaseResponseDeadlinePolicy deadlinePolicy,
             Clock clock) {
         this.commands = Objects.requireNonNull(commands, "commands");
         this.authorization = Objects.requireNonNull(authorization, "authorization");
@@ -31,6 +33,7 @@ public final class OperatorCaseCommandService {
         this.sanctions = Objects.requireNonNull(sanctions, "sanctions");
         this.notifications = Objects.requireNonNull(notifications, "notifications");
         this.redactor = Objects.requireNonNull(redactor, "redactor");
+        this.deadlinePolicy = Objects.requireNonNull(deadlinePolicy, "deadlinePolicy");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -40,7 +43,8 @@ public final class OperatorCaseCommandService {
             throw new OperatorCaseAuthenticationRejectedException();
         }
         Instant now = clock.instant();
-        return commands.executeAtomically(command, now, state -> decide(command, state, now));
+        return commands.executeAtomically(command, now,
+                state -> decide(command, state, state.databaseNow()));
     }
 
     private OperatorCaseDecisionResult decide(
@@ -70,15 +74,30 @@ public final class OperatorCaseCommandService {
             case UNASSIGN -> unassign(command, state, now, guard, evidence);
             case START_REVIEW -> transition(command, state, now, guard, evidence,
                     UserCaseStatus.OPEN, UserCaseStatus.UNDER_REVIEW, "CASE_REVIEW_STARTED", false);
-            case REQUEST_INFORMATION -> transition(command, state, now, guard, evidence,
-                    UserCaseStatus.UNDER_REVIEW, UserCaseStatus.NEEDS_INFORMATION,
-                    "CASE_INFORMATION_REQUESTED", true);
+            case REQUEST_INFORMATION -> requestInformation(command, state, now, guard, evidence);
             case RESOLVE -> transition(command, state, now, guard, evidence,
                     UserCaseStatus.UNDER_REVIEW, UserCaseStatus.RESOLVED, "CASE_RESOLVED", true);
             case REJECT -> transition(command, state, now, guard, evidence,
                     UserCaseStatus.UNDER_REVIEW, UserCaseStatus.REJECTED, "CASE_REJECTED", true);
             case APPLY_SANCTION, RELEASE_SANCTION -> sanction(command, state, now, guard, evidence);
         };
+    }
+
+    private OperatorCaseDecisionResult requestInformation(
+            OperatorCaseCommand command, OperatorCaseState state, Instant now,
+            OperatorCaseAuthorizationPort.Decision guard, List<OperatorEvidenceView> evidence) {
+        if (!isCurrentAssignee(command, state)) {
+            return rejected(command, state, now, "CASE_ASSIGNEE_REQUIRED", guard, null);
+        }
+        if (state.caseView().status().terminal()
+                || (state.caseView().status() != UserCaseStatus.OPEN
+                    && state.caseView().status() != UserCaseStatus.UNDER_REVIEW)) {
+            return rejected(command, state, now, "CASE_TRANSITION_NOT_ALLOWED", guard, null);
+        }
+        Instant deadline = deadlinePolicy.deadlineFrom(state.databaseNow());
+        return applied(command, state, now, guard, evidence, state.assigneeOperatorId(),
+                UserCaseStatus.NEEDS_INFORMATION, "CASE_INFORMATION_REQUESTED", null, true,
+                deadline, deadlinePolicy.version());
     }
 
     private OperatorCaseDecisionResult assign(
@@ -198,6 +217,16 @@ public final class OperatorCaseCommandService {
             String eventType,
             String sanctionReference,
             boolean notifyUser) {
+        return applied(command, state, now, guard, evidence, assignee, targetStatus,
+                eventType, sanctionReference, notifyUser, null, null);
+    }
+
+    private OperatorCaseDecisionResult applied(
+            OperatorCaseCommand command, OperatorCaseState state, Instant now,
+            OperatorCaseAuthorizationPort.Decision guard, List<OperatorEvidenceView> evidence,
+            UUID assignee, UserCaseStatus targetStatus, String eventType,
+            String sanctionReference, boolean notifyUser, Instant responseDeadlineAt,
+            String deadlinePolicyVersion) {
         long nextVersion = state.caseView().version() + 1;
         if (notifyUser) {
             notifications.stageInCurrentTransaction(new CaseNotificationOutboxPort.Intent(
@@ -210,7 +239,8 @@ public final class OperatorCaseCommandService {
                     Map.of("caseId", command.caseId().toString(), "status", targetStatus.name())));
         }
         var mutation = new OperatorCaseDecisionResult.Mutation(
-                assignee, targetStatus, nextVersion, eventType, sanctionReference);
+                assignee, targetStatus, nextVersion, eventType, sanctionReference,
+                responseDeadlineAt, deadlinePolicyVersion);
         return new OperatorCaseDecisionResult(
                 OperatorCaseDecisionResult.Status.APPLIED,
                 eventType,
