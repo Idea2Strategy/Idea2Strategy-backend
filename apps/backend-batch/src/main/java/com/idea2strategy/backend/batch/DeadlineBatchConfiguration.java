@@ -6,6 +6,7 @@ import com.idea2strategy.backend.application.accountsanction.AccountSanctionAuth
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
 import com.idea2strategy.backend.application.batch.DeadlineBatchOrchestrator;
 import com.idea2strategy.backend.persistence.caseoperations.CaseResponseDeadlineJooqAdapter;
+import com.idea2strategy.backend.persistence.identity.IdentityExpiryJdbcAdapter;
 import com.idea2strategy.backend.persistence.notification.EmailDeliveryGateway;
 import com.idea2strategy.backend.persistence.notification.NotificationEmailWorker;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
@@ -20,11 +21,19 @@ import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @Configuration(proxyBeanMethods = false)
+@EnableScheduling
+@ConditionalOnProperty(
+        name = "idea2strategy.batch.deadline.enabled",
+        havingValue = "true",
+        matchIfMissing = false)
 public class DeadlineBatchConfiguration {
     private static final UUID APPLY_PERMISSION = UUID.fromString("40000000-0000-4000-8000-000000000004");
     private static final UUID LIFT_PERMISSION = UUID.fromString("50000000-0000-4000-8000-000000000005");
@@ -67,6 +76,27 @@ public class DeadlineBatchConfiguration {
 
     @Bean
     @ConditionalOnBean(JdbcTemplate.class)
+    IdentityExpiryJdbcAdapter identityExpiryJdbcAdapter(
+            JdbcTemplate jdbc, PlatformTransactionManager transactions) {
+        return new IdentityExpiryJdbcAdapter(jdbc, transactions);
+    }
+
+    @Bean
+    @ConditionalOnBean(IdentityExpiryJdbcAdapter.class)
+    SessionExpiryBatchCategoryPort sessionExpiryBatchCategoryPort(
+            IdentityExpiryJdbcAdapter expiry, JdbcTemplate jdbc) {
+        return new SessionExpiryBatchCategoryPort(expiry, jdbc);
+    }
+
+    @Bean
+    @ConditionalOnBean(IdentityExpiryJdbcAdapter.class)
+    DelegatedCredentialExpiryBatchCategoryPort delegatedCredentialExpiryBatchCategoryPort(
+            IdentityExpiryJdbcAdapter expiry, JdbcTemplate jdbc) {
+        return new DelegatedCredentialExpiryBatchCategoryPort(expiry, jdbc);
+    }
+
+    @Bean
+    @ConditionalOnBean(JdbcTemplate.class)
     BatchEvidenceJdbcAdapter batchEvidenceJdbcAdapter(JdbcTemplate jdbc, ObjectMapper json) {
         return new BatchEvidenceJdbcAdapter(jdbc, json);
     }
@@ -78,6 +108,21 @@ public class DeadlineBatchConfiguration {
             BatchEvidenceJdbcAdapter evidence,
             @Value("${batch.runtime.maximum-size:100}") int maximumBatchSize) {
         return new DeadlineBatchOrchestrator(ports, evidence, evidence, maximumBatchSize);
+    }
+
+    @Bean
+    @ConditionalOnBean(DeadlineBatchOrchestrator.class)
+    DeadlineBatchRunner deadlineBatchRunner(
+            DeadlineBatchOrchestrator orchestrator,
+            List<BatchCategoryPort> ports,
+            @Value("${idea2strategy.batch.deadline.worker-id:backend-batch}") String workerId,
+            @Value("${idea2strategy.batch.deadline.runtime-policy-version:deadline-batch-v1}")
+                    String runtimePolicyVersion,
+            @Value("${idea2strategy.batch.deadline.lease-duration:PT2M}") Duration leaseDuration,
+            @Value("${batch.runtime.maximum-size:100}") int batchSize) {
+        return new DeadlineBatchRunner(
+                orchestrator, workerId, runtimePolicyVersion, leaseDuration, batchSize,
+                ports.stream().map(BatchCategoryPort::category).collect(java.util.stream.Collectors.toUnmodifiableSet()));
     }
 
     private static final class DatabaseClock extends Clock {

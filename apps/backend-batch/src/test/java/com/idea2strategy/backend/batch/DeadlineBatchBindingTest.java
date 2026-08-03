@@ -15,6 +15,8 @@ import com.idea2strategy.backend.application.accountsanction.AccountSanctionResu
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionState;
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
 import com.idea2strategy.backend.application.caseoperations.CaseResponseDeadlinePort;
+import com.idea2strategy.backend.application.delegation.DelegatedCredentialExpiryPort;
+import com.idea2strategy.backend.application.identity.SessionExpiryPort;
 import com.idea2strategy.backend.persistence.notification.NotificationEmailWorker;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
 import java.time.Clock;
@@ -111,6 +113,55 @@ class DeadlineBatchBindingTest {
             assertThat(item.itemId()).isEqualTo(caseId + "|7|" + NOW);
         });
         assertThat(result.status()).isEqualTo(BatchCategoryPort.ItemStatus.ALREADY_COMPLETED);
+    }
+
+    @Test
+    void sessionBindingDelegatesTheExactDueIdentityAndMapsReplay() {
+        SessionExpiryPort sessions = mock(SessionExpiryPort.class);
+        var identity = new SessionExpiryPort.Identity(id(30), id(31), NOW);
+        when(sessions.findDueSessions(20)).thenReturn(List.of(identity));
+        when(sessions.expire(any(), any())).thenReturn(SessionExpiryPort.Result.ALREADY_TRANSITIONED);
+        JdbcTemplate jdbc = databaseClock();
+        var port = new SessionExpiryBatchCategoryPort(sessions, jdbc);
+
+        var page = port.claimDue(request());
+        var result = port.execute(page.items().getFirst(), id(32), id(33));
+
+        assertThat(page.items()).singleElement().satisfies(item -> {
+            assertThat(item.category()).isEqualTo(
+                    com.idea2strategy.backend.application.batch.BatchCategory.SESSION);
+            assertThat(item.idempotencyKey()).isEqualTo("session-expiry:" + id(31) + ":" + NOW);
+        });
+        assertThat(result.status()).isEqualTo(BatchCategoryPort.ItemStatus.ALREADY_COMPLETED);
+    }
+
+    @Test
+    void delegatedTokenBindingDelegatesTheExactDueIdentity() {
+        DelegatedCredentialExpiryPort credentials = mock(DelegatedCredentialExpiryPort.class);
+        var identity = new DelegatedCredentialExpiryPort.Identity(
+                DelegatedCredentialExpiryPort.Kind.CREDENTIAL, id(40), id(41), NOW);
+        when(credentials.findDueCredentials(20)).thenReturn(List.of(identity));
+        when(credentials.expire(any(), any())).thenReturn(DelegatedCredentialExpiryPort.Result.APPLIED);
+        JdbcTemplate jdbc = databaseClock();
+        var port = new DelegatedCredentialExpiryBatchCategoryPort(credentials, jdbc);
+
+        var page = port.claimDue(request());
+        var result = port.execute(page.items().getFirst(), id(42), id(43));
+
+        assertThat(page.items()).singleElement().satisfies(item -> {
+            assertThat(item.category()).isEqualTo(
+                    com.idea2strategy.backend.application.batch.BatchCategory.DELEGATED_TOKEN);
+            assertThat(item.idempotencyKey()).isEqualTo(
+                    "delegated-token-expiry:" + id(41) + ":" + NOW);
+        });
+        assertThat(result.status()).isEqualTo(BatchCategoryPort.ItemStatus.COMPLETED);
+    }
+
+    private static JdbcTemplate databaseClock() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), org.mockito.ArgumentMatchers.eq(java.sql.Timestamp.class)))
+                .thenReturn(java.sql.Timestamp.from(NOW));
+        return jdbc;
     }
 
     private static BatchCategoryPort.ClaimRequest request() {
