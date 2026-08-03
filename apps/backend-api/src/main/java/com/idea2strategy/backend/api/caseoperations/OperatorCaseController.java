@@ -24,7 +24,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.time.Instant;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -36,8 +36,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/operations/cases")
-@ConditionalOnBean({OperatorCaseCommandService.class, OperatorCaseQueryService.class,
-        CurrentOperatorRbacContext.class, OperatorCaseApiGuardCatalog.class})
+@ConditionalOnProperty(
+        prefix = "idea2strategy.operator-case.guard",
+        name = {"queue-permission-id", "detail-permission-id"})
 public class OperatorCaseController {
     private final OperatorCaseCommandService commands;
     private final OperatorCaseQueryService queries;

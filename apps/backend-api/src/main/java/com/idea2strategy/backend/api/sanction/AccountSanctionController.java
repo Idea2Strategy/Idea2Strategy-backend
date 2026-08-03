@@ -9,7 +9,7 @@ import com.idea2strategy.backend.application.operatorrbac.CurrentOperatorRbacCon
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
 import java.time.Instant;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,7 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/operations/accounts/{accountId}/sanctions")
-@ConditionalOnBean({AccountSanctionCommandService.class, CurrentOperatorRbacContext.class})
+@ConditionalOnProperty(
+        prefix = "idea2strategy.operator-sanction.guard",
+        name = {"apply-permission-id", "lift-permission-id"})
 public class AccountSanctionController {
     private final AccountSanctionCommandService commands;
     private final CurrentOperatorRbacContext securityContext;
