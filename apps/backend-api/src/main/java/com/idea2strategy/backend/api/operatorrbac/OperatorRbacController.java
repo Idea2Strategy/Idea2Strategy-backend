@@ -9,7 +9,7 @@ import com.idea2strategy.backend.application.operatorrbac.OperatorRbacResult;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
 import java.time.Instant;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,8 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/operations/rbac/assignments")
-@ConditionalOnBean({OperatorRbacCommandService.class, CurrentOperatorRbacContext.class,
-        OperatorRbacApiGuardCatalog.class})
+@ConditionalOnProperty(
+        prefix = "idea2strategy.operator-rbac.guard",
+        name = {"catalog-version", "grant-permission-id", "revoke-permission-id"})
 public class OperatorRbacController {
     private final OperatorRbacCommandService service;
     private final CurrentOperatorRbacContext securityContext;
