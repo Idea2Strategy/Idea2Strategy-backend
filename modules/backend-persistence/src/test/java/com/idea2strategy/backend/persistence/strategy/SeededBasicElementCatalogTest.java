@@ -121,6 +121,29 @@ class SeededBasicElementCatalogTest {
                 """, String.class)).isEqualTo("string");
     }
 
+    /**
+     * The declared feature is registered, and against this catalog version. Without the row
+     * `BasicBacktestCapabilityValidator` reports BACKTEST_FEATURE_UNAVAILABLE and no strategy
+     * validates, so the two halves of the seed are only correct together.
+     */
+    @Test
+    void registersTheDeclaredFeatureAgainstThisCatalogVersion() {
+        assertThat(jdbc.queryForList("""
+                select feature.feature_code, feature.calculator_version, feature.resolution,
+                       feature.required_history_points, feature.output_value_type
+                from market_data.feature_definitions feature
+                join strategy.element_catalog_versions version
+                  on version.id = feature.element_catalog_version_id
+                where version.catalog_version = 'basic-elements:2026-08-04'
+                """)).singleElement().satisfies(row -> {
+                    assertThat(row.get("feature_code")).isEqualTo("RSI_14");
+                    assertThat(row.get("calculator_version")).isEqualTo("rsi:1.0.0");
+                    assertThat(row.get("resolution")).isEqualTo("1m");
+                    assertThat(row.get("required_history_points")).isEqualTo(15);
+                    assertThat(row.get("output_value_type")).isEqualTo("NUMBER");
+                });
+    }
+
     /** The only feature any element declares is the one both runtimes implement. */
     @Test
     void declaresOnlyTheImplementedFeature() {
