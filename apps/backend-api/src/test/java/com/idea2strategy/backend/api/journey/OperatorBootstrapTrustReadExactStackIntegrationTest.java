@@ -54,6 +54,8 @@ class OperatorBootstrapTrustReadExactStackIntegrationTest {
     private static final UUID DEPLOYMENT_ACTOR = id(6);
     private static final UUID CORRELATION = id(7);
     private static final UUID AUDIT = id(8);
+    private static final UUID SECOND_OPERATOR = id(9);
+    private static final UUID SECOND_ASSIGNMENT = id(10);
 
     @Container static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
 
@@ -100,11 +102,19 @@ class OperatorBootstrapTrustReadExactStackIntegrationTest {
 
         when(decoder.decode("valid-operator-jwt")).thenReturn(jwt(true));
         when(decoder.decode("stale-mfa-jwt")).thenReturn(jwt(false));
+        when(decoder.decode("unknown-operator-jwt")).thenReturn(jwt("unknown-operator-jwt", "unknown-subject", true));
+        when(decoder.decode("second-operator-jwt")).thenReturn(jwt("second-operator-jwt", "second-subject", true));
+        seedSecondOperator();
         MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
 
-        mvc.perform(get("/api/v1/operations/me")
+        String spoofDenial = mvc.perform(get("/api/v1/operations/me")
                         .header("X-Operator-Id", OPERATOR).header("X-Amzn-Oidc-Identity", SUBJECT))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized()).andReturn().getResponse().getContentAsString();
+        String unknownDenial = mvc.perform(get("/api/v1/operations/me")
+                        .header("Authorization", "Bearer unknown-operator-jwt"))
+                .andExpect(status().isUnauthorized()).andReturn().getResponse().getContentAsString();
+        assertThat(spoofDenial).contains("OPERATOR_AUTHENTICATION_REQUIRED");
+        assertThat(unknownDenial).contains("OPERATOR_AUTHENTICATION_REQUIRED");
         mvc.perform(get("/api/v1/operations/me")
                         .header("Authorization", "Bearer valid-operator-jwt")
                         .header("X-Correlation-Id", CORRELATION))
@@ -131,6 +141,23 @@ class OperatorBootstrapTrustReadExactStackIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from operations.audit_events "
                 + "where correlation_id=? and target_domain='OPERATOR_RBAC'", Long.class, CORRELATION))
                 .isGreaterThanOrEqualTo(3L);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from operations.audit_events
+                where correlation_id=? and target_domain='OPERATOR_RBAC'
+                  and decision_status in ('SUCCEEDED','REJECTED')
+                  and request_hash=encode(digest(request_document::text,'sha256'),'hex')
+                  and evidence_hash=encode(digest(evidence_document::text,'sha256'),'hex')
+                """, Long.class, CORRELATION)).isGreaterThanOrEqualTo(3L);
+        assertThat(jdbc.queryForObject("""
+                select count(*) from operations.operator_bootstrap_receipts r
+                join operations.audit_events a on a.id=r.audit_event_id
+                where r.bootstrap_key='exact-stack-bootstrap'
+                  and a.target_domain='OPERATOR_BOOTSTRAP'
+                  and a.target_id=r.operator_account_id
+                  and a.correlation_id=r.correlation_id
+                  and a.request_hash=encode(digest(a.request_document::text,'sha256'),'hex')
+                  and a.evidence_hash=encode(digest(a.evidence_document::text,'sha256'),'hex')
+                """, Long.class)).isOne();
         assertThatThrownBy(() -> jdbc.update("update operations.operator_bootstrap_receipts "
                 + "set catalog_version=catalog_version where bootstrap_key='exact-stack-bootstrap'"))
                 .hasMessageContaining("immutable");
@@ -144,13 +171,24 @@ class OperatorBootstrapTrustReadExactStackIntegrationTest {
         jdbc.update("update operations.rbac_catalog_versions set status='RETIRED', "
                 + "retired_at=clock_timestamp() where catalog_version=?", CATALOG);
         mvc.perform(get("/api/v1/operations/me")
-                        .header("Authorization", "Bearer valid-operator-jwt"))
+                        .header("Authorization", "Bearer second-operator-jwt"))
                 .andExpect(status().isForbidden());
 
         jdbc.update("update operations.operator_accounts set status='DISABLED', disabled_at=clock_timestamp() where id=?", OPERATOR);
         mvc.perform(get("/api/v1/operations/me")
                         .header("Authorization", "Bearer valid-operator-jwt"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    private void seedSecondOperator() {
+        String digest = subjects.protect(ISSUER, "second-subject").getFirst().digest();
+        Timestamp now = Timestamp.from(Instant.now());
+        jdbc.update("insert into operations.operator_accounts "
+                        + "(id,external_identity_key_hmac,external_identity_key_version,status,mfa_enrolled_at,created_at) "
+                        + "values (?,?,1,'ACTIVE',?,?)", SECOND_OPERATOR, digest, now, now);
+        jdbc.update("insert into operations.operator_role_assignments "
+                        + "(id,operator_account_id,role_id,catalog_version,granted_by_operator_id,granted_at) "
+                        + "values (?,?,?,?,?,?)", SECOND_ASSIGNMENT, SECOND_OPERATOR, ROLE, CATALOG, OPERATOR, now);
     }
 
     private OperatorBootstrapManifest manifest(String subjectHmac) {
@@ -177,11 +215,15 @@ class OperatorBootstrapTrustReadExactStackIntegrationTest {
     }
 
     private static Jwt jwt(boolean currentMfa) {
+        return jwt(currentMfa ? "valid-operator-jwt" : "stale-mfa-jwt", SUBJECT, currentMfa);
+    }
+
+    private static Jwt jwt(String token, String subject, boolean currentMfa) {
         Instant now = Instant.now();
         Instant authentication = currentMfa ? now.minusSeconds(30) : now.minusSeconds(3600);
-        return Jwt.withTokenValue(currentMfa ? "valid-operator-jwt" : "stale-mfa-jwt")
+        return Jwt.withTokenValue(token)
                 .header("alg", "RS256").header("kid", "pinned-test-key")
-                .issuer(ISSUER).subject(SUBJECT).audience(List.of("operator-api"))
+                .issuer(ISSUER).subject(subject).audience(List.of("operator-api"))
                 .issuedAt(now.minusSeconds(30)).notBefore(now.minusSeconds(30)).expiresAt(now.plusSeconds(120))
                 .claim("amr", List.of("mfa")).claim("auth_time", authentication).build();
     }
