@@ -58,6 +58,11 @@ class BasicStructureCatalogPersistenceIntegrationTest {
         jdbcTemplate.update("delete from strategy.package_versions");
         jdbcTemplate.update("delete from strategy.packages");
         jdbcTemplate.update("delete from strategy.element_definitions");
+        // The migrations now seed a real catalog version and the feature that references it, so this
+        // clean-up has to remove the child before the parent. It reads across into market_data on
+        // purpose: a test tearing down its own fixtures is not the write path DatabaseAccessPolicy
+        // constrains, and leaving the row would fail the delete on its foreign key.
+        jdbcTemplate.update("delete from market_data.feature_definitions");
         jdbcTemplate.update("delete from strategy.element_catalog_versions");
         insertCatalog(CATALOG_ID, "a".repeat(64));
         insertCatalog(OTHER_CATALOG_ID, "b".repeat(64));
