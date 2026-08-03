@@ -14,6 +14,7 @@ import com.idea2strategy.backend.application.accountsanction.AccountSanctionExpi
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionResult;
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionState;
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
+import com.idea2strategy.backend.application.caseoperations.CaseResponseDeadlinePort;
 import com.idea2strategy.backend.persistence.notification.NotificationEmailWorker;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
 import java.time.Clock;
@@ -84,6 +85,32 @@ class DeadlineBatchBindingTest {
 
         assertThat(result.status()).isEqualTo(BatchCategoryPort.ItemStatus.RETRYABLE_FAILURE);
         assertThat(result.failureCode()).isEqualTo("NOTIFICATION_DELIVERY_RETRY_SCHEDULED");
+    }
+
+    @Test
+    void caseDeadlineBindingDelegatesTheExactIdentityWithoutTransitionRules() {
+        CaseResponseDeadlinePort deadlines = mock(CaseResponseDeadlinePort.class);
+        UUID caseId = id(20);
+        var identity = new CaseResponseDeadlinePort.Identity(caseId, 7, NOW);
+        when(deadlines.findDue(20)).thenReturn(List.of(identity));
+        when(deadlines.expire(any(), any())).thenAnswer(invocation ->
+                new CaseResponseDeadlinePort.Result(
+                        CaseResponseDeadlinePort.Result.Status.ALREADY_TRANSITIONED,
+                        invocation.getArgument(0), null, NOW));
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), org.mockito.ArgumentMatchers.eq(java.sql.Timestamp.class)))
+                .thenReturn(java.sql.Timestamp.from(NOW));
+        var port = new CaseDeadlineBatchCategoryPort(deadlines, jdbc);
+
+        var page = port.claimDue(request());
+        var result = port.execute(page.items().getFirst(), id(21), id(22));
+
+        assertThat(page.items()).singleElement().satisfies(item -> {
+            assertThat(item.category()).isEqualTo(
+                    com.idea2strategy.backend.application.batch.BatchCategory.CASE_DEADLINE);
+            assertThat(item.itemId()).isEqualTo(caseId + "|7|" + NOW);
+        });
+        assertThat(result.status()).isEqualTo(BatchCategoryPort.ItemStatus.ALREADY_COMPLETED);
     }
 
     private static BatchCategoryPort.ClaimRequest request() {
