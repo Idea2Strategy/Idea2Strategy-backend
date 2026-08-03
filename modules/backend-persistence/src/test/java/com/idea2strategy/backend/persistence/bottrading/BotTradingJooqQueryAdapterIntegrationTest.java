@@ -44,10 +44,20 @@ class BotTradingJooqQueryAdapterIntegrationTest {
     private static final UUID REDUCED_INTENT = UUID.fromString("3b000000-0000-4000-8000-00000000000a");
     private static final UUID APPROVED_INTENT = UUID.fromString("3b000000-0000-4000-8000-00000000000b");
     private static final UUID CLOSE_ACTION = UUID.fromString("3c000000-0000-4000-8000-00000000000a");
+    private static final UUID OTHER_BOT = UUID.fromString("30000000-0000-4000-8000-00000000000b");
+    private static final UUID OTHER_ORDER = UUID.fromString("39000000-0000-4000-8000-00000000000b");
+    private static final UUID OTHER_FILL = UUID.fromString("3a000000-0000-4000-8000-00000000000b");
+    private static final UUID FUTURE_ORDER = UUID.fromString("39000000-0000-4000-8000-00000000000c");
+    private static final UUID FUTURE_FILL = UUID.fromString("3a000000-0000-4000-8000-00000000000c");
+    private static final UUID SHORT_FLOW = UUID.fromString("32000000-0000-4000-8000-00000000000b");
+    private static final UUID UNTRADED_INSTRUMENT =
+            UUID.fromString("36000000-0000-4000-8000-00000000000b");
     private static final String HASH = "a".repeat(64);
     /** The trades sit before the rename below, and the rename before now, so both reads differ. */
     private static final String AT = "2026-07-01T12:00:00+00";
+    private static final String LATER_AT = "2026-07-10T12:00:00+00";
     private static final String RENAMED_AT = "2026-07-15T00:00:00+00";
+    private static final String FUTURE_AT = "2100-01-01T00:00:00+00";
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -217,6 +227,82 @@ class BotTradingJooqQueryAdapterIntegrationTest {
         assertThat(positions.getFirst().costBasisAmount()).isEqualByComparingTo("30.06");
     }
 
+    /**
+     * The v1 mark against the seeded history: the bot's own fill is the only official price, so
+     * three shares at 10 against a basis of 30.06 sit 0.06 under water — the capitalised fee.
+     */
+    @Test
+    void aPositionIsValuedAtTheV1Mark() {
+        var position = adapter.findOwnedPositions(BOT, OWNER).orElseThrow().getFirst();
+
+        assertThat(position.currentPrice()).isEqualByComparingTo("10");
+        assertThat(position.unrealisedPnl()).isEqualByComparingTo("-0.06");
+        assertThat(position.returnPct()).isEqualByComparingTo("-0.19960080");
+    }
+
+    /** The mark is the engine's observation of the instrument, not the holder's own last trade. */
+    @Test
+    void theMarkIsTheLatestReferencePriceEngineWide() {
+        insertMarkFill(OTHER_ORDER, OTHER_FILL, OTHER_BOT, LATER_AT, "12");
+
+        var position = adapter.findOwnedPositions(BOT, OWNER).orElseThrow().getFirst();
+
+        assertThat(position.currentPrice()).isEqualByComparingTo("12");
+        assertThat(position.unrealisedPnl()).isEqualByComparingTo("5.94");
+        assertThat(position.returnPct()).isEqualByComparingTo("19.76047904");
+    }
+
+    /** The rule says before the read instant, so a fill that has not happened yet marks nothing. */
+    @Test
+    void aFillAtOrAfterTheReadInstantDoesNotMark() {
+        insertMarkFill(FUTURE_ORDER, FUTURE_FILL, OTHER_BOT, FUTURE_AT, "999");
+
+        var position = adapter.findOwnedPositions(BOT, OWNER).orElseThrow().getFirst();
+
+        assertThat(position.currentPrice()).isEqualByComparingTo("10");
+    }
+
+    /** A short's basis is the value it was opened at, so a mark below it is a gain, not a loss. */
+    @Test
+    void aShortPositionGainsWhenTheMarkSitsBelowItsBasis() {
+        jdbc.execute("set session_replication_role = replica");
+        jdbc.update("insert into trading.flow_position_projections (flow_id, partition_id, bot_id,"
+                + " instrument_id, long_quantity, short_quantity, cost_basis_amount,"
+                + " last_event_sequence, projection_hash, updated_at)"
+                + " values (?, ?, ?, ?, 0, 2, 26, 4, ?, ?::timestamptz)",
+                SHORT_FLOW, PARTITION, BOT, INSTRUMENT, HASH, AT);
+        jdbc.execute("set session_replication_role = origin");
+
+        var positions = adapter.findOwnedPositions(BOT, OWNER).orElseThrow();
+        var shortPosition = positions.stream()
+                .filter(position -> position.flowId().equals(SHORT_FLOW)).findFirst().orElseThrow();
+
+        assertThat(shortPosition.currentPrice()).isEqualByComparingTo("10");
+        assertThat(shortPosition.unrealisedPnl()).isEqualByComparingTo("6");
+        assertThat(shortPosition.returnPct()).isEqualByComparingTo("23.07692308");
+    }
+
+    /** No fill has ever touched the instrument, so there is no mark and nothing derived from one. */
+    @Test
+    void anInstrumentNoFillEverTouchedHasNoValuation() {
+        jdbc.execute("set session_replication_role = replica");
+        jdbc.update("insert into trading.flow_position_projections (flow_id, partition_id, bot_id,"
+                + " instrument_id, long_quantity, short_quantity, cost_basis_amount,"
+                + " last_event_sequence, projection_hash, updated_at)"
+                + " values (?, ?, ?, ?, 1, 0, 5, 4, ?, ?::timestamptz)",
+                SHORT_FLOW, PARTITION, BOT, UNTRADED_INSTRUMENT, HASH, AT);
+        jdbc.execute("set session_replication_role = origin");
+
+        var positions = adapter.findOwnedPositions(BOT, OWNER).orElseThrow();
+        var untraded = positions.stream()
+                .filter(position -> position.instrumentId().equals(UNTRADED_INSTRUMENT))
+                .findFirst().orElseThrow();
+
+        assertThat(untraded.currentPrice()).isNull();
+        assertThat(untraded.unrealisedPnl()).isNull();
+        assertThat(untraded.returnPct()).isNull();
+    }
+
     @Test
     void theBudgetCarriesItsPartitions() {
         var budget = adapter.findOwnedBudget(BOT, OWNER).orElseThrow();
@@ -278,6 +364,41 @@ class BotTradingJooqQueryAdapterIntegrationTest {
     private void insertAccount(UUID id) {
         jdbc.update("insert into identity.accounts (id, lifecycle_status, status_changed_at,"
                 + " created_at) values (?, 'ACTIVE', ?::timestamptz, ?::timestamptz)", id, AT, AT);
+    }
+
+    /**
+     * Another bot's official fill on the same instrument, which is exactly what the v1 mark reads:
+     * the latest reference price anywhere in the engine, not the owner's own last trade.
+     */
+    private void insertMarkFill(UUID orderId, UUID fillId, UUID botId, String at, String price) {
+        jdbc.execute("set session_replication_role = replica");
+        jdbc.update("insert into bot.bots (id, owner_account_id, mode, name, lifecycle_status,"
+                + " lifecycle_changed_at, created_at, execution_eligible_from)"
+                + " values (?, ?, 'BASIC', 'Marking bot', 'RUNNING', ?::timestamptz,"
+                + " ?::timestamptz, ?::timestamptz) on conflict do nothing",
+                botId, OTHER_OWNER, AT, AT, AT);
+        jdbc.update("insert into trading.orders (id, bot_id, partition_id, instrument_id, order_key,"
+                + " side, order_type, time_in_force, requested_quantity, broker_rules_version,"
+                + " precision_rules_version, slippage_rate_bps, fee_policy_id, accepted_event_id,"
+                + " accepted_at, contract_hash) values (?, ?, ?, ?, ?,"
+                + " 'BUY'::trading.order_side, 'MARKET'::trading.order_type,"
+                + " 'DAY'::trading.time_in_force, 1, 'broker:v1', 'precision:v1', 5, ?, ?,"
+                + " ?::timestamptz, ?)",
+                orderId, botId, PARTITION, INSTRUMENT, "order:" + orderId, FEE_POLICY, EVENT,
+                at, HASH);
+        jdbc.update("insert into trading.fills (id, order_id, bot_id, partition_id, bot_event_id,"
+                + " provider_fill_key, quantity, reference_price, reference_observed_at,"
+                + " reference_market_hash, slippage_rate_bps, slippage_amount, fill_price,"
+                + " gross_amount, fee_policy_id, fee_rate_bps, precision_rules_version,"
+                + " fee_basis_amount, fee_amount, settlement_cash_delta, occurred_at)"
+                + " values (?, ?, ?, ?, ?, ?, 1, ?::numeric, ?::timestamptz, ?, 5, 0.01,"
+                + " ?::numeric, ?::numeric, ?, 20, 'precision:v1', ?::numeric, 0.02,"
+                + " ?::numeric, ?::timestamptz)",
+                // bot_event_id is unique per fill; the referential triggers are off, so the fill
+                // id itself serves as its own distinct event.
+                fillId, orderId, botId, PARTITION, fillId, "exec-" + fillId, price, at, HASH,
+                price, price, FEE_POLICY, price, "-" + price, at);
+        jdbc.execute("set session_replication_role = origin");
     }
 
     /**
