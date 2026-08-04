@@ -319,7 +319,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         assertThat(adapter.startEligible(OBSERVED_AT, 10).participantsStarted()).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'effectiveAt' from operations.outbox_messages "
-                                + "where aggregate_id = ?",
+                                + "where aggregate_id = ? and event_type = 'ROOM_EVALUATION_START_COMMAND'",
                         String.class, PARTICIPATION_ID))
                 .isEqualTo(admittedAt.toString());
         assertThat(jdbc.queryForObject(
