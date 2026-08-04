@@ -78,12 +78,14 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from competition.participation_events");
         jdbc.update("delete from competition.live_evaluation_segments");
         jdbc.update("delete from competition.participations");
+        jdbc.update("delete from competition.backtest_evaluation_plans");
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.live_room_rules");
         jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from bot.launch_configurations");
+        jdbc.update("delete from bot.launch_contract_plans");
         jdbc.update("delete from bot.launch_snapshots");
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
@@ -166,7 +168,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                 .isEqualTo(1);
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'effectiveAt' from operations.outbox_messages "
-                                + "where aggregate_id = ?",
+                                + "where aggregate_id = ? and event_type = 'ROOM_EVALUATION_START_COMMAND'",
                         String.class, PARTICIPATION_ID))
                 .isEqualTo(EVALUATION_START.toString());
 
@@ -189,7 +191,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                             .matches("sha256:[0-9a-f]{64}");
                 });
         String payload = jdbc.queryForObject(
-                "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
+                "select payload_document::text from operations.outbox_messages "
+                        + "where aggregate_id = ? and event_type = 'ROOM_EVALUATION_START_COMMAND'",
                 String.class, PARTICIPATION_ID);
         RoomEvaluationCommandFixture command = objectMapper.readValue(payload, RoomEvaluationCommandFixture.class);
         UUID expectedCommandId = UUID.nameUUIDFromBytes(
@@ -316,7 +319,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         assertThat(adapter.startEligible(OBSERVED_AT, 10).participantsStarted()).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'effectiveAt' from operations.outbox_messages "
-                                + "where aggregate_id = ?",
+                                + "where aggregate_id = ? and event_type = 'ROOM_EVALUATION_START_COMMAND'",
                         String.class, PARTICIPATION_ID))
                 .isEqualTo(admittedAt.toString());
         assertThat(jdbc.queryForObject(
@@ -328,7 +331,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         Integer.class, PARTICIPATION_ID))
                 .isZero();
         String payload = jdbc.queryForObject(
-                "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
+                "select payload_document::text from operations.outbox_messages "
+                        + "where aggregate_id = ? and event_type = 'ROOM_EVALUATION_START_COMMAND'",
                 String.class, PARTICIPATION_ID);
         RoomEvaluationCommandFixture command = objectMapper.readValue(payload, RoomEvaluationCommandFixture.class);
         assertThat(command.type()).isEqualTo(RoomEvaluationCommandType.START_EVALUATION);
@@ -338,6 +342,17 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         assertThat(command.evaluationStartsAt()).isEqualTo(EVALUATION_START);
         assertThat(command.evaluationEndsAt()).isEqualTo(EVALUATION_START.plusSeconds(2 * 60 * 60));
         assertThat(command.effectiveAt()).isEqualTo(admittedAt);
+        assertThat(jdbc.queryForMap(
+                        "select event_schema_version, payload_document ->> 'requestReason' as request_reason, "
+                                + "payload_document ->> 'roomId' as room_id, "
+                                + "payload_document ->> 'participationId' as participation_id "
+                                + "from operations.outbox_messages "
+                                + "where aggregate_id = ? and event_type = 'COMPETITION_BACKTEST_REQUESTED'",
+                        PARTICIPATION_ID))
+                .containsEntry("event_schema_version", "backtest-request.v1")
+                .containsEntry("request_reason", "COMPETITION_EVALUATION")
+                .containsEntry("room_id", ROOM_ID.toString())
+                .containsEntry("participation_id", PARTICIPATION_ID.toString());
         assertThat(jdbc.queryForObject(
                         "select jsonb_exists(payload_document, 'liveEvaluationInputHash') "
                                 + "from competition.participation_events where participation_id = ?",
@@ -450,6 +465,17 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                 at.plusHours(1), ROOM_ID);
         seedBotAndParticipation(admittedAt.atOffset(ZoneOffset.UTC));
         jdbc.update(
+                "insert into bot.launch_contract_plans "
+                        + "(bot_id, contract_version, plan_schema_version, plan_checksum, plan_document, created_at) "
+                        + "values (?, 'strategy-bot.v1', 'basic-compiled-plan.v1', ?, '{}'::jsonb, ?)",
+                BOT_ID, "sha256:" + "2".repeat(64), at.minusHours(1));
+        jdbc.update(
+                "insert into competition.backtest_evaluation_plans "
+                        + "(room_id, plan_version, period_count, plan_hash, commitment_hash, "
+                        + "commitment_nonce_ciphertext, nonce_key_version, locked_at) "
+                        + "values (?, 'competition-plan.v1', 2, ?, ?, 'ciphertext', 1, ?)",
+                ROOM_ID, "sha256:" + "3".repeat(64), "sha256:" + "4".repeat(64), at.minusDays(1));
+        jdbc.update(
                 "update competition.participations set joined_at = ? where id = ?",
                 admittedAt.atOffset(ZoneOffset.UTC), PARTICIPATION_ID);
     }
@@ -487,9 +513,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                 "insert into bot.launch_snapshots "
                         + "(bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, semantic_hash, "
                         + "presentation_hash, snapshot_hash, created_at) "
-                        + "values (?, 'basic-launch-snapshot.v1', '{}'::jsonb, '{}'::jsonb, 'semantic-e11', "
-                        + "'presentation-e11', 'snapshot-e11', ?)",
-                botId, at.minusHours(1));
+                        + "values (?, 'basic-launch-snapshot.v1', '{}'::jsonb, '{}'::jsonb, ?, ?, ?, ?)",
+                botId, "1".repeat(64), "2".repeat(64), "3".repeat(64), at.minusHours(1));
         jdbc.update(
                 "insert into bot.launch_configurations "
                         + "(bot_id, initial_cash_amount, currency_code, broker_rules_version, accounting_rules_version, "

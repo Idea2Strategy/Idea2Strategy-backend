@@ -72,7 +72,7 @@ class SqsOutboxMessagePublisherLocalStackTest {
 
         publisher.publish(new PublishableOutboxMessage(
                 messageId, "strategy-bot", BOT, 1, ROUTED, "strategy-bot.v1",
-                "sha256:" + "1".repeat(64), body));
+                "sha256:" + "1".repeat(64), "outbox-delivery:1", "2".repeat(64), body));
 
         List<Message> received = sqs.receiveMessage(ReceiveMessageRequest.builder()
                         .queueUrl(queueUrl)
@@ -95,6 +95,12 @@ class SqsOutboxMessagePublisherLocalStackTest {
                     .isEqualTo(messageId.toString());
             assertThat(message.messageAttributes().get("idempotencyKey").stringValue())
                     .isEqualTo("sha256:" + "1".repeat(64));
+            assertThat(message.messageAttributes().get("outboxIdempotencyKey").stringValue())
+                    .isEqualTo("outbox-delivery:1");
+            assertThat(message.messageAttributes().get("payloadHash").stringValue())
+                    .isEqualTo("2".repeat(64));
+            assertThat(message.messageAttributes().get("aggregateSequence").stringValue())
+                    .isEqualTo("1");
         });
     }
 
@@ -105,7 +111,8 @@ class SqsOutboxMessagePublisherLocalStackTest {
 
         assertThatThrownBy(() -> publisher.publish(new PublishableOutboxMessage(
                 UUID.fromString("33000000-0000-4000-8000-0000000000c2"), "strategy-bot", BOT, 2,
-                "BOT_RUN_COMMAND", "strategy-bot.v1", "sha256:" + "2".repeat(64), "{}")))
+                "BOT_RUN_COMMAND", "strategy-bot.v1", "sha256:" + "2".repeat(64),
+                "outbox-delivery:2", "3".repeat(64), "{}")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no queue is configured for event type BOT_RUN_COMMAND");
     }

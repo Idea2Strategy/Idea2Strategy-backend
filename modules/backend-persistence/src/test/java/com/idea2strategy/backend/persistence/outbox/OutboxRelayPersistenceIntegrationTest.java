@@ -136,9 +136,32 @@ class OutboxRelayPersistenceIntegrationTest {
             assertThat(sha256(message.payloadDocument())).isEqualTo(storedHash);
             assertThat(message.eventType()).isEqualTo(ROUTED);
             assertThat(message.eventSchemaVersion()).isEqualTo("strategy-bot.v1");
-            assertThat(message.idempotencyKey()).isEqualTo(idempotencyKey(1));
+            assertThat(message.producerIdempotencyKey()).isEqualTo(idempotencyKey(1));
+            assertThat(message.deliveryIdempotencyKey()).isEqualTo(idempotencyKey(1));
+            assertThat(message.payloadHash()).isEqualTo(storedHash);
             assertThat(message.ownerDomain()).isEqualTo("strategy-bot");
             assertThat(message.aggregateId()).isEqualTo(BOT);
+        });
+    }
+
+    @Test
+    void keepsProducerAndDeliveryIdempotencyKeysDistinctForOperationalReplay() {
+        String producerKey = idempotencyKey(6);
+        String replayDeliveryKey = "outbox-replay:operator-command-6";
+        jdbc.update("""
+                insert into operations.outbox_messages (
+                    id, owner_domain, aggregate_id, aggregate_sequence, event_type,
+                    event_schema_version, payload_document, producer_idempotency_key,
+                    idempotency_key, created_at)
+                values (?, 'strategy-bot', ?, 6, ?, 'strategy-bot.v1', cast(? as jsonb), ?, ?, ?)
+                """, messageId(6), BOT, ROUTED, payload(6), producerKey, replayDeliveryKey,
+                clock.instant().atOffset(ZoneOffset.UTC));
+
+        assertThat(relay.relayOnce()).isOne();
+
+        assertThat(publisher.published).singleElement().satisfies(message -> {
+            assertThat(message.producerIdempotencyKey()).isEqualTo(producerKey);
+            assertThat(message.deliveryIdempotencyKey()).isEqualTo(replayDeliveryKey);
         });
     }
 

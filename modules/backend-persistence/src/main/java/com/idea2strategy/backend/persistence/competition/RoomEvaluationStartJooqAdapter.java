@@ -1,5 +1,6 @@
 package com.idea2strategy.backend.persistence.competition;
 
+import com.idea2strategy.backend.application.backtest.BacktestRequestEnvelope;
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartPort;
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartReport;
 import java.math.BigDecimal;
@@ -176,6 +177,55 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
         insertStartCommand(
                 candidate, participationId, roomId, botId, evaluationSegmentId,
                 observedAt);
+        if (!live) {
+            insertCompetitionBacktestRequest(roomId, participationId, botId, observedAt);
+        }
+    }
+
+    /**
+     * Emits the durable competition-lane request when the room has its locked backtest plan.
+     * Older fixture/legacy rooms without that plan keep the existing start command but cannot be
+     * presented as backtest-engine ready.
+     */
+    private void insertCompetitionBacktestRequest(
+            UUID roomId, UUID participationId, UUID botId, OffsetDateTime observedAt) {
+        var context = dsl.fetchOne(
+                "select ep.plan_version, ep.plan_hash, s.snapshot_hash, lp.plan_checksum, "
+                        + "lc.accounting_rules_version from competition.backtest_evaluation_plans ep "
+                        + "join bot.launch_snapshots s on s.bot_id = ? "
+                        + "join bot.launch_contract_plans lp on lp.bot_id = ? "
+                        + "join bot.launch_configurations lc on lc.bot_id = ? where ep.room_id = ?",
+                botId, botId, botId, roomId);
+        if (context == null) {
+            return;
+        }
+        var request = BacktestRequestEnvelope.competition(
+                roomId,
+                participationId,
+                botId,
+                context.get("plan_version", String.class),
+                prefixed(context.get("plan_hash", String.class)),
+                prefixed(context.get("snapshot_hash", String.class)),
+                prefixed(context.get("plan_checksum", String.class)),
+                context.get("accounting_rules_version", String.class),
+                observedAt.toInstant());
+        Number sequence = (Number) dsl.fetchValue(
+                "select coalesce(max(aggregate_sequence), 0) + 1 from operations.outbox_messages "
+                        + "where owner_domain = 'backtest-request' and aggregate_id = ?",
+                participationId);
+        dsl.execute(
+                "insert into operations.outbox_messages "
+                        + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
+                        + "payload_document, producer_idempotency_key, idempotency_key, created_at) "
+                        + "values (?, 'backtest-request', ?, ?, ?, ?, ?::jsonb, ?, ?, ?::timestamptz) "
+                        + "on conflict (idempotency_key) do nothing",
+                request.messageId(), participationId, sequence.longValue(), request.eventType(),
+                request.eventSchemaVersion(), request.payloadDocument(), request.producerIdempotencyKey(),
+                request.producerIdempotencyKey(), observedAt);
+    }
+
+    private static String prefixed(String value) {
+        return value.startsWith("sha256:") ? value : "sha256:" + value;
     }
 
     private UUID insertLiveEvaluationSegment(

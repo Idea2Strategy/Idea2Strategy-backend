@@ -18,7 +18,9 @@ import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
  *
  * <p>The body is the payload as the outbox rendered it, unmodified. The envelope travels as message
  * attributes so a queue can be triaged without parsing bodies, and so a consumer can reject a
- * contract version it does not implement before deserialising.
+ * contract version it does not implement before deserialising. Producer and delivery idempotency
+ * remain separate: an operator replay is another delivery of the same immutable producer message,
+ * not a new domain command.
  *
  * <p>{@code SendMessage} is synchronous and SQS acknowledges only durable writes, so returning from
  * {@link #publish} means the message is safely queued — which is what lets the relay record
@@ -37,6 +39,15 @@ public class SqsOutboxMessagePublisher implements OutboxMessagePublisher {
         if (this.queueUrlByEventType.isEmpty()) {
             throw new IllegalArgumentException("a publisher with no routes would publish nothing");
         }
+        this.queueUrlByEventType.forEach((eventType, queueUrl) -> {
+            if (eventType == null || eventType.isBlank()) {
+                throw new IllegalArgumentException("an outbox route must name an event type");
+            }
+            if (queueUrl == null || queueUrl.isBlank()) {
+                throw new IllegalArgumentException(
+                        "queue URL must be configured for event type " + eventType);
+            }
+        });
     }
 
     /** The event types this publisher can route, which is what the relay should claim. */
@@ -60,8 +71,11 @@ public class SqsOutboxMessagePublisher implements OutboxMessagePublisher {
                         "contractVersion", attribute(message.eventSchemaVersion()),
                         "ownerDomain", attribute(message.ownerDomain()),
                         "aggregateId", attribute(message.aggregateId().toString()),
+                        "aggregateSequence", attribute(Long.toString(message.aggregateSequence())),
                         "messageId", attribute(message.messageId().toString()),
-                        "idempotencyKey", attribute(message.idempotencyKey())))
+                        "idempotencyKey", attribute(message.producerIdempotencyKey()),
+                        "outboxIdempotencyKey", attribute(message.deliveryIdempotencyKey()),
+                        "payloadHash", attribute(message.payloadHash())))
                 .build());
     }
 

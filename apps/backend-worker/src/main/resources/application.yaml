@@ -5,3 +5,15 @@ spring:
     web-application-type: none
     banner-mode: "off"
     keep-alive: true
+
+# The only currently implemented backend -> backtest producer is the automatic official
+# backtest emitted with an immutable BASIC strategy release. Keep its destination
+# outside the image so each environment supplies the main queue URL. The relay
+# remains an explicit opt-in and fails at startup if it is enabled without a URL.
+idea2strategy:
+  outbox-relay:
+    enabled: ${BACKTEST_OUTBOX_RELAY_ENABLED:false}
+    queues:
+      OFFICIAL_BACKTEST_REQUESTED: ${BACKTEST_BASIC_QUEUE_URL:}
+      CUSTOM_BACKTEST_REQUESTED: ${BACKTEST_CUSTOM_QUEUE_URL:}
+      COMPETITION_BACKTEST_REQUESTED: ${BACKTEST_COMPETITION_QUEUE_URL:}
