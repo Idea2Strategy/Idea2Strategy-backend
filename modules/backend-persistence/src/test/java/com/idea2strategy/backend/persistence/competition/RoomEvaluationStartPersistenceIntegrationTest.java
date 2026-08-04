@@ -44,6 +44,12 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID OPERATOR_ID = id(8);
     private static final UUID SECOND_BOT_ID = id(9);
     private static final UUID SECOND_PARTICIPATION_ID = id(10);
+    private static final UUID PROVIDER_ID = id(11);
+    private static final UUID FEED_ID = id(12);
+    private static final UUID FIRST_DATASET_ID = id(13);
+    private static final UUID SECOND_DATASET_ID = id(14);
+    private static final UUID FIRST_PERIOD_ID = id(15);
+    private static final UUID SECOND_PERIOD_ID = id(16);
     private static final Instant EVALUATION_START = Instant.parse("2026-08-02T04:00:00Z");
     private static final Instant OBSERVED_AT = EVALUATION_START.plusSeconds(15);
 
@@ -78,6 +84,9 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from competition.participation_events");
         jdbc.update("delete from competition.live_evaluation_segments");
         jdbc.update("delete from competition.participations");
+        jdbc.update("delete from competition.backtest_period_feature_materializations");
+        jdbc.update("delete from competition.backtest_period_datasets");
+        jdbc.update("delete from competition.backtest_evaluation_periods");
         jdbc.update("delete from competition.backtest_evaluation_plans");
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
@@ -92,6 +101,9 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
+        jdbc.update("delete from market_data.dataset_manifests where id in (?, ?)", FIRST_DATASET_ID, SECOND_DATASET_ID);
+        jdbc.update("delete from market_data.feeds where id = ?", FEED_ID);
+        jdbc.update("delete from market_data.providers where id = ?", PROVIDER_ID);
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
         var at = EVALUATION_START.atOffset(ZoneOffset.UTC);
@@ -116,6 +128,18 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "(id, policy_code, version, buffer_bps, rounding_rules_version, rules_hash, "
                         + "effective_from, published_at) values (?, 'DEFAULT', 'v1', 0, 'v1', 'buffer-e11', ?, ?)",
                 BUFFER_ID, at.minusDays(2), at.minusDays(2));
+        jdbc.update(
+                "insert into market_data.providers "
+                        + "(id, code, display_name, rights_version, status, created_at) "
+                        + "values (?, 'E11_BACKTEST', 'E11 Backtest', 'v1', 'ACTIVE', ?)",
+                PROVIDER_ID, at.minusDays(2));
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'E11_BACKTEST', 'BAR', '1d', 'UTC', 'v1', ?)",
+                FEED_ID, PROVIDER_ID, at.minusDays(2));
+        seedDataset(FIRST_DATASET_ID, "5", at);
+        seedDataset(SECOND_DATASET_ID, "6", at);
     }
 
     @Test
@@ -345,19 +369,59 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         assertThat(jdbc.queryForMap(
                         "select event_schema_version, payload_document ->> 'requestReason' as request_reason, "
                                 + "payload_document ->> 'roomId' as room_id, "
-                                + "payload_document ->> 'participationId' as participation_id "
+                                + "payload_document ->> 'participationId' as participation_id, "
+                                + "payload_document ->> 'scoringTemplateVersionId' as scoring_template_id, "
+                                + "payload_document ->> 'roomRulesHash' as room_rules_hash, "
+                                + "payload_document ->> 'initialCashAmount' as initial_cash_amount, "
+                                + "payload_document ->> 'currencyCode' as currency_code, "
+                                + "jsonb_array_length(payload_document -> 'periods') as period_count, "
+                                + "payload_document #>> '{periods,0,evaluationPeriodId}' as first_period_id, "
+                                + "payload_document #>> '{periods,0,datasets,0,datasetManifestId}' as first_dataset_id "
                                 + "from operations.outbox_messages "
                                 + "where aggregate_id = ? and event_type = 'COMPETITION_BACKTEST_REQUESTED'",
                         PARTICIPATION_ID))
                 .containsEntry("event_schema_version", "backtest-request.v1")
                 .containsEntry("request_reason", "COMPETITION_EVALUATION")
                 .containsEntry("room_id", ROOM_ID.toString())
-                .containsEntry("participation_id", PARTICIPATION_ID.toString());
+                .containsEntry("participation_id", PARTICIPATION_ID.toString())
+                .containsEntry("scoring_template_id", SCORING_ID.toString())
+                .containsEntry("room_rules_hash", "sha256:" + "7".repeat(64))
+                .containsEntry("initial_cash_amount", "100000.00000000")
+                .containsEntry("currency_code", "USD")
+                .containsEntry("period_count", 2)
+                .containsEntry("first_period_id", FIRST_PERIOD_ID.toString())
+                .containsEntry("first_dataset_id", FIRST_DATASET_ID.toString());
         assertThat(jdbc.queryForObject(
                         "select jsonb_exists(payload_document, 'liveEvaluationInputHash') "
                                 + "from competition.participation_events where participation_id = ?",
                         Boolean.class, PARTICIPATION_ID))
                 .isFalse();
+        assertThat(jdbc.queryForObject(
+                        "select jsonb_exists(payload_document, 'periods') "
+                                + "from competition.participation_events where participation_id = ?",
+                        Boolean.class, PARTICIPATION_ID))
+                .isFalse();
+    }
+
+    @Test
+    void rejectsACompetitionRequestWhenItsLockedDatasetEvidenceChanged() {
+        seedBacktestParticipation(EVALUATION_START.plusSeconds(5));
+        jdbc.update(
+                "update market_data.dataset_manifests set dataset_hash = ? where id = ?",
+                "0".repeat(64), FIRST_DATASET_ID);
+
+        assertThatThrownBy(() -> adapter.startEligible(OBSERVED_AT, 10))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .hasStackTraceContaining("dataset is unavailable, changed, or does not cover its period");
+
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.participations where id = ?",
+                        String.class, PARTICIPATION_ID))
+                .isEqualTo("REGISTERED");
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages where aggregate_id = ?",
+                        Integer.class, PARTICIPATION_ID))
+                .isZero();
     }
 
     @Test
@@ -476,6 +540,20 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "values (?, 'competition-plan.v1', 2, ?, ?, 'ciphertext', 1, ?)",
                 ROOM_ID, "sha256:" + "3".repeat(64), "sha256:" + "4".repeat(64), at.minusDays(1));
         jdbc.update(
+                "insert into competition.backtest_evaluation_periods "
+                        + "(id, evaluation_plan_room_id, period_sequence, evaluation_start, evaluation_end, "
+                        + "importance_weight, input_set_hash) values "
+                        + "(?, ?, 1, '2025-01-01', '2025-06-30', 0.5, ?), "
+                        + "(?, ?, 2, '2025-07-01', '2025-12-31', 0.5, ?)",
+                FIRST_PERIOD_ID, ROOM_ID, "sha256:" + "8".repeat(64),
+                SECOND_PERIOD_ID, ROOM_ID, "sha256:" + "9".repeat(64));
+        jdbc.update(
+                "insert into competition.backtest_period_datasets "
+                        + "(evaluation_period_id, dataset_manifest_id, purpose_code, locked_dataset_hash) values "
+                        + "(?, ?, 'MARKET_BARS', ?), (?, ?, 'MARKET_BARS', ?)",
+                FIRST_PERIOD_ID, FIRST_DATASET_ID, "sha256:" + "5".repeat(64),
+                SECOND_PERIOD_ID, SECOND_DATASET_ID, "sha256:" + "6".repeat(64));
+        jdbc.update(
                 "update competition.participations set joined_at = ? where id = ?",
                 admittedAt.atOffset(ZoneOffset.UTC), PARTICIPATION_ID);
     }
@@ -487,8 +565,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "per_account_bot_limit, eligibility_document, market_scope_document, scoring_parameters, "
                         + "fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, precision_rules_version, "
                         + "rules_hash, locked_at) values (?, ?, 100000, 10, 2, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, "
-                        + "?, 5, ?, 'v1', 'rules-e11', ?)",
-                ROOM_ID, SCORING_ID, FEE_ID, BUFFER_ID, at.minusDays(1));
+                        + "?, 5, ?, 'v1', ?, ?)",
+                ROOM_ID, SCORING_ID, FEE_ID, BUFFER_ID, "sha256:" + "7".repeat(64), at.minusDays(1));
         jdbc.update(
                 "insert into competition.room_schedules "
                         + "(room_id, recruitment_opens_at, participation_opens_at, evaluation_starts_at, "
@@ -531,6 +609,16 @@ class RoomEvaluationStartPersistenceIntegrationTest {
 
     private static UUID id(int suffix) {
         return UUID.fromString("86000000-0000-4000-8000-" + String.format("%012d", suffix));
+    }
+
+    private void seedDataset(UUID datasetId, String hashDigit, java.time.OffsetDateTime at) {
+        jdbc.update(
+                "insert into market_data.dataset_manifests "
+                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "schema_version, dataset_hash, created_at, available_at) "
+                        + "values (?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
+                        + "'2025-12-31T23:59:59Z', 'v1', ?, ?, ?)",
+                datasetId, FEED_ID, hashDigit.repeat(64), at.minusDays(2), at.minusDays(2));
     }
 
     @SpringBootConfiguration
