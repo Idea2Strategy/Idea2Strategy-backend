@@ -63,6 +63,7 @@ class StrategyValidationRunPersistenceIntegrationTest {
     @BeforeEach
     void prepareReferences() {
         jdbcTemplate.update("delete from strategy.validation_runs");
+        jdbcTemplate.update("delete from strategy.strategy_documents");
         jdbcTemplate.update("delete from strategy.strategies");
         jdbcTemplate.update("delete from strategy.element_catalog_versions where id = ?", CATALOG_ID);
         jdbcTemplate.execute(
@@ -117,6 +118,49 @@ class StrategyValidationRunPersistenceIntegrationTest {
                         String.class,
                         RUN_ID))
                 .isEqualTo("object");
+    }
+
+    @Test
+    void listsOnlyOwnedValidRunsForTheCurrentSemanticDocument() {
+        String semanticHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        jdbcTemplate.update(
+                "insert into strategy.strategy_documents "
+                        + "(strategy_id, semantic_document, presentation_document, semantic_schema_version, "
+                        + "presentation_schema_version, semantic_hash, presentation_hash, edit_sequence, created_at, updated_at) "
+                        + "values (?, '{}'::jsonb, '{}'::jsonb, 'basic-semantic/v1', 'basic-presentation/v1', ?, ?, 3, ?, ?)",
+                STRATEGY_ID,
+                semanticHash,
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                NOW.atOffset(ZoneOffset.UTC),
+                NOW.atOffset(ZoneOffset.UTC));
+        validationCommandAdapter.save(new StrategyValidationRun(
+                RUN_ID,
+                STRATEGY_ID,
+                OWNER_ID,
+                null,
+                3,
+                semanticHash,
+                CATALOG_ID,
+                StrategyValidationStatus.VALID,
+                List.of(),
+                NOW,
+                NOW.plusSeconds(1)));
+
+        assertThat(validationQueryAdapter.findCurrentValidOwnedBy(OWNER_ID))
+                .extracting(item -> item.validationRunId())
+                .containsExactly(RUN_ID);
+        assertThat(validationQueryAdapter.findCurrentValidOwnedBy(OTHER_OWNER_ID)).isEmpty();
+
+        jdbcTemplate.update(
+                "update strategy.strategy_documents set edit_sequence = 4 where strategy_id = ?",
+                STRATEGY_ID);
+        assertThat(validationQueryAdapter.findCurrentValidOwnedBy(OWNER_ID)).isEmpty();
+
+        jdbcTemplate.update(
+                "update strategy.strategy_documents set edit_sequence = 3, semantic_hash = ? where strategy_id = ?",
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                STRATEGY_ID);
+        assertThat(validationQueryAdapter.findCurrentValidOwnedBy(OWNER_ID)).isEmpty();
     }
 
     @SpringBootConfiguration
