@@ -110,7 +110,7 @@ class AdminMcpServiceTest {
     }
 
     @Test
-    void requiresTargetVersionAndKeepsStaleApprovalsRejectedWithAuditEvidence() {
+    void requiresDecidedContentHashAndKeepsStaleApprovalsRejectedWithAuditEvidence() {
         var fixture = fixture();
         AdminMcpExecutionResult missingVersion = fixture.service.invoke(invocation(
                 APPROVE_TOOL, "approve-no-version", hash('2'), null,
@@ -118,14 +118,14 @@ class AdminMcpServiceTest {
 
         fixture.provider.result = new AdminMcpProviderPort.Result(
                 AdminMcpProviderPort.Result.Status.REJECTED,
-                "STALE_TARGET_VERSION",
+                "STALE_CONTENT_HASH",
                 Map.of("candidateId", "candidate-1", "version", 8L),
                 Map.of("candidateId", "candidate-1", "version", 8L));
-        AdminMcpExecutionResult stale = fixture.service.invoke(approve("approve-stale", hash('3'), 7L));
+        AdminMcpExecutionResult stale = fixture.service.invoke(approve("approve-stale", hash('3'), hash('7')));
 
-        assertThat(missingVersion.code()).isEqualTo("MCP_TARGET_VERSION_REQUIRED");
+        assertThat(missingVersion.code()).isEqualTo("MCP_DECIDED_CONTENT_HASH_REQUIRED");
         assertThat(stale.status()).isEqualTo(AdminMcpExecutionResult.Status.REJECTED);
-        assertThat(stale.code()).isEqualTo("STALE_TARGET_VERSION");
+        assertThat(stale.code()).isEqualTo("STALE_CONTENT_HASH");
         assertThat(stale.auditEvidence().before()).containsEntry("version", 8L);
         assertThat(stale.auditEvidence().after()).containsEntry("version", 8L);
     }
@@ -175,14 +175,14 @@ class AdminMcpServiceTest {
                 Map.of("candidateId", "candidate-1", "version", 7L, "status", "PENDING"),
                 Map.of("candidateId", "candidate-1", "version", 8L, "status", "APPROVED"));
 
-        AdminMcpExecutionResult result = fixture.service.invoke(approve("approve-1", hash('8'), 7L));
+        AdminMcpExecutionResult result = fixture.service.invoke(approve("approve-1", hash('8'), hash('7')));
 
         assertThat(result.status()).isEqualTo(AdminMcpExecutionResult.Status.APPLIED);
         assertThat(result.auditEvidence().before()).containsEntry("status", "PENDING");
         assertThat(result.auditEvidence().after()).containsEntry("status", "APPROVED");
         assertThat(fixture.provider.requests).singleElement()
-                .extracting(AdminMcpProviderPort.Request::expectedTargetVersion)
-                .isEqualTo(7L);
+                .extracting(AdminMcpProviderPort.Request::decidedContentHash)
+                .isEqualTo(hash('7'));
     }
 
     @Test
@@ -208,7 +208,7 @@ class AdminMcpServiceTest {
         fixture.provider.result = succeeded(
                 Map.of("candidateId", "candidate-1", "version", 7L, "status", "PENDING"),
                 Map.of("candidateId", "candidate-1", "version", 8L, "status", "APPROVED"));
-        AdminMcpInvocation invocation = approve("concurrent", hash('a'), 7L);
+        AdminMcpInvocation invocation = approve("concurrent", hash('a'), hash('7'));
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> fixture.service.invoke(invocation));
             var second = executor.submit(() -> fixture.service.invoke(invocation));
@@ -266,15 +266,15 @@ class AdminMcpServiceTest {
         return invocation(QUERY_TOOL, key, hash, null, trusted(), "schema-v1", "mcp-v1");
     }
 
-    private static AdminMcpInvocation approve(String key, String hash, Long targetVersion) {
-        return invocation(APPROVE_TOOL, key, hash, targetVersion, trusted(), "schema-v1", "mcp-v1");
+    private static AdminMcpInvocation approve(String key, String hash, String decidedContentHash) {
+        return invocation(APPROVE_TOOL, key, hash, decidedContentHash, trusted(), "schema-v1", "mcp-v1");
     }
 
     private static AdminMcpInvocation invocation(
             String tool,
             String key,
             String hash,
-            Long targetVersion,
+            String decidedContentHash,
             OperatorRequestContext context,
             String schemaVersion,
             String registryVersion) {
@@ -284,7 +284,7 @@ class AdminMcpServiceTest {
                 tool,
                 schemaVersion,
                 "candidate-1",
-                targetVersion,
+                decidedContentHash,
                 Map.of("candidateId", "candidate-1"),
                 uuid(21),
                 key,

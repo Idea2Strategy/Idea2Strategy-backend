@@ -1,10 +1,13 @@
 package com.idea2strategy.backend.application.adminmcp;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 public final class AdminMcpService {
     private final AdminMcpToolRegistry registry;
@@ -49,8 +52,8 @@ public final class AdminMcpService {
                 || !tool.allowedInputFields().containsAll(invocation.input().keySet())) {
             return rejected(invocation, now, "MCP_REQUEST_SCHEMA_REJECTED", null, tool);
         }
-        if (tool.mode() == AdminMcpToolRegistry.Mode.APPROVAL && invocation.targetVersion() == null) {
-            return rejected(invocation, now, "MCP_TARGET_VERSION_REQUIRED", null, tool);
+        if (tool.mode() == AdminMcpToolRegistry.Mode.APPROVAL && invocation.decidedContentHash() == null) {
+            return rejected(invocation, now, "MCP_DECIDED_CONTENT_HASH_REQUIRED", null, tool);
         }
 
         AdminMcpAuthorizationPort.Decision guard = authorization.authorize(
@@ -64,7 +67,7 @@ public final class AdminMcpService {
             return rejected(invocation, now, "MCP_PROVIDER_UNAVAILABLE", guard, tool);
         }
         AdminMcpProviderPort.Result providerResult = provider.orElseThrow().invoke(new AdminMcpProviderPort.Request(
-                tool.name(), tool.targetDomain(), invocation.targetId(), invocation.targetVersion(),
+                tool.name(), tool.targetDomain(), invocation.targetId(), invocation.decidedContentHash(),
                 invocation.input(), invocation.idempotencyKey()));
         if (providerResult.status() == AdminMcpProviderPort.Result.Status.TIMEOUT) {
             return rejected(invocation, now, "MCP_PROVIDER_TIMEOUT", guard, tool);
@@ -87,12 +90,45 @@ public final class AdminMcpService {
         AdminMcpExecutionResult.Status status = tool.mode() == AdminMcpToolRegistry.Mode.APPROVAL
                 ? AdminMcpExecutionResult.Status.APPLIED
                 : AdminMcpExecutionResult.Status.RETURNED;
+        Map<String, Object> response = tool.mode() == AdminMcpToolRegistry.Mode.APPROVAL
+                        && providerResult.after().containsKey("decision")
+                ? approvalEnvelope(invocation, now, tool, providerResult.after())
+                : Map.copyOf(providerResult.after());
         return new AdminMcpExecutionResult(
                 status,
                 providerResult.code(),
-                Map.copyOf(providerResult.after()),
+                response,
                 evidence(invocation, now, providerResult.code(), guard, tool,
                         providerResult.before(), providerResult.after()));
+    }
+
+    private static Map<String, Object> approvalEnvelope(
+            AdminMcpInvocation invocation,
+            Instant now,
+            AdminMcpToolRegistry.Tool tool,
+            Map<String, Object> providerResult) {
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("candidateId", invocation.targetId());
+        envelope.put("decision", providerResult.get("decision"));
+        envelope.put("decidedContentHash", invocation.decidedContentHash());
+        envelope.put("evidenceBindings", providerResult.get("evidenceBindings"));
+        envelope.put("actorId", invocation.requestContext().operatorId());
+        envelope.put("auditId", invocation.correlationId());
+        envelope.put("permissionId", tool.permissionId());
+        envelope.put("requestSchemaVersion", invocation.requestSchemaVersion());
+        envelope.put("decidedAt", now.toString());
+        Object supersedes = providerResult.get("supersedesCandidateId");
+        if (supersedes != null) {
+            envelope.put("supersedesCandidateId", supersedes);
+        }
+        envelope.put("deliveryId", UUID.nameUUIDFromBytes(
+                ("corporate-action-approval:" + invocation.idempotencyKey())
+                        .getBytes(StandardCharsets.UTF_8)));
+        Object rationale = providerResult.get("rationale");
+        if (rationale != null) {
+            envelope.put("rationale", rationale);
+        }
+        return Map.copyOf(envelope);
     }
 
     private static Map<String, Object> allowlisted(
@@ -141,7 +177,7 @@ public final class AdminMcpService {
                 invocation.toolName(),
                 tool == null ? "UNRESOLVED" : tool.targetDomain(),
                 invocation.targetId(),
-                invocation.targetVersion(),
+                invocation.decidedContentHash(),
                 code,
                 invocation.correlationId(),
                 now,

@@ -10,7 +10,7 @@ public interface AdminMcpProviderPort {
             String toolName,
             String targetDomain,
             String targetId,
-            Long expectedTargetVersion,
+            String decidedContentHash,
             Map<String, Object> input,
             String idempotencyKey) {
         public Request {
