@@ -30,7 +30,7 @@ public record AdminMcpExecutionResult(
             String toolName,
             String targetDomain,
             String targetId,
-            Long targetVersion,
+            String decidedContentHash,
             String reasonCode,
             UUID correlationId,
             Instant evaluatedAt,
