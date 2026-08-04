@@ -39,6 +39,15 @@ public class SqsOutboxMessagePublisher implements OutboxMessagePublisher {
         if (this.queueUrlByEventType.isEmpty()) {
             throw new IllegalArgumentException("a publisher with no routes would publish nothing");
         }
+        this.queueUrlByEventType.forEach((eventType, queueUrl) -> {
+            if (eventType == null || eventType.isBlank()) {
+                throw new IllegalArgumentException("an outbox route must name an event type");
+            }
+            if (queueUrl == null || queueUrl.isBlank()) {
+                throw new IllegalArgumentException(
+                        "queue URL must be configured for event type " + eventType);
+            }
+        });
     }
 
     /** The event types this publisher can route, which is what the relay should claim. */
