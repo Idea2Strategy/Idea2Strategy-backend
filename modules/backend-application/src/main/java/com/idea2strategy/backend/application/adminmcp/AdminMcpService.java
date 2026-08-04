@@ -116,7 +116,7 @@ public final class AdminMcpService {
         envelope.put("auditId", invocation.correlationId());
         envelope.put("permissionId", tool.permissionId());
         envelope.put("requestSchemaVersion", invocation.requestSchemaVersion());
-        envelope.put("decidedAt", now);
+        envelope.put("decidedAt", now.toString());
         Object supersedes = providerResult.get("supersedesCandidateId");
         if (supersedes != null) {
             envelope.put("supersedesCandidateId", supersedes);
