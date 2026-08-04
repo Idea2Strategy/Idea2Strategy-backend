@@ -130,11 +130,15 @@ public final class StrategyBotContractFixtures {
                         BOT_ID,
                         SNAPSHOT_HASH,
                         "OFFICIAL_BACKTEST|" + DATASET_MANIFEST_ID + "|accounting:1.0.0"),
+                "00000000-0000-4000-8000-000000000214",
+                "BASIC",
+                1,
                 BOT_ID,
                 SNAPSHOT_HASH,
                 compiledPlan.planChecksum(),
                 DATASET_MANIFEST_ID,
                 "accounting:1.0.0",
+                "backtest-policy:1.0.0",
                 "STRATEGY_RELEASE");
 
         return new FixtureSet(compiledPlan, runCommand, stopCommand, officialBacktestRequest);
@@ -548,19 +552,28 @@ public final class StrategyBotContractFixtures {
 
     public record OfficialBacktestRequest(
             MessageMetadata metadata,
+            String runId,
+            String lane,
+            int aggregateSequence,
             String botId,
             String expectedSnapshotHash,
             String compiledPlanChecksum,
             String datasetManifestId,
             String assumptionsVersion,
+            String executionPolicyVersion,
             String requestReason) {
         public OfficialBacktestRequest {
             Objects.requireNonNull(metadata);
+            requireText(runId, "runId");
+            if (!"BASIC".equals(lane) || aggregateSequence != 1) {
+                throw new IllegalArgumentException("Official release backtests use BASIC lane sequence 1");
+            }
             requireText(botId, "botId");
             requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
             requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
             requireText(datasetManifestId, "datasetManifestId");
             requireText(assumptionsVersion, "assumptionsVersion");
+            requireText(executionPolicyVersion, "executionPolicyVersion");
             if (!"STRATEGY_RELEASE".equals(requestReason)) {
                 throw new IllegalArgumentException("Only the official release backtest belongs to this fixture");
             }

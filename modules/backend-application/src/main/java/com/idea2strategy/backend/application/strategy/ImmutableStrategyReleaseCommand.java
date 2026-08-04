@@ -14,6 +14,7 @@ public record ImmutableStrategyReleaseCommand(
         UUID feePolicyId,
         UUID buyingPowerBufferPolicyId,
         UUID datasetManifestId,
+        String executionPolicyVersion,
         String candidateConflictPolicy) {
     public ImmutableStrategyReleaseCommand {
         Objects.requireNonNull(releaseId, "releaseId");
@@ -24,6 +25,9 @@ public record ImmutableStrategyReleaseCommand(
         Objects.requireNonNull(feePolicyId, "feePolicyId");
         Objects.requireNonNull(buyingPowerBufferPolicyId, "buyingPowerBufferPolicyId");
         Objects.requireNonNull(datasetManifestId, "datasetManifestId");
+        if (executionPolicyVersion == null || executionPolicyVersion.isBlank()) {
+            throw new IllegalArgumentException("executionPolicyVersion must not be blank");
+        }
         candidateConflictPolicy = StrategyDocumentJson.canonicalize(candidateConflictPolicy);
     }
 }

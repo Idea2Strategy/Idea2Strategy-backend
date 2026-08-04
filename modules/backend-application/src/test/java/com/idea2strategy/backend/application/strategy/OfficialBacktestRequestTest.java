@@ -19,8 +19,8 @@ class OfficialBacktestRequestTest {
         var release = release();
         UUID datasetId = UUID.fromString("70000000-0000-4000-8000-000000000001");
 
-        var first = OfficialBacktestRequest.forRelease(release, HASH_B, datasetId);
-        var retry = OfficialBacktestRequest.forRelease(release, HASH_B, datasetId);
+        var first = OfficialBacktestRequest.forRelease(release, HASH_B, datasetId, "backtest-policy-v1");
+        var retry = OfficialBacktestRequest.forRelease(release, HASH_B, datasetId, "backtest-policy-v1");
 
         assertThat(retry).isEqualTo(first);
         assertThat(first.metadata().contractVersion()).isEqualTo("strategy-bot.v1");
@@ -28,6 +28,8 @@ class OfficialBacktestRequestTest {
         assertThat(first.metadata().idempotencyKey()).matches("sha256:[0-9a-f]{64}");
         assertThat(first.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_C);
         assertThat(first.compiledPlanChecksum()).isEqualTo("sha256:" + HASH_B);
+        assertThat(first.runId()).isEqualTo(retry.runId());
+        assertThat(first.executionPolicyVersion()).isEqualTo("backtest-policy-v1");
         assertThat(first.requestReason()).isEqualTo("STRATEGY_RELEASE");
     }
 

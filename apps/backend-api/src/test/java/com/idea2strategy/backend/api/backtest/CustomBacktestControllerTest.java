@@ -28,7 +28,8 @@ class CustomBacktestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"datasetManifestId":"98000000-0000-4000-8000-000000000003",
-                                 "periodStart":"2024-01-01","periodEnd":"2024-12-31"}
+                                 "periodStart":"2024-01-01","periodEnd":"2024-12-31",
+                                 "executionPolicyVersion":"backtest-policy-v1"}
                                 """))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.messageId").value(messageId.toString()))

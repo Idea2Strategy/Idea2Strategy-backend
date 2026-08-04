@@ -187,7 +187,9 @@ public final class DatabaseAccessPolicy {
             case BACKTEST -> allowsBacktest(access, schema, table);
             case PIPELINE -> allowsPipeline(access, schema, table);
             case TRADING -> allowsTrading(access, schema, table);
-            case BACKEND -> access == Access.READ || ownsBackendTable(schema, table);
+            case BACKEND -> access == Access.READ
+                    || ownsBackendTable(schema, table)
+                    || (access == Access.INSERT && "backtest".equals(schema) && "runs".equals(table));
             case BATCH -> access == Access.READ || Set.of("performance", "operations").contains(schema);
         };
     }

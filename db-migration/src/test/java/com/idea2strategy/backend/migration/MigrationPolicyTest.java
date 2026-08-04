@@ -92,7 +92,11 @@ class MigrationPolicyTest {
                         "V20260804090000__backend_seed_basic_element_catalog.sql",
                         "V20260804090100__pipeline_register_official_rsi_14.sql",
                         "V20260804100000__backend_bot_launch_contract_plans.sql",
-                        "V20260804145900__backend_room_ledger_handoff.sql"),
+                        "V20260804145900__backend_room_ledger_handoff.sql",
+                        "V20260804160000__backtest_runtime_ownership_expand.sql",
+                        "V20260804160010__backend_backtest_competition_link.sql",
+                        "V20260804160020__pipeline_dataset_manifest_empty_hash.sql",
+                        "V20260804160100__backtest_runtime_ownership_constrain.sql"),
                 plan.orderedFileNames());
     }
 

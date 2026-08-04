@@ -16,6 +16,7 @@ import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -33,6 +34,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
     private static final UUID DATASET = id(5);
     private static final UUID FEE = id(6);
     private static final UUID BUFFER = id(7);
+    private static final String POLICY = "backtest-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
 
     @Container
@@ -53,7 +55,27 @@ class CustomBacktestJooqAdapterIntegrationTest {
     @BeforeEach
     void seed() {
         var at = NOW.atOffset(ZoneOffset.UTC);
-        jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", ACCOUNT);
+        jdbc.update("delete from operations.outbox_messages where event_type = 'CUSTOM_BACKTEST_REQUESTED'");
+        jdbc.update("delete from backtest.run_attempts where run_id in (select id from backtest.runs where bot_id = ?)", BOT);
+        jdbc.update("delete from backtest.runs where bot_id = ?", BOT);
+        jdbc.update("delete from bot.launch_contract_plans where bot_id = ?", BOT);
+        jdbc.update("delete from bot.launch_configurations where bot_id = ?", BOT);
+        jdbc.update("delete from bot.launch_snapshots where bot_id = ?", BOT);
+        jdbc.update("delete from bot.bots where id = ?", BOT);
+        jdbc.update("delete from market_data.dataset_manifests where id = ?", DATASET);
+        jdbc.update("delete from market_data.feeds where id = ?", FEED);
+        jdbc.update("delete from market_data.providers where id = ?", PROVIDER);
+        jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE);
+        jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER);
+        jdbc.update("delete from backtest.execution_policy_versions where version = ?", POLICY);
+        jdbc.update(
+                "insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE') on conflict (id) do nothing",
+                ACCOUNT);
+        jdbc.update(
+                "insert into backtest.execution_policy_versions "
+                        + "(version, policy_artifact_hash, policy_document, locked_at) "
+                        + "values (?, ?, '{}'::jsonb, ?)",
+                POLICY, "9".repeat(64), at.minusDays(1));
         jdbc.update(
                 "insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
@@ -117,6 +139,19 @@ class CustomBacktestJooqAdapterIntegrationTest {
         assertThat(created.created()).isTrue();
         assertThat(duplicate.created()).isFalse();
         assertThat(duplicate.messageId()).isEqualTo(created.messageId());
+        assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForMap(
+                        "select id, message_id, lane::text as lane, execution_policy_version, "
+                                + "canonical_payload_hash, aggregate_sequence from backtest.runs"))
+                .satisfies(row -> {
+                    assertThat(row.get("id")).isEqualTo(created.runId());
+                    assertThat(row.get("message_id")).isEqualTo(created.messageId());
+                    assertThat(row.get("lane")).isEqualTo("CUSTOM");
+                    assertThat(row.get("execution_policy_version")).isEqualTo(POLICY);
+                    assertThat(row.get("canonical_payload_hash")).isEqualTo(
+                            jdbc.queryForObject("select payload_hash from operations.outbox_messages", String.class));
+                    assertThat(row.get("aggregate_sequence")).isEqualTo(1L);
+                });
         assertThat(jdbc.queryForObject(
                         "select count(*) from operations.outbox_messages "
                                 + "where event_type = 'CUSTOM_BACKTEST_REQUESTED'",
@@ -147,10 +182,25 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         command(LocalDate.parse("2024-02-01"), LocalDate.parse("2024-11-30")),
                         NOW.plusSeconds(60)))
                 .isInstanceOf(BacktestRequestIdempotencyConflictException.class);
+        assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsAnUnknownExecutionPolicyWithoutWritingRunOrOutbox() {
+        assertThatThrownBy(() -> adapter.enqueue(
+                        ACCOUNT,
+                        new CustomBacktestCommand(BOT, DATASET, LocalDate.parse("2024-01-01"),
+                                LocalDate.parse("2024-12-31"), "missing-policy", "custom-key-2"),
+                        NOW))
+                .isInstanceOf(InvalidDataAccessApiUsageException.class)
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .hasRootCauseMessage("Locked backtest execution policy was not found");
+        assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from operations.outbox_messages", Integer.class)).isZero();
     }
 
     private static CustomBacktestCommand command(LocalDate start, LocalDate end) {
-        return new CustomBacktestCommand(BOT, DATASET, start, end, "custom-key-1");
+        return new CustomBacktestCommand(BOT, DATASET, start, end, POLICY, "custom-key-1");
     }
 
     private static UUID id(int suffix) {

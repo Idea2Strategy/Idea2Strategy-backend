@@ -2,6 +2,7 @@ package com.idea2strategy.backend.worker.competition;
 
 import com.idea2strategy.backend.persistence.competition.RoomEvaluationAccountResultConsumer;
 import com.idea2strategy.backend.persistence.competition.RoomEvaluationAccountResultConsumer.Outcome;
+import com.idea2strategy.backend.persistence.competition.RoomEvaluationStartJooqAdapter;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore.ClaimedMessage;
 import java.net.URI;
@@ -28,7 +29,8 @@ import software.amazon.awssdk.services.sqs.model.Message;
 @Configuration(proxyBeanMethods = false)
 @EnableScheduling
 @EnableConfigurationProperties(RoomEvaluationAccountResultSqsConfiguration.Properties.class)
-@Import({RoomEvaluationAccountResultConsumer.class, TransactionalOutboxStore.class})
+@Import({RoomEvaluationAccountResultConsumer.class, RoomEvaluationStartJooqAdapter.class,
+        TransactionalOutboxStore.class})
 public class RoomEvaluationAccountResultSqsConfiguration {
 
     @Bean("roomLedgerResultSqsClient")

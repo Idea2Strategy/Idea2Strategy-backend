@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandPort;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
+import com.idea2strategy.backend.application.strategy.StrategyDocumentJson;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -189,15 +190,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
     }
 
     /**
-     * Publishes B's official backtest request and nothing else.
-     *
-     * <p>{@code backtest} is D's schema: {@link
-     * com.idea2strategy.backend.migration.DatabaseAccessPolicy} registers it to {@code
-     * MigrationOwner.BACKTEST} and denies the backend role every access but {@code READ}. This
-     * method therefore writes only {@code operations.outbox_messages}, which the backend owns, and
-     * D's {@code OfficialBacktestIntake} turns that message into the run row through its own
-     * lifecycle. The outbox row is the single record of "this release has been requested", so its
-     * idempotency key alone decides whether the request was already published.
+     * Registers the immutable BASIC run and its lane Outbox event in the release transaction.
      */
     private void saveOfficialBacktestOnce(
             ImmutableStrategyRelease release,
@@ -216,25 +209,55 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             return;
         }
 
-        boolean datasetAvailable = dsl.fetchOne(
-                "select 1 from market_data.dataset_manifests "
+        var dataset = dsl.fetchOne(
+                "select dataset_hash, period_start::date as period_start, period_end::date as period_end "
+                        + "from market_data.dataset_manifests "
                         + "where id = ? and status = 'AVAILABLE' and available_at is not null "
                         + "and available_at <= ?::timestamptz",
-                request.datasetManifestId(), release.releasedAt().atOffset(ZoneOffset.UTC)) != null;
-        if (!datasetAvailable) {
+                request.datasetManifestId(), release.releasedAt().atOffset(ZoneOffset.UTC));
+        if (dataset == null) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset must be available at the release instant");
         }
+        boolean policyAvailable = dsl.fetchOne(
+                "select 1 from backtest.execution_policy_versions "
+                        + "where version = ? and locked_at <= ?::timestamptz",
+                request.executionPolicyVersion(), release.releasedAt().atOffset(ZoneOffset.UTC)) != null;
+        if (!policyAvailable) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest execution policy must be locked at the release instant");
+        }
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
+        String payload = payloadDocument(request);
+        var configuration = release.launchConfiguration();
+
+        dsl.execute(
+                "insert into backtest.runs (id, lane, message_id, bot_id, owner_account_id, "
+                        + "configuration_hash, canonical_payload_hash, aggregate_sequence, status, "
+                        + "evaluation_start, evaluation_end, initial_cash_amount, market_rules_version, "
+                        + "accounting_rules_version, execution_policy_version, precision_rules_version, "
+                        + "fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, idempotency_scope, "
+                        + "idempotency_key, queued_at) values (?, 'BASIC', ?, ?, ?, ?, "
+                        + "encode(sha256(convert_to((?::jsonb)::text, 'UTF8')), 'hex'), 1, 'QUEUED', "
+                        + "?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?, ?::timestamptz) "
+                        + "on conflict (lane, idempotency_scope, idempotency_key) do nothing",
+                request.runId(), request.metadata().messageId(), request.botId(), release.ownerAccountId(),
+                configuration.configurationHash(), payload,
+                dataset.get("period_start", java.time.LocalDate.class),
+                dataset.get("period_end", java.time.LocalDate.class), configuration.initialCashAmount(),
+                configuration.brokerRulesVersion(), configuration.accountingRulesVersion(),
+                request.executionPolicyVersion(), configuration.precisionRulesVersion(),
+                configuration.feePolicyId(), configuration.buyingPowerBufferPolicyId(),
+                release.botId().toString(), idempotencyKey, queuedAt);
 
         dsl.execute(
                 "insert into operations.outbox_messages "
                         + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
                         + "payload_document, idempotency_key, created_at) "
                         + "values (?, 'strategy-bot', ?, 1, ?, ?, ?::jsonb, ?, ?::timestamptz) "
-                        + "on conflict (idempotency_key) do nothing",
-                request.metadata().messageId(), release.botId(), request.metadata().messageType(),
-                request.metadata().contractVersion(), payloadDocument(request), idempotencyKey, queuedAt);
+                + "on conflict (idempotency_key) do nothing",
+                request.metadata().messageId(), request.runId(), request.metadata().messageType(),
+                request.metadata().contractVersion(), payload, idempotencyKey, queuedAt);
     }
 
     private String payloadDocument(OfficialBacktestRequest request) {
@@ -247,10 +270,14 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         metadata.put("correlationId", request.metadata().correlationId().toString());
         metadata.put("idempotencyKey", request.metadata().idempotencyKey());
         root.put("botId", request.botId().toString());
+        root.put("runId", request.runId().toString());
+        root.put("lane", "BASIC");
+        root.put("aggregateSequence", 1);
         root.put("expectedSnapshotHash", request.expectedSnapshotHash());
         root.put("compiledPlanChecksum", request.compiledPlanChecksum());
         root.put("datasetManifestId", request.datasetManifestId().toString());
         root.put("assumptionsVersion", request.assumptionsVersion());
+        root.put("executionPolicyVersion", request.executionPolicyVersion());
         root.put("requestReason", request.requestReason());
         try {
             return objectMapper.writeValueAsString(root);

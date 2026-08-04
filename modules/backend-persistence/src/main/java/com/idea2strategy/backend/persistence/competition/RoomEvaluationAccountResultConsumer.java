@@ -31,16 +31,24 @@ public class RoomEvaluationAccountResultConsumer {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final Clock clock;
+    private final RoomEvaluationStartJooqAdapter evaluationStart;
 
     @Autowired
-    public RoomEvaluationAccountResultConsumer(TransactionalOutboxStore outbox, JdbcTemplate jdbc) {
-        this(outbox, jdbc, Clock.systemUTC());
+    public RoomEvaluationAccountResultConsumer(
+            TransactionalOutboxStore outbox,
+            JdbcTemplate jdbc,
+            RoomEvaluationStartJooqAdapter evaluationStart) {
+        this(outbox, jdbc, evaluationStart, Clock.systemUTC());
     }
 
     RoomEvaluationAccountResultConsumer(
-            TransactionalOutboxStore outbox, JdbcTemplate jdbc, Clock clock) {
+            TransactionalOutboxStore outbox,
+            JdbcTemplate jdbc,
+            RoomEvaluationStartJooqAdapter evaluationStart,
+            Clock clock) {
         this.outbox = outbox;
         this.jdbc = jdbc;
+        this.evaluationStart = evaluationStart;
         this.json = new ObjectMapper();
         this.clock = clock;
     }
@@ -140,6 +148,7 @@ public class RoomEvaluationAccountResultConsumer {
                         set status = 'EVALUATING', evaluation_started_at = ?
                         where id = ? and status = 'PENDING_LEDGER'
                         """, now(), participationId);
+                evaluationStart.registerCompetitionBacktests(participationId, now());
                 appendParticipationEvent(participationId, "EVALUATION_STARTED", source.messageId(), null);
             } else {
                 jdbc.update("""

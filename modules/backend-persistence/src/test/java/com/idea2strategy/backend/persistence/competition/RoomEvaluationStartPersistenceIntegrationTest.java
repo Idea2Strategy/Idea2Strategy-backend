@@ -88,11 +88,15 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from trading.ledger_accounts");
         jdbc.update("delete from competition.participation_events");
         jdbc.update("delete from competition.live_evaluation_segments");
+        jdbc.update("delete from competition.backtest_period_runs");
+        jdbc.update("delete from backtest.run_attempts");
+        jdbc.update("delete from backtest.runs");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from competition.backtest_period_feature_materializations");
         jdbc.update("delete from competition.backtest_period_datasets");
         jdbc.update("delete from competition.backtest_evaluation_periods");
         jdbc.update("delete from competition.backtest_evaluation_plans");
+        jdbc.update("delete from backtest.execution_policy_versions where version = 'competition-policy-v1'");
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.live_room_rules");
@@ -351,11 +355,54 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         "select count(*) from competition.live_evaluation_segments where participation_id = ?",
                         Integer.class, PARTICIPATION_ID))
                 .isZero();
+        consumeOpenedLedgerResult();
+        assertThat(jdbc.queryForMap(
+                        "select event_schema_version, payload_document ->> 'requestReason' as request_reason, "
+                                + "payload_document ->> 'roomId' as room_id, "
+                                + "payload_document ->> 'participationId' as participation_id, "
+                                + "payload_document ->> 'scoringTemplateVersionId' as scoring_template_id, "
+                                + "payload_document ->> 'roomRulesHash' as room_rules_hash, "
+                                + "payload_document ->> 'initialCashAmount' as initial_cash_amount, "
+                                + "payload_document ->> 'currencyCode' as currency_code, "
+                                + "jsonb_array_length(payload_document -> 'periods') as period_count, "
+                                + "payload_document #>> '{periods,0,evaluationPeriodId}' as first_period_id, "
+                                + "payload_document #>> '{periods,0,datasets,0,datasetManifestId}' as first_dataset_id "
+                                + "from operations.outbox_messages "
+                                + "where event_type = 'COMPETITION_BACKTEST_REQUESTED' "
+                                + "and payload_document ->> 'participationId' = ? "
+                                + "and payload_document #>> '{periods,0,evaluationPeriodId}' = ?",
+                        PARTICIPATION_ID.toString(), FIRST_PERIOD_ID.toString()))
+                .containsEntry("event_schema_version", "backtest-request.v1")
+                .containsEntry("request_reason", "COMPETITION_EVALUATION")
+                .containsEntry("room_id", ROOM_ID.toString())
+                .containsEntry("participation_id", PARTICIPATION_ID.toString())
+                .containsEntry("scoring_template_id", SCORING_ID.toString())
+                .containsEntry("room_rules_hash", "sha256:" + "7".repeat(64))
+                .containsEntry("initial_cash_amount", "100000.00000000")
+                .containsEntry("currency_code", "USD")
+                .containsEntry("period_count", 1)
+                .containsEntry("first_period_id", FIRST_PERIOD_ID.toString())
+                .containsEntry("first_dataset_id", FIRST_DATASET_ID.toString());
         assertThat(jdbc.queryForObject(
-                        "select count(*) from operations.outbox_messages where aggregate_id = ? "
-                                + "and event_type = 'COMPETITION_BACKTEST_REQUESTED'",
+                        "select count(*) from operations.outbox_messages "
+                                + "where event_type = 'COMPETITION_BACKTEST_REQUESTED'",
+                        Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from competition.backtest_period_runs where participation_id = ?",
                         Integer.class, PARTICIPATION_ID))
-                .isZero();
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "select coalesce(bool_or(jsonb_exists(payload_document, 'liveEvaluationInputHash')), false) "
+                                + "from competition.participation_events where participation_id = ?",
+                        Boolean.class, PARTICIPATION_ID))
+                .isFalse();
+        assertThat(jdbc.queryForObject(
+                        "select coalesce(bool_or(jsonb_exists(payload_document, 'periods')), false) "
+                                + "from competition.participation_events where participation_id = ?",
+                        Boolean.class, PARTICIPATION_ID))
+                .isFalse();
     }
 
     @Test
@@ -537,6 +584,56 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         seedBotAndParticipation(at);
     }
 
+    private void consumeOpenedLedgerResult() throws Exception {
+        var request = jdbc.queryForMap("""
+                select id, payload_document::text as payload, payload_hash, producer_idempotency_key
+                from operations.outbox_messages
+                where aggregate_id = ? and event_type = 'ROOM_EVALUATION_ACCOUNT_OPEN_REQUESTED'
+                """, PARTICIPATION_ID);
+        var requestPayload = objectMapper.readTree(request.get("payload").toString());
+        UUID resultId = id(91);
+        var payload = objectMapper.createObjectNode()
+                .put("requestMessageId", request.get("id").toString())
+                .put("commandId", requestPayload.path("commandId").asText())
+                .put("producerIdempotencyKey", request.get("producer_idempotency_key").toString())
+                .put("requestPayloadHash", request.get("payload_hash").toString())
+                .put("roomId", ROOM_ID.toString())
+                .put("participationId", PARTICIPATION_ID.toString())
+                .put("botId", BOT_ID.toString())
+                .put("evaluationSegmentId", requestPayload.path("evaluationSegmentId").asText())
+                .put("botEventId", id(92).toString())
+                .put("botEventSequence", 1)
+                .put("ledgerTransactionId", id(93).toString())
+                .put("cashAccountId", id(94).toString())
+                .put("capitalAccountId", id(95).toString())
+                .put("initialCash", requestPayload.path("initialCash").asText())
+                .put("currency", requestPayload.path("currency").asText())
+                .put("feePolicyVersionId", requestPayload.path("feePolicyVersionId").asText())
+                .put("buyingPowerPolicyVersionId", requestPayload.path("buyingPowerPolicyVersionId").asText())
+                .put("completedAt", OBSERVED_AT.plusSeconds(1).toString());
+        jdbc.update("""
+                insert into operations.outbox_messages
+                    (id, owner_domain, aggregate_id, aggregate_sequence, event_type,
+                     event_schema_version, payload_document, producer_idempotency_key,
+                     idempotency_key, created_at)
+                values (?, 'trading', ?, 1, 'ROOM_EVALUATION_ACCOUNT_OPENED',
+                        'room-evaluation-account-opened.v1', cast(? as jsonb), ?, ?, ?)
+                """, resultId, PARTICIPATION_ID, objectMapper.writeValueAsString(payload),
+                request.get("producer_idempotency_key"), "opened:" + resultId,
+                OBSERVED_AT.plusSeconds(1).atOffset(ZoneOffset.UTC));
+        var result = jdbc.queryForMap("""
+                select payload_document::text as payload, payload_hash, producer_idempotency_key
+                from operations.outbox_messages where id = ?
+                """, resultId);
+        var source = new TransactionalOutboxStore.ClaimedMessage(
+                resultId, "trading", PARTICIPATION_ID, "ROOM_EVALUATION_ACCOUNT_OPENED",
+                "room-evaluation-account-opened.v1", result.get("payload").toString(),
+                result.get("payload_hash").toString(), result.get("producer_idempotency_key").toString(),
+                null, 1, OBSERVED_AT, OBSERVED_AT.plusSeconds(30));
+        assertThat(results.consume(source, "test", Duration.ofSeconds(30)))
+                .isEqualTo(RoomEvaluationAccountResultConsumer.Outcome.OPENED);
+    }
+
     private void seedBacktestParticipation(Instant admittedAt) {
         var at = EVALUATION_START.atOffset(ZoneOffset.UTC);
         jdbc.update(
@@ -560,6 +657,11 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "commitment_nonce_ciphertext, nonce_key_version, locked_at) "
                         + "values (?, 'competition-plan.v1', 2, ?, ?, 'ciphertext', 1, ?)",
                 ROOM_ID, "sha256:" + "3".repeat(64), "sha256:" + "4".repeat(64), at.minusDays(1));
+        jdbc.update(
+                "insert into backtest.execution_policy_versions "
+                        + "(version, policy_artifact_hash, policy_document, locked_at) "
+                        + "values ('competition-policy-v1', ?, jsonb_build_object('competitionPlanHash', ?), ?)",
+                "a".repeat(64), "sha256:" + "3".repeat(64), at.minusDays(1));
         jdbc.update(
                 "insert into competition.backtest_evaluation_periods "
                         + "(id, evaluation_plan_room_id, period_sequence, evaluation_start, evaluation_end, "
