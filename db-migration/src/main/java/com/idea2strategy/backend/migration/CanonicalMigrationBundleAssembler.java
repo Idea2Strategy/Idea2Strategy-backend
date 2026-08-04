@@ -35,12 +35,19 @@ public final class CanonicalMigrationBundleAssembler {
         try {
             Files.createDirectories(output);
             var manifest = new StringBuilder("idea2strategy-flyway-bundle-v1\n");
+            var migrationSql = new ArrayList<String>();
             for (var fileName : plan.orderedFileNames()) {
                 var source = sources.get(fileName);
                 var bytes = Files.readAllBytes(source);
                 Files.write(output.resolve(fileName), bytes);
+                migrationSql.add(new String(bytes, StandardCharsets.UTF_8));
                 manifest.append(fileName).append('\t').append(sha256(bytes)).append('\n');
             }
+            var runtimeGrants = DatabaseAccessPolicy.runtimeGrantSql(migrationSql)
+                    .getBytes(StandardCharsets.UTF_8);
+            Files.write(output.resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE), runtimeGrants);
+            manifest.append(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE)
+                    .append('\t').append(sha256(runtimeGrants)).append('\n');
             var manifestBytes = manifest.toString().getBytes(StandardCharsets.UTF_8);
             var bundleDigest = sha256(manifestBytes);
             Files.write(output.resolve(CanonicalMigrationBundle.MANIFEST_FILE), manifestBytes);
@@ -48,7 +55,9 @@ public final class CanonicalMigrationBundleAssembler {
                     output.resolve(CanonicalMigrationBundle.DIGEST_FILE),
                     bundleDigest + "\n",
                     StandardCharsets.UTF_8);
-            return new CanonicalMigrationBundle(output, plan.orderedFileNames(), bundleDigest);
+            var orderedFileNames = new ArrayList<>(plan.orderedFileNames());
+            orderedFileNames.add(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE);
+            return new CanonicalMigrationBundle(output, orderedFileNames, bundleDigest);
         } catch (IOException exception) {
             throw new UncheckedIOException("Unable to assemble canonical migration bundle", exception);
         }

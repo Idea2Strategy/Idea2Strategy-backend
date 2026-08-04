@@ -52,6 +52,53 @@ gradlew :db-migration:run --args="<central-migration-dir> <empty-output-dir> [co
 
 Flyway must execute only the resulting output directory. Application startup must not collect repository directories or run owner-local fixture migrations.
 
+## Runtime database roles
+
+Every assembled bundle ends with the generated repeatable migration
+`R__database_runtime_grants.sql`. `DatabaseAccessPolicy` is its single source of truth. The
+migration creates these credential-free group roles and reapplies exact table ACLs after every
+schema change:
+
+- `idea2strategy_backend`
+- `idea2strategy_batch`
+- `idea2strategy_trading`
+- `idea2strategy_backtest`
+- `idea2strategy_pipeline`
+
+All five are `NOLOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`,
+`NOBYPASSRLS`, and `NOINHERIT`. The migration fails closed if one owns the database or any schema,
+table, sequence, view, or other relation. They receive `CONNECT`, only the required schema `USAGE`,
+and table privileges derived from `DatabaseAccessPolicy`; they never receive schema `CREATE`,
+object ownership, or DDL privileges. Public access to application schemas, tables, and sequences
+is revoked. The `storage` schema is pipeline-owned; other services receive only the explicit
+object-table access in the policy.
+
+Credential-bearing roles are an environment bootstrap concern, not a Flyway concern. For each
+runtime principal, the database administrator must create a distinct login, harden it, and grant
+exactly one group role. Password values must be supplied by the deployment secret channel and
+must never appear in SQL files, Terraform state, command history, or logs. The exact SQL shape is:
+
+```sql
+CREATE ROLE <environment_service_login> LOGIN PASSWORD '<secret-channel-value>';
+ALTER ROLE <environment_service_login>
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT;
+GRANT idea2strategy_<service> TO <environment_service_login>;
+```
+
+The runtime login must not own the database, schemas, tables, sequences, or the Flyway history
+table, and it must not receive another service group role. Deployment remains blocked until the
+AWS/RDS bootstrap applies these memberships through a private network path and verifies
+`pg_has_role(login, group_role, 'member')`, `rolcanlogin`, the hardening flags, and a denied
+cross-owner write. Password creation and rotation are intentionally outside the migration bundle.
+
+Pinned CI and deployment bundles must be the exact output of
+`CanonicalMigrationBundleAssembler`; copying only the checked-in migration resources omits the
+generated repeatable ACL migration and is not deployable. The assembler evaluates central and
+owner-contributed `CREATE TABLE` statements together, so newly contributed tables receive policy
+privileges in the same bundle. Release verification must require the repeatable file in the bundle
+manifest and exercise both an allowed read and a denied cross-owner write using the generated
+group roles.
+
 ## A11 preference migration recovery
 
 `V20260802050054__backend_account_preferences_theme.sql` is additive and PostgreSQL applies its DDL and backfill in one Flyway transaction. Take the normal database backup before deployment. If the transaction fails, correct the cause and rerun the unchanged migration after Flyway validation; do not edit the applied file.

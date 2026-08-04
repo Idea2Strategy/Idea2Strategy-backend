@@ -24,7 +24,7 @@ class CanonicalMigrationBundleAssemblerTest {
         var pipeline = Files.createDirectories(temporaryDirectory.resolve("pipeline"));
         Files.writeString(
                 trading.resolve("V20260802120000__trading_add_execution_marker.sql"),
-                "ALTER TABLE trading.orders ADD COLUMN execution_marker text;\n");
+                "CREATE TABLE trading.execution_markers (id uuid PRIMARY KEY);\n");
         Files.writeString(
                 pipeline.resolve("V20260802110000__pipeline_add_manifest_marker.sql"),
                 "ALTER TABLE market_data.dataset_manifests ADD COLUMN pipeline_marker text;\n");
@@ -70,8 +70,13 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260802232100__backend_operator_bootstrap_evidence.sql",
                         "V20260804090000__backend_seed_basic_element_catalog.sql",
                         "V20260804090100__pipeline_register_official_rsi_14.sql",
-                        "V20260804100000__backend_bot_launch_contract_plans.sql"),
+                        "V20260804100000__backend_bot_launch_contract_plans.sql",
+                        DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
+        assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
+                .contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
+        assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
+                .contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"trading\".\"execution_markers\" TO idea2strategy_trading"));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));
     }
