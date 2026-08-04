@@ -57,6 +57,12 @@ class CustomBacktestJooqAdapterIntegrationTest {
         var at = NOW.atOffset(ZoneOffset.UTC);
         jdbc.update("delete from operations.outbox_messages where event_type = 'CUSTOM_BACKTEST_REQUESTED'");
         jdbc.update("delete from backtest.run_attempts where run_id in (select id from backtest.runs where bot_id = ?)", BOT);
+        jdbc.update("delete from backtest.input_datasets where input_bundle_id in "
+                + "(select id from backtest.input_bundles where run_id in (select id from backtest.runs where bot_id = ?))", BOT);
+        jdbc.update("delete from backtest.input_feature_materializations where input_bundle_id in "
+                + "(select id from backtest.input_bundles where run_id in (select id from backtest.runs where bot_id = ?))", BOT);
+        jdbc.update("delete from backtest.run_input_pins where run_id in (select id from backtest.runs where bot_id = ?)", BOT);
+        jdbc.update("delete from backtest.input_bundles where run_id in (select id from backtest.runs where bot_id = ?)", BOT);
         jdbc.update("delete from backtest.runs where bot_id = ?", BOT);
         jdbc.update("delete from bot.launch_contract_plans where bot_id = ?", BOT);
         jdbc.update("delete from bot.launch_configurations where bot_id = ?", BOT);
@@ -140,6 +146,29 @@ class CustomBacktestJooqAdapterIntegrationTest {
         assertThat(duplicate.created()).isFalse();
         assertThat(duplicate.messageId()).isEqualTo(created.messageId());
         assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForMap(
+                        "select p.input_bundle_fingerprint, p.input_contract_version, "
+                                + "p.compiled_plan_checksum, p.strategy_snapshot_hash, p.execution_policy_version, "
+                                + "b.bundle_hash from backtest.run_input_pins p "
+                                + "join backtest.input_bundles b on b.id = p.input_bundle_id "
+                                + "where p.run_id = ?",
+                        created.runId()))
+                .satisfies(pin -> {
+                    assertThat(pin.get("input_bundle_fingerprint")).asString().matches("sha256:[0-9a-f]{64}");
+                    assertThat(pin.get("input_contract_version")).isEqualTo("backtest-request.v1");
+                    assertThat(pin.get("compiled_plan_checksum")).isEqualTo("sha256:" + "1".repeat(64));
+                    assertThat(pin.get("strategy_snapshot_hash")).isEqualTo("sha256:" + "f".repeat(64));
+                    assertThat(pin.get("execution_policy_version")).isEqualTo(POLICY);
+                    assertThat(pin.get("bundle_hash")).isEqualTo(pin.get("input_bundle_fingerprint"));
+                });
+        assertThat(jdbc.queryForMap(
+                        "select d.dataset_manifest_id, d.purpose_code, d.locked_dataset_hash "
+                                + "from backtest.input_datasets d join backtest.run_input_pins p "
+                                + "on p.input_bundle_id = d.input_bundle_id where p.run_id = ?",
+                        created.runId()))
+                .containsEntry("dataset_manifest_id", DATASET)
+                .containsEntry("purpose_code", "MARKET_BARS")
+                .containsEntry("locked_dataset_hash", "sha256:" + "a".repeat(64));
         assertThat(jdbc.queryForMap(
                         "select id, message_id, lane::text as lane, execution_policy_version, "
                                 + "canonical_payload_hash, aggregate_sequence from backtest.runs"))

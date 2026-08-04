@@ -50,6 +50,9 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID SECOND_DATASET_ID = id(14);
     private static final UUID FIRST_PERIOD_ID = id(15);
     private static final UUID SECOND_PERIOD_ID = id(16);
+    private static final UUID FEATURE_INSTRUMENT_ID = id(17);
+    private static final UUID FEATURE_PIPELINE_RUN_ID = id(18);
+    private static final UUID FEATURE_MATERIALIZATION_ID = id(19);
     private static final Instant EVALUATION_START = Instant.parse("2026-08-02T04:00:00Z");
     private static final Instant OBSERVED_AT = EVALUATION_START.plusSeconds(15);
 
@@ -90,6 +93,10 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from competition.live_evaluation_segments");
         jdbc.update("delete from competition.backtest_period_runs");
         jdbc.update("delete from backtest.run_attempts");
+        jdbc.update("delete from backtest.input_datasets");
+        jdbc.update("delete from backtest.input_feature_materializations");
+        jdbc.update("delete from backtest.run_input_pins");
+        jdbc.update("delete from backtest.input_bundles");
         jdbc.update("delete from backtest.runs");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from competition.backtest_period_feature_materializations");
@@ -97,6 +104,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from competition.backtest_evaluation_periods");
         jdbc.update("delete from competition.backtest_evaluation_plans");
         jdbc.update("delete from backtest.execution_policy_versions where version = 'competition-policy-v1'");
+        jdbc.update("delete from market_data.feature_materializations where id = ?", FEATURE_MATERIALIZATION_ID);
+        jdbc.update("delete from market_data.pipeline_runs where id = ?", FEATURE_PIPELINE_RUN_ID);
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.live_room_rules");
@@ -113,6 +122,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from market_data.dataset_manifests where id in (?, ?)", FIRST_DATASET_ID, SECOND_DATASET_ID);
         jdbc.update("delete from market_data.feeds where id = ?", FEED_ID);
         jdbc.update("delete from market_data.providers where id = ?", PROVIDER_ID);
+        jdbc.update("delete from market_data.instruments where id = ?", FEATURE_INSTRUMENT_ID);
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
         var at = EVALUATION_START.atOffset(ZoneOffset.UTC);
@@ -389,6 +399,20 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         Integer.class))
                 .isEqualTo(2);
         assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from backtest.run_input_pins", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from backtest.input_bundles", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from backtest.input_datasets", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from backtest.input_feature_materializations",
+                        Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from backtest.run_input_pins p "
+                                + "join backtest.input_bundles b on b.id = p.input_bundle_id "
+                                + "where p.input_contract_version = 'backtest-request.v1' "
+                                + "and p.input_bundle_fingerprint = b.bundle_hash",
+                        Integer.class))
+                .isEqualTo(2);
         assertThat(jdbc.queryForObject(
                         "select count(*) from competition.backtest_period_runs where participation_id = ?",
                         Integer.class, PARTICIPATION_ID))
@@ -676,6 +700,31 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "(?, ?, 'MARKET_BARS', ?), (?, ?, 'MARKET_BARS', ?)",
                 FIRST_PERIOD_ID, FIRST_DATASET_ID, "sha256:" + "5".repeat(64),
                 SECOND_PERIOD_ID, SECOND_DATASET_ID, "sha256:" + "6".repeat(64));
+        jdbc.update(
+                "insert into market_data.instruments "
+                        + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
+                FEATURE_INSTRUMENT_ID);
+        jdbc.update(
+                "insert into market_data.pipeline_runs "
+                        + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
+                        + "started_at, completed_at) values (?, 'TEST_FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                FEATURE_PIPELINE_RUN_ID, "competition-feature:" + FEATURE_PIPELINE_RUN_ID,
+                "sha256:" + "c".repeat(64), "sha256:" + "d".repeat(64), at.minusHours(2), at.minusHours(1));
+        jdbc.update(
+                "insert into market_data.feature_materializations "
+                        + "(id, feature_definition_id, instrument_id, pipeline_run_id, input_dataset_set_hash, "
+                        + "period_start, period_end, source_watermark, output_dataset_manifest_id, result_hash, "
+                        + "status, available_at, created_at) values (?, ?, ?, ?, ?, ?, ?, 'test-watermark', ?, ?, "
+                        + "'SUCCEEDED', ?, ?)",
+                FEATURE_MATERIALIZATION_ID, UUID.fromString("0f1b0000-0000-4000-8000-000000000001"),
+                FEATURE_INSTRUMENT_ID, FEATURE_PIPELINE_RUN_ID, "sha256:" + "e".repeat(64),
+                at.minusYears(1), at, FIRST_DATASET_ID, "sha256:" + "b".repeat(64), at.minusHours(1), at.minusHours(2));
+        jdbc.update(
+                "insert into competition.backtest_period_feature_materializations "
+                        + "(evaluation_period_id, feature_materialization_id, locked_result_hash) values "
+                        + "(?, ?, ?), (?, ?, ?)",
+                FIRST_PERIOD_ID, FEATURE_MATERIALIZATION_ID, "sha256:" + "b".repeat(64),
+                SECOND_PERIOD_ID, FEATURE_MATERIALIZATION_ID, "sha256:" + "b".repeat(64));
         jdbc.update(
                 "update competition.participations set joined_at = ? where id = ?",
                 admittedAt.atOffset(ZoneOffset.UTC), PARTICIPATION_ID);

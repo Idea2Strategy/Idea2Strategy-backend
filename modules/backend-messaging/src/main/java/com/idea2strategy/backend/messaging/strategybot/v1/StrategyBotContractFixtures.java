@@ -137,9 +137,13 @@ public final class StrategyBotContractFixtures {
                 SNAPSHOT_HASH,
                 compiledPlan.planChecksum(),
                 DATASET_MANIFEST_ID,
+                SNAPSHOT_HASH,
+                "2025-01-01",
+                "2025-12-31",
                 "accounting:1.0.0",
                 "backtest-policy:1.0.0",
-                "STRATEGY_RELEASE");
+                "STRATEGY_RELEASE",
+                "sha256:4df5ec8056b0857c8c841fc3a9e4f4d75c90196aef1e7ece7716445284523f33");
 
         return new FixtureSet(compiledPlan, runCommand, stopCommand, officialBacktestRequest);
     }
@@ -559,9 +563,13 @@ public final class StrategyBotContractFixtures {
             String expectedSnapshotHash,
             String compiledPlanChecksum,
             String datasetManifestId,
+            String expectedDatasetHash,
+            String periodStart,
+            String periodEnd,
             String assumptionsVersion,
             String executionPolicyVersion,
-            String requestReason) {
+            String requestReason,
+            String requestHash) {
         public OfficialBacktestRequest {
             Objects.requireNonNull(metadata);
             requireText(runId, "runId");
@@ -572,11 +580,15 @@ public final class StrategyBotContractFixtures {
             requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
             requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
             requireText(datasetManifestId, "datasetManifestId");
+            requireSha256(expectedDatasetHash, "expectedDatasetHash");
+            requireText(periodStart, "periodStart");
+            requireText(periodEnd, "periodEnd");
             requireText(assumptionsVersion, "assumptionsVersion");
             requireText(executionPolicyVersion, "executionPolicyVersion");
             if (!"STRATEGY_RELEASE".equals(requestReason)) {
                 throw new IllegalArgumentException("Only the official release backtest belongs to this fixture");
             }
+            requireSha256(requestHash, "requestHash");
         }
     }
 

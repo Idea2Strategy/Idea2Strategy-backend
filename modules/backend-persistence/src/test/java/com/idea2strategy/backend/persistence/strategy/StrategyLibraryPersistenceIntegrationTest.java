@@ -59,6 +59,10 @@ class StrategyLibraryPersistenceIntegrationTest {
 
     @BeforeEach
     void seedLibrary() {
+        jdbc.update("delete from backtest.input_datasets");
+        jdbc.update("delete from backtest.input_feature_materializations");
+        jdbc.update("delete from backtest.run_input_pins");
+        jdbc.update("delete from backtest.input_bundles");
         jdbc.update("delete from backtest.runs");
         jdbc.update("delete from backtest.execution_policy_versions where version = ?", EXECUTION_POLICY_VERSION);
         jdbc.update("delete from strategy.validation_runs");

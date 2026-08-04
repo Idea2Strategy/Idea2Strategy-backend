@@ -3,6 +3,10 @@ package com.idea2strategy.backend.persistence.competition;
 import com.idea2strategy.backend.application.backtest.BacktestRequestEnvelope;
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartPort;
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartReport;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -200,6 +204,18 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                     context.get("slippage_rate_bps", Integer.class),
                     context.get("buying_power_buffer_policy_id", UUID.class), participationId.toString(),
                     request.producerIdempotencyKey(), observedAt);
+            BacktestRunInputPinWriter.pin(dsl, new RunInputPin(
+                    request.aggregateId(), request.requestHash(), request.eventSchemaVersion(),
+                    prefixed(context.get("plan_checksum", String.class)),
+                    prefixed(context.get("snapshot_hash", String.class)), executionPolicyVersion, observedAt,
+                    period.datasets().stream()
+                            .map(dataset -> new DatasetPin(
+                                    dataset.datasetManifestId(), dataset.purposeCode(), dataset.expectedDatasetHash()))
+                            .toList(),
+                    period.featureMaterializations().stream()
+                            .map(feature -> new FeaturePin(
+                                    feature.featureMaterializationId(), feature.lockedResultHash()))
+                            .toList()));
             dsl.execute(
                     "insert into competition.backtest_period_runs "
                             + "(participation_id, evaluation_period_id, run_id) values (?, ?, ?) "

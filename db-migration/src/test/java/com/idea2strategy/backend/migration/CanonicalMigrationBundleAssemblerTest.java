@@ -76,12 +76,15 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260804160010__backend_backtest_competition_link.sql",
                         "V20260804160020__pipeline_dataset_manifest_empty_hash.sql",
                         "V20260804160100__backtest_runtime_ownership_constrain.sql",
+                        "V20260805130000__backtest_run_input_pins.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
                 .contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
                 .contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"trading\".\"execution_markers\" TO idea2strategy_trading"));
+        assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
+                .contains("GRANT SELECT, INSERT ON TABLE \"backtest\".\"run_input_pins\" TO idea2strategy_backend"));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));
     }

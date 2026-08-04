@@ -119,6 +119,13 @@ class CentralFlywayIntegrationTest {
             statement.execute("RESET ROLE");
 
             statement.execute("SET ROLE idea2strategy_backend");
+            try (var pinPrivileges = statement.executeQuery(
+                    "SELECT has_table_privilege('idea2strategy_backend', 'backtest.run_input_pins', 'INSERT'), "
+                            + "has_table_privilege('idea2strategy_backend', 'backtest.run_input_pins', 'UPDATE')")) {
+                assertTrue(pinPrivileges.next());
+                assertTrue(pinPrivileges.getBoolean(1));
+                assertFalse(pinPrivileges.getBoolean(2));
+            }
             var ddlDenied = assertThrows(
                     SQLException.class,
                     () -> statement.execute("CREATE TABLE market_data.unauthorized (id integer)"));
