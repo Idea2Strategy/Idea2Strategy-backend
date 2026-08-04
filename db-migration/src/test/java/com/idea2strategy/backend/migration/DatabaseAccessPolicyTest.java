@@ -40,7 +40,10 @@ class DatabaseAccessPolicyTest {
         var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(baseline));
 
         assertTrue(sql.contains("CREATE ROLE idea2strategy_backend NOLOGIN"));
-        assertTrue(sql.contains("ALTER ROLE idea2strategy_pipeline NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"));
+        assertTrue(sql.contains("ALTER ROLE idea2strategy_pipeline NOLOGIN NOCREATEDB NOCREATEROLE NOINHERIT"));
+        assertFalse(sql.contains("ALTER ROLE idea2strategy_pipeline NOLOGIN NOSUPERUSER"));
+        assertTrue(sql.contains("rolsuper OR rolreplication OR rolbypassrls"));
+        assertTrue(sql.contains("application group role idea2strategy_pipeline has forbidden privileged attributes"));
         assertTrue(sql.contains("application group role idea2strategy_pipeline must not own database objects"));
         assertTrue(sql.contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
         assertTrue(sql.contains("GRANT SELECT, INSERT ON TABLE \"storage\".\"objects\" TO idea2strategy_pipeline"));
