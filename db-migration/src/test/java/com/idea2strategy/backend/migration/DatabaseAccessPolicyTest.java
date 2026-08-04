@@ -44,6 +44,9 @@ class DatabaseAccessPolicyTest {
         assertTrue(sql.contains("application group role idea2strategy_pipeline must not own database objects"));
         assertTrue(sql.contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
         assertTrue(sql.contains("GRANT SELECT, INSERT ON TABLE \"storage\".\"objects\" TO idea2strategy_pipeline"));
+        assertTrue(sql.contains("GRANT SELECT ON TABLE \"operations\".\"operator_accounts\" TO idea2strategy_pipeline"));
+        assertTrue(sql.contains("GRANT SELECT ON TABLE \"operations\".\"audit_events\" TO idea2strategy_pipeline"));
+        assertFalse(sql.contains("GRANT SELECT, INSERT ON TABLE \"operations\".\"audit_events\" TO idea2strategy_pipeline"));
         assertFalse(sql.contains("GRANT DELETE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
         assertFalse(sql.contains("GRANT INSERT ON TABLE \"backtest\".\"runs\" TO idea2strategy_pipeline"));
         assertFalse(sql.contains("GRANT CREATE ON SCHEMA"));
@@ -87,6 +90,21 @@ class DatabaseAccessPolicyTest {
                 DatabaseAccessPolicy.Access.READ,
                 "storage",
                 "objects"));
+        assertTrue(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.PIPELINE,
+                DatabaseAccessPolicy.Access.READ,
+                "operations",
+                "operator_accounts"));
+        assertTrue(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.PIPELINE,
+                DatabaseAccessPolicy.Access.READ,
+                "operations",
+                "audit_events"));
+        assertFalse(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.PIPELINE,
+                DatabaseAccessPolicy.Access.UPDATE,
+                "operations",
+                "audit_events"));
         assertFalse(DatabaseAccessPolicy.allows(
                 DatabaseAccessPolicy.ApplicationRole.PIPELINE,
                 DatabaseAccessPolicy.Access.INSERT,

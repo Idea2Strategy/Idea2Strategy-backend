@@ -250,6 +250,10 @@ public final class DatabaseAccessPolicy {
         if ("market_data".equals(schema)) {
             return access == Access.READ || access == Access.INSERT || access == Access.UPDATE;
         }
+        if ("operations".equals(schema)
+                && Set.of("operator_accounts", "audit_events").contains(table)) {
+            return access == Access.READ;
+        }
         return "storage".equals(schema)
                 && "objects".equals(table)
                 && (access == Access.READ || access == Access.INSERT);
