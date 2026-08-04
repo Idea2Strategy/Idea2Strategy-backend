@@ -14,7 +14,8 @@ import java.util.UUID;
  * break that check silently.
  *
  * <p>The rest of the fields are the routing and triage envelope: which contract this is, which
- * aggregate it belongs to, and the idempotency key a consumer deduplicates on.
+ * aggregate it belongs to, the producer key a consumer deduplicates on, the delivery key that
+ * distinguishes an operator replay, and the stored payload hash the consumer can verify.
  */
 public record PublishableOutboxMessage(
         UUID messageId,
@@ -23,7 +24,9 @@ public record PublishableOutboxMessage(
         long aggregateSequence,
         String eventType,
         String eventSchemaVersion,
-        String idempotencyKey,
+        String producerIdempotencyKey,
+        String deliveryIdempotencyKey,
+        String payloadHash,
         String payloadDocument) {
 
     public PublishableOutboxMessage {
@@ -32,7 +35,9 @@ public record PublishableOutboxMessage(
         Objects.requireNonNull(aggregateId, "aggregateId");
         eventType = requireText(eventType, "eventType");
         eventSchemaVersion = requireText(eventSchemaVersion, "eventSchemaVersion");
-        idempotencyKey = requireText(idempotencyKey, "idempotencyKey");
+        producerIdempotencyKey = requireText(producerIdempotencyKey, "producerIdempotencyKey");
+        deliveryIdempotencyKey = requireText(deliveryIdempotencyKey, "deliveryIdempotencyKey");
+        payloadHash = requireText(payloadHash, "payloadHash");
         payloadDocument = requireText(payloadDocument, "payloadDocument");
     }
 

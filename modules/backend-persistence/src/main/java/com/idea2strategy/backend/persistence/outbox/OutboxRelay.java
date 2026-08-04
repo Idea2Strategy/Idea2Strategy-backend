@@ -62,7 +62,7 @@ public class OutboxRelay {
                 limit :batchSize
                 for update skip locked)
             returning id, claim_token, owner_domain, aggregate_id, aggregate_sequence, event_type,
-                      event_schema_version, idempotency_key,
+                      event_schema_version, producer_idempotency_key, idempotency_key, payload_hash,
                       payload_document::text as payload_document, publish_attempt_count, created_at
             """;
 
@@ -152,7 +152,9 @@ public class OutboxRelay {
                                 rs.getLong("aggregate_sequence"),
                                 rs.getString("event_type"),
                                 rs.getString("event_schema_version"),
+                                rs.getString("producer_idempotency_key"),
                                 rs.getString("idempotency_key"),
+                                rs.getString("payload_hash"),
                                 rs.getString("payload_document"))))
                 .list();
 
