@@ -11,7 +11,7 @@ public record AdminMcpInvocation(
         String toolName,
         String requestSchemaVersion,
         String targetId,
-        Long targetVersion,
+        String decidedContentHash,
         Map<String, Object> input,
         UUID correlationId,
         String idempotencyKey,
@@ -27,6 +27,9 @@ public record AdminMcpInvocation(
         requireText(idempotencyKey, "idempotencyKey");
         if (requestHash == null || !requestHash.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("requestHash must be lowercase SHA-256 hex");
+        }
+        if (decidedContentHash != null && !decidedContentHash.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("decidedContentHash must be lowercase SHA-256 hex");
         }
     }
 

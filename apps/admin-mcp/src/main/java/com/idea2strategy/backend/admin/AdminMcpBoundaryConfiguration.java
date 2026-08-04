@@ -56,6 +56,11 @@ public class AdminMcpBoundaryConfiguration {
     }
 
     @Bean
+    AdminMcpProviderBinding corporateActionProviderBinding() {
+        return new AdminMcpProviderBinding("CORPORATE_ACTION", new CorporateActionAdminMcpProvider());
+    }
+
+    @Bean
     @ConditionalOnBean({AdminMcpAuthorizationPort.class, AdminMcpExecutionPort.class})
     AdminMcpService adminMcpService(
             AdminMcpToolRegistry registry,
@@ -71,6 +76,17 @@ public class AdminMcpBoundaryConfiguration {
             AdminMcpToolRegistry.Capability capability,
             AdminMcpToolRegistry.Mode mode,
             UUID permissionId) {
+        Set<String> required = mode == AdminMcpToolRegistry.Mode.APPROVAL
+                ? Set.of("candidateId", "decision", "evidenceBindings", "aggregateSequence")
+                : Set.of("candidateId");
+        Set<String> allowedInput = mode == AdminMcpToolRegistry.Mode.APPROVAL
+                ? Set.of("candidateId", "decision", "evidenceBindings", "aggregateSequence",
+                        "supersedesCandidateId", "rationale")
+                : Set.of("candidateId");
+        Set<String> allowedOutput = mode == AdminMcpToolRegistry.Mode.APPROVAL
+                ? Set.of("candidateId", "decision", "decidedContentHash", "evidenceBindings",
+                        "aggregateSequence", "supersedesCandidateId", "rationale", "status")
+                : Set.of("candidateId", "version", "status");
         return new AdminMcpToolRegistry.Tool(
                 name,
                 capability,
@@ -78,8 +94,8 @@ public class AdminMcpBoundaryConfiguration {
                 permissionId,
                 "CORPORATE_ACTION",
                 "schema-v1",
-                Set.of("candidateId"),
-                Set.of("candidateId"),
-                Set.of("candidateId", "version", "status"));
+                required,
+                allowedInput,
+                allowedOutput);
     }
 }

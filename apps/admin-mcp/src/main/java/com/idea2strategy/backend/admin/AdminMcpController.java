@@ -58,7 +58,7 @@ public class AdminMcpController {
                 toolName,
                 request.requestSchemaVersion(),
                 request.targetId(),
-                request.targetVersion(),
+                request.decidedContentHash(),
                 request.input(),
                 correlationId,
                 idempotencyKey,
@@ -75,7 +75,7 @@ public class AdminMcpController {
                     "registryVersion", request.registryVersion(),
                     "requestSchemaVersion", request.requestSchemaVersion(),
                     "targetId", request.targetId(),
-                    "targetVersion", request.targetVersion() == null ? "" : request.targetVersion(),
+                    "decidedContentHash", request.decidedContentHash() == null ? "" : request.decidedContentHash(),
                     "input", request.input()));
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(document));
         } catch (JsonProcessingException exception) {
@@ -108,7 +108,7 @@ public class AdminMcpController {
             String registryVersion,
             String requestSchemaVersion,
             String targetId,
-            Long targetVersion,
+            String decidedContentHash,
             Map<String, Object> input) {}
 
     public record InvokeResponse(

@@ -37,8 +37,11 @@ class AdminMcpControllerTest {
         Fixture fixture = fixture(AdminMcpProviderPort.Result.Status.SUCCEEDED);
         String body = """
                 {"registryVersion":"mcp-v1","requestSchemaVersion":"schema-v1",
-                 "targetId":"candidate-1","targetVersion":7,
-                 "input":{"candidateId":"candidate-1"}}
+                 "targetId":"10000000-0000-4000-8000-000000000001",
+                 "decidedContentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                 "input":{"candidateId":"10000000-0000-4000-8000-000000000001",
+                          "decision":"APPROVE","evidenceBindings":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                          "aggregateSequence":1}}
                 """;
 
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -49,12 +52,14 @@ class AdminMcpControllerTest {
                             .content(body))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.status").value("APPLIED"))
-                    .andExpect(jsonPath("$.result.status").value("APPROVED"))
+                    .andExpect(jsonPath("$.result.decision").value("APPROVE"))
+                    .andExpect(jsonPath("$.result.decidedContentHash").value("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+                    .andExpect(jsonPath("$.result.permissionId").value(AdminMcpBoundaryConfiguration.CORPORATE_ACTION_APPROVE_PERMISSION.toString()))
                     .andExpect(jsonPath("$.correlationId").value(CORRELATION.toString()));
         }
 
         assertThat(fixture.provider.calls).isOne();
-        assertThat(fixture.provider.last.expectedTargetVersion()).isEqualTo(7L);
+        assertThat(fixture.provider.last.decidedContentHash()).isEqualTo("a".repeat(64));
         assertThat(fixture.authorization.permission)
                 .isEqualTo(AdminMcpBoundaryConfiguration.CORPORATE_ACTION_APPROVE_PERMISSION);
     }
@@ -166,8 +171,14 @@ class AdminMcpControllerTest {
                 return new Result(status, "TRANSPORT_TIMEOUT", Map.of("privateSource", "secret"), Map.of());
             }
             return new Result(status, "APPROVED",
-                    Map.of("candidateId", "candidate-1", "version", 7L, "status", "PENDING"),
-                    Map.of("candidateId", "candidate-1", "version", 8L, "status", "APPROVED"));
+                    Map.of("candidateId", request.targetId(), "decision", "APPROVE", "status", "PENDING"),
+                    Map.of(
+                            "candidateId", request.targetId(),
+                            "decision", "APPROVE",
+                            "decidedContentHash", request.decidedContentHash(),
+                            "evidenceBindings", request.input().get("evidenceBindings"),
+                            "aggregateSequence", request.input().get("aggregateSequence"),
+                            "status", "APPROVED"));
         }
     }
 
