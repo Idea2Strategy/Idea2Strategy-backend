@@ -41,7 +41,7 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
         var bot = dsl.fetchOne(
                 "select b.lifecycle_status::text as lifecycle_status, b.execution_eligible_from, "
                         + "s.snapshot_hash, p.status::text as participation_status, "
-                        + "schedule.evaluation_starts_at "
+                        + "schedule.evaluation_starts_at, schedule.evaluation_ends_at "
                         + "from bot.bots b "
                         + "join bot.launch_snapshots s on s.bot_id = b.id "
                         + "left join competition.participations p on p.bot_id = b.id "
@@ -66,6 +66,13 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
         }
         OffsetDateTime currentEligibility = bot.get("execution_eligible_from", OffsetDateTime.class);
         OffsetDateTime roomEligibility = bot.get("evaluation_starts_at", OffsetDateTime.class);
+        // C93: the room's evaluation end travels with the command that opens the window, so C stops
+        // deciding at the boundary rather than when this service manages to deliver the stop. A personal
+        // bot has no schedule to read one from, and its window is closed by its owner's stop.
+        OffsetDateTime roomEvaluationEnd = bot.get("evaluation_ends_at", OffsetDateTime.class);
+        Instant executionEligibleUntil = participationStatus == null || roomEvaluationEnd == null
+                ? null
+                : roomEvaluationEnd.toInstant();
         Instant executionEligibleFrom = participationStatus == null
                 ? currentEligibility.toInstant()
                 : roomEligibility.toInstant();
@@ -93,7 +100,10 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
         }
 
         String expectedSnapshotHash = "sha256:" + bot.get("snapshot_hash", String.class);
-        String operationKey = "RUN|" + executionEligibleFrom;
+        // The end is part of the operation key: a room whose schedule moved is a different run to make,
+        // and reusing the key would have the consumer recognise the new command as one already handled.
+        String operationKey = "RUN|" + executionEligibleFrom
+                + (executionEligibleUntil == null ? "" : ".." + executionEligibleUntil);
         String idempotencyKey = idempotencyKey(botId, expectedSnapshotHash, operationKey);
         UUID messageId = derivedId("message", idempotencyKey);
         UUID correlationId = derivedId("correlation", idempotencyKey);
@@ -114,7 +124,7 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
                 MESSAGE_TYPE,
                 CONTRACT_VERSION,
                 payload(botId, messageId, correlationId, expectedSnapshotHash, executionEligibleFrom,
-                        idempotencyKey, requestedAt),
+                        executionEligibleUntil, idempotencyKey, requestedAt),
                 idempotencyKey,
                 requestedAt.atOffset(ZoneOffset.UTC));
         return Optional.of(new BotRunDispatch(
@@ -134,6 +144,7 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
             UUID correlationId,
             String expectedSnapshotHash,
             Instant executionEligibleFrom,
+            Instant executionEligibleUntil,
             String idempotencyKey,
             Instant occurredAt) {
         ObjectNode root = objectMapper.createObjectNode();
@@ -147,6 +158,9 @@ public class BotRunCommandJooqAdapter implements BotRunCommandPort {
         root.put("botId", botId.toString());
         root.put("expectedSnapshotHash", expectedSnapshotHash);
         root.put("executionEligibleFrom", executionEligibleFrom.toString());
+        if (executionEligibleUntil != null) {
+            root.put("executionEligibleUntil", executionEligibleUntil.toString());
+        }
         try {
             return objectMapper.writeValueAsString(root);
         } catch (JsonProcessingException exception) {

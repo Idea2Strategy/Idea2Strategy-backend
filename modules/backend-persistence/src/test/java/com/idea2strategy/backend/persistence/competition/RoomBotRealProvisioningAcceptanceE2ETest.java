@@ -197,11 +197,22 @@ class RoomBotRealProvisioningAcceptanceE2ETest {
         assertThat(text("select lifecycle_status::text from bot.bots where id = ?", BOT_ID))
                 .isEqualTo("RUNNING");
 
-        // A post-room RUN resolves as a personal bot: immediate, converging on the same command.
+        // A post-room RUN resolves as a personal bot: immediate, and a genuinely new command.
+        //
+        // It does not converge on the room's command, and must not (C93). The room's run opened a
+        // window the room's schedule closed; this one opens an unbounded window that only the owner's
+        // stop closes. Reusing the room's command would have the evaluation runtime stop the bot at the
+        // room's end while its owner believes it is running.
         var afterRoom = runCommands.issueOwned(BOT_ID, OWNER_ID, FINALIZED_AT.plusSeconds(30)).orElseThrow();
         assertThat(afterRoom.mode()).isEqualTo(BotRunDispatchMode.IMMEDIATE);
-        assertThat(afterRoom.created()).isFalse();
-        assertThat(runCommandCount()).isOne();
+        assertThat(afterRoom.created()).isTrue();
+        assertThat(runCommandCount()).isEqualTo(2);
+        assertThat(text(
+                        "select payload_document ->> 'executionEligibleUntil' "
+                                + "from operations.outbox_messages where id = ?",
+                        afterRoom.messageId()))
+                .as("a personal bot's window has no scheduled end")
+                .isNull();
 
         // The frozen official result did not move with the bot's later life.
         assertThat(text("select result_hash from competition.leaderboard_snapshots where room_id = ?", ROOM_ID))

@@ -2,6 +2,7 @@ package com.idea2strategy.backend.messaging.strategybot.v1;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -65,6 +66,30 @@ class StrategyBotContractResourceTest {
                 requiredFeature.required("instruments").required(0).textValue());
         assertTrue(plan.toString().contains("EMIT_ORDER_CANDIDATE"));
         assertFalse(plan.toString().contains("\"operation\":\"EMIT_ORDER\""));
+    }
+
+    /**
+     * C93: a bot a room schedule bounds publishes both ends of its evaluation window.
+     *
+     * <p>Pinned as its own fixture because both shapes are on the wire — a personal bot has no end to
+     * publish, since its window closes when its owner stops it. The end is part of the operation key,
+     * so a room whose schedule moved produces a different command rather than one the consumer would
+     * recognise as already handled.
+     */
+    @Test
+    void suppliesTheRoomBoundedRunCommandWithBothEndsOfItsWindow() throws IOException {
+        var room = read("bot-run-command.room.valid.json");
+
+        var resourceRoomRun = OBJECT_MAPPER.treeToValue(
+                room, StrategyBotContractFixtures.BotRunCommand.class);
+
+        assertEquals(StrategyBotContractFixtures.roomRunCommand(), resourceRoomRun);
+        assertEquals("2026-08-10T20:00:00Z", resourceRoomRun.executionEligibleUntil());
+        assertNotEquals(
+                StrategyBotContractFixtures.standard().runCommand().metadata().idempotencyKey(),
+                resourceRoomRun.metadata().idempotencyKey(),
+                "the window's end is part of the operation the key identifies");
+        assertNoForbiddenFields(room);
     }
 
     @Test
