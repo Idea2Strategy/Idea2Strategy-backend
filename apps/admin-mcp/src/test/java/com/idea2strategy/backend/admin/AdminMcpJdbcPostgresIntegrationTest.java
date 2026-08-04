@@ -83,7 +83,8 @@ class AdminMcpJdbcPostgresIntegrationTest {
             AdminMcpExecutionResult secondResult = second.get(20, TimeUnit.SECONDS);
             assertThat(secondResult.status()).isEqualTo(firstResult.status());
             assertThat(secondResult.code()).isEqualTo(firstResult.code());
-            assertThat(secondResult.response()).containsEntry("aggregateSequence", 1);
+            assertThat(((Number) firstResult.response().get("aggregateSequence")).longValue()).isOne();
+            assertThat(((Number) secondResult.response().get("aggregateSequence")).longValue()).isOne();
         }
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         assertThat(jdbc.queryForObject(
