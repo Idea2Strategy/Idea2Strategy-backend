@@ -104,7 +104,8 @@ class ImmutableStrategyReleaseCommandServiceTest {
 
         var plan = release.contractPlan();
         assertThat(plan.contractVersion()).isEqualTo("strategy-bot.v1");
-        assertThat(plan.planSchemaVersion()).isEqualTo("basic-compiled-plan.v1");
+        // Version 2: side, allocation and steps belong to the container (root #202).
+        assertThat(plan.planSchemaVersion()).isEqualTo("basic-compiled-plan.v2");
         assertThat(plan.planChecksum()).matches("sha256:[0-9a-f]{64}");
         assertThat(plan.planDocument())
                 .contains("\"snapshotHash\":\"sha256:" + release.snapshotHash() + "\"")
