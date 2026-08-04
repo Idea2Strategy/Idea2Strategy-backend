@@ -1,14 +1,22 @@
 # Proposal: custom and competition backtest producers
 
-Status: isolated proposal; not approved, integrated, or release-ready.
+Status: isolated proposal with an implementation candidate; not a protected canonical contract.
 
 The current canonical product sources and implemented consumer contract support one
 backend-produced backtest request: `strategy-bot.v1` `OFFICIAL_BACKTEST_REQUESTED`,
 created atomically with an immutable BASIC strategy release. That request maps to
 the `basic` SQS lane.
 
-The requested `custom` and `competition` lanes cannot yet have backend producers.
-No canonical source currently defines:
+The implementation candidate now provides backend producers and explicit routing:
+
+- `POST /api/v1/bots/{botId}/backtests` writes `CUSTOM_BACKTEST_REQUESTED`
+  after owner and available-dataset coverage checks;
+- a BACKTEST room evaluation start writes `COMPETITION_BACKTEST_REQUESTED`
+  when the locked evaluation plan and immutable bot plan exist;
+- both use a stable producer key, a semantic request hash for conflict detection,
+  the transactional Outbox, and dedicated runtime queue URLs.
+
+The following still require a protected canonical contract and matching consumer:
 
 - a user command/API for a date-range backtest;
 - the immutable inputs, authorization, idempotency scope, or payload contract for
@@ -17,24 +25,16 @@ No canonical source currently defines:
   participation, evaluation plan, or evaluation period, or its ordering rules;
 - consumer schemas or intake handlers for either request.
 
-Creating rows named `CUSTOM_BACKTEST_REQUESTED` or
-`COMPETITION_BACKTEST_REQUESTED` before those points are settled would produce
-durable messages that the current backtest engine cannot consume. It would also
-turn an unapproved guess into an externally visible success path.
+The current backtest engine does not yet consume `backtest-request.v1`, so these
+events must not be enabled in a deployed relay until the matching consumer schemas
+and intake handlers pass cross-repository compatibility tests.
 
 After product-authority approval, integrate in this order:
 
 1. Add versioned request contracts and consumer fixtures for both request kinds.
 2. Add backtest-engine intake tests and durable run identity derivation.
-3. Add backend command/API tests for authorization, immutable inputs, duplicate
-   requests, idempotency conflicts, and transaction rollback.
-4. Insert each request into `operations.outbox_messages` in the same transaction as
-   its owning aggregate mutation, preserving producer idempotency key, aggregate
-   sequence, payload hash, retry attempts, and replay lineage.
-5. Route the approved event types to `BACKTEST_CUSTOM_QUEUE_URL` and
-   `BACKTEST_COMPETITION_QUEUE_URL`; retain
-   `OFFICIAL_BACKTEST_REQUESTED` -> `BACKTEST_BASIC_QUEUE_URL`.
-6. Verify all three paths against PostgreSQL and LocalStack SQS, then update the
+3. Review and ratify the candidate producer payload fields and API behavior.
+4. Verify all three paths against PostgreSQL and LocalStack SQS, then update the
    deployment environment.
 
 The concurrency policy (`basic=2`, `custom=1`, `competition=1`, global `4`) belongs

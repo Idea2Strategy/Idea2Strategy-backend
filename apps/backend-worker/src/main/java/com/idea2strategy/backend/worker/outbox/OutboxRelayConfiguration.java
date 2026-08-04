@@ -64,7 +64,13 @@ public class OutboxRelayConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "idea2strategy.outbox-relay", name = "enabled", havingValue = "true")
     SqsOutboxMessagePublisher outboxMessagePublisher(SqsClient sqs, RelayProperties properties) {
-        return new SqsOutboxMessagePublisher(sqs, new LinkedHashMap<>(properties.queues()));
+        var configuredRoutes = new LinkedHashMap<String, String>();
+        properties.queues().forEach((eventType, queueUrl) -> {
+            if (queueUrl != null && !queueUrl.isBlank()) {
+                configuredRoutes.put(eventType, queueUrl);
+            }
+        });
+        return new SqsOutboxMessagePublisher(sqs, configuredRoutes);
     }
 
     @Bean
