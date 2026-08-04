@@ -193,45 +193,84 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             UUID roomId, UUID participationId, UUID botId, OffsetDateTime observedAt) {
         var context = dsl.fetchOne(
                 "select ep.plan_version, ep.plan_hash, ep.period_count, s.snapshot_hash, lp.plan_checksum, "
-                        + "lc.accounting_rules_version, rr.scoring_template_version_id, rr.rules_hash, "
-                        + "rr.initial_cash_amount, rr.currency_code "
+                        + "p.owner_account_id, lc.configuration_hash, lc.broker_rules_version, "
+                        + "lc.accounting_rules_version, lc.precision_rules_version, lc.fee_policy_id, "
+                        + "lc.slippage_rate_bps, lc.buying_power_buffer_policy_id, "
+                        + "rr.scoring_template_version_id, rr.rules_hash, rr.initial_cash_amount, rr.currency_code "
                         + "from competition.backtest_evaluation_plans ep "
                         + "join competition.room_rules rr on rr.room_id = ep.room_id "
+                        + "join competition.participations p on p.id = ? and p.room_id = ep.room_id "
                         + "join bot.launch_snapshots s on s.bot_id = ? "
                         + "join bot.launch_contract_plans lp on lp.bot_id = ? "
                         + "join bot.launch_configurations lc on lc.bot_id = ? where ep.room_id = ?",
-                botId, botId, botId, roomId);
+                participationId, botId, botId, botId, roomId);
         if (context == null) {
             return;
         }
-        var request = BacktestRequestEnvelope.competition(
-                roomId,
-                participationId,
-                botId,
-                context.get("plan_version", String.class),
-                prefixed(context.get("plan_hash", String.class)),
-                prefixed(context.get("snapshot_hash", String.class)),
-                prefixed(context.get("plan_checksum", String.class)),
-                context.get("accounting_rules_version", String.class),
-                context.get("scoring_template_version_id", UUID.class),
-                prefixed(context.get("rules_hash", String.class)),
-                context.get("initial_cash_amount", BigDecimal.class),
-                context.get("currency_code", String.class).trim(),
-                competitionPeriods(roomId, context.get("period_count", Integer.class)),
-                observedAt.toInstant());
-        Number sequence = (Number) dsl.fetchValue(
-                "select coalesce(max(aggregate_sequence), 0) + 1 from operations.outbox_messages "
-                        + "where owner_domain = 'backtest-request' and aggregate_id = ?",
-                participationId);
-        dsl.execute(
-                "insert into operations.outbox_messages "
-                        + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
-                        + "payload_document, producer_idempotency_key, idempotency_key, created_at) "
-                        + "values (?, 'backtest-request', ?, ?, ?, ?, ?::jsonb, ?, ?, ?::timestamptz) "
-                        + "on conflict (idempotency_key) do nothing",
-                request.messageId(), participationId, sequence.longValue(), request.eventType(),
-                request.eventSchemaVersion(), request.payloadDocument(), request.producerIdempotencyKey(),
-                request.producerIdempotencyKey(), observedAt);
+        String planHash = prefixed(context.get("plan_hash", String.class));
+        var policies = dsl.fetch(
+                "select version from backtest.execution_policy_versions "
+                        + "where policy_document ->> 'competitionPlanHash' = ? "
+                        + "and locked_at <= ?::timestamptz and retired_at is null",
+                planHash, observedAt);
+        if (policies.size() != 1) {
+            throw new IllegalStateException("Competition plan must resolve to exactly one locked execution policy");
+        }
+        String executionPolicyVersion = policies.get(0).get("version", String.class);
+        var periods = competitionPeriods(roomId, context.get("period_count", Integer.class));
+        for (var period : periods) {
+            var request = BacktestRequestEnvelope.competitionPeriod(
+                    roomId, participationId, botId, context.get("plan_version", String.class), planHash,
+                    prefixed(context.get("snapshot_hash", String.class)),
+                    prefixed(context.get("plan_checksum", String.class)),
+                    context.get("accounting_rules_version", String.class), executionPolicyVersion,
+                    context.get("scoring_template_version_id", UUID.class),
+                    prefixed(context.get("rules_hash", String.class)),
+                    context.get("initial_cash_amount", BigDecimal.class),
+                    context.get("currency_code", String.class).trim(), period, observedAt.toInstant());
+            dsl.execute(
+                    "insert into backtest.runs (id, lane, message_id, bot_id, owner_account_id, "
+                            + "configuration_hash, canonical_payload_hash, aggregate_sequence, status, "
+                            + "evaluation_start, evaluation_end, initial_cash_amount, market_rules_version, "
+                            + "accounting_rules_version, execution_policy_version, precision_rules_version, "
+                            + "fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, "
+                            + "idempotency_scope, idempotency_key, queued_at) "
+                            + "values (?, 'COMPETITION', ?, ?, ?, ?, "
+                            + "encode(sha256(convert_to((?::jsonb)::text, 'UTF8')), 'hex'), "
+                            + "1, 'QUEUED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                            + "?, ?, ?::timestamptz) on conflict (lane, idempotency_scope, idempotency_key) do nothing",
+                    request.aggregateId(), request.messageId(), botId,
+                    context.get("owner_account_id", UUID.class), context.get("configuration_hash", String.class),
+                    request.payloadDocument(), period.evaluationStart(), period.evaluationEnd(),
+                    context.get("initial_cash_amount", BigDecimal.class),
+                    context.get("broker_rules_version", String.class),
+                    context.get("accounting_rules_version", String.class), executionPolicyVersion,
+                    context.get("precision_rules_version", String.class), context.get("fee_policy_id", UUID.class),
+                    context.get("slippage_rate_bps", Integer.class),
+                    context.get("buying_power_buffer_policy_id", UUID.class), participationId.toString(),
+                    request.producerIdempotencyKey(), observedAt);
+            dsl.execute(
+                    "insert into competition.backtest_period_runs "
+                            + "(participation_id, evaluation_period_id, run_id) values (?, ?, ?) "
+                            + "on conflict (participation_id, evaluation_period_id) do nothing",
+                    participationId, period.evaluationPeriodId(), request.aggregateId());
+            UUID linkedRunId = dsl.fetchOne(
+                    "select run_id from competition.backtest_period_runs "
+                            + "where participation_id = ? and evaluation_period_id = ?",
+                    participationId, period.evaluationPeriodId()).get("run_id", UUID.class);
+            if (!request.aggregateId().equals(linkedRunId)) {
+                throw new IllegalStateException("Competition period is already linked to another backtest run");
+            }
+            dsl.execute(
+                    "insert into operations.outbox_messages "
+                            + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
+                            + "payload_document, producer_idempotency_key, idempotency_key, created_at) "
+                            + "values (?, 'backtest-request', ?, 1, ?, ?, ?::jsonb, ?, ?, ?::timestamptz) "
+                            + "on conflict (idempotency_key) do nothing",
+                    request.messageId(), request.aggregateId(), request.eventType(), request.eventSchemaVersion(),
+                    request.payloadDocument(), request.producerIdempotencyKey(),
+                    request.producerIdempotencyKey(), observedAt);
+        }
     }
 
     private List<BacktestRequestEnvelope.CompetitionPeriod> competitionPeriods(UUID roomId, int expectedCount) {

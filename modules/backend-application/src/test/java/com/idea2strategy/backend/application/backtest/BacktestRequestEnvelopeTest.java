@@ -28,21 +28,23 @@ class BacktestRequestEnvelopeTest {
                 ACCOUNT, BOT, DATASET, "sha256:" + "3".repeat(64),
                 LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"),
                 SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", new BigDecimal("100000.00000000"),
-                "accounting-v1", "request-42", NOW.plusSeconds(30));
+                "accounting-v1", "backtest-policy-v1", "request-42", NOW.plusSeconds(30));
         var duplicate = BacktestRequestEnvelope.custom(
                 ACCOUNT, BOT, DATASET, "sha256:" + "3".repeat(64),
                 LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"),
                 SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", new BigDecimal("100000.00000000"),
-                "accounting-v1", "request-42", NOW);
+                "accounting-v1", "backtest-policy-v1", "request-42", NOW);
         var conflict = BacktestRequestEnvelope.custom(
                 ACCOUNT, BOT, DATASET, "sha256:" + "3".repeat(64),
                 LocalDate.parse("2023-01-01"), LocalDate.parse("2023-12-31"),
                 SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", new BigDecimal("100000.00000000"),
-                "accounting-v1", "request-42", NOW);
+                "accounting-v1", "backtest-policy-v1", "request-42", NOW);
 
         assertThat(first.eventType()).isEqualTo("CUSTOM_BACKTEST_REQUESTED");
         assertThat(first.producerIdempotencyKey()).isEqualTo(duplicate.producerIdempotencyKey());
         assertThat(first.messageId()).isEqualTo(duplicate.messageId());
+        assertThat(first.aggregateId()).isEqualTo(duplicate.aggregateId());
+        assertThat(first.aggregateId()).isNotEqualTo(BOT);
         assertThat(first.requestHash()).isEqualTo(duplicate.requestHash());
         assertThat(conflict.producerIdempotencyKey()).isEqualTo(first.producerIdempotencyKey());
         assertThat(conflict.requestHash()).isNotEqualTo(first.requestHash());
@@ -52,6 +54,10 @@ class BacktestRequestEnvelopeTest {
                 "\"expectedDatasetHash\":\"sha256:" + "3".repeat(64) + "\"",
                 "\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-04\"",
                 "\"initialCashAmount\":\"100000.00000000\"",
+                "\"runId\":\"" + first.aggregateId() + "\"",
+                "\"lane\":\"CUSTOM\"",
+                "\"executionPolicyVersion\":\"backtest-policy-v1\"",
+                "\"aggregateSequence\":1",
                 "\"periodStart\":\"2024-01-01\"",
                 "\"periodEnd\":\"2024-12-31\"");
     }
@@ -81,6 +87,29 @@ class BacktestRequestEnvelopeTest {
                 "\"expectedDatasetHash\":\"sha256:" + "5".repeat(64) + "\"");
         assertThat(request.payloadDocument().indexOf("\"periodSequence\":1"))
                 .isLessThan(request.payloadDocument().indexOf("\"periodSequence\":2"));
+    }
+
+    @Test
+    void competitionPeriodGetsItsOwnStableRunAndPolicyIdentity() {
+        var first = BacktestRequestEnvelope.competitionPeriod(
+                ROOM, PARTICIPATION, BOT, "competition-plan.v1", "sha256:" + "3".repeat(64),
+                SNAPSHOT, PLAN, "accounting-v1", "competition-policy-v1", SCORING,
+                "sha256:" + "4".repeat(64), new BigDecimal("100000.00000000"), "USD",
+                period(PERIOD_1, 1, "2025-01-01", "2025-06-30", DATASET, "5"), NOW);
+        var retry = BacktestRequestEnvelope.competitionPeriod(
+                ROOM, PARTICIPATION, BOT, "competition-plan.v1", "sha256:" + "3".repeat(64),
+                SNAPSHOT, PLAN, "accounting-v1", "competition-policy-v1", SCORING,
+                "sha256:" + "4".repeat(64), new BigDecimal("100000.00000000"), "USD",
+                period(PERIOD_1, 1, "2025-01-01", "2025-06-30", DATASET, "5"), NOW.plusSeconds(1));
+
+        assertThat(first.aggregateId()).isEqualTo(retry.aggregateId());
+        assertThat(first.messageId()).isEqualTo(retry.messageId());
+        assertThat(first.aggregateId()).isNotEqualTo(PARTICIPATION);
+        assertThat(first.payloadDocument()).contains(
+                "\"runId\":\"" + first.aggregateId() + "\"",
+                "\"lane\":\"COMPETITION\"",
+                "\"executionPolicyVersion\":\"competition-policy-v1\"",
+                "\"aggregateSequence\":1");
     }
 
     private static BacktestRequestEnvelope.CompetitionPeriod period(

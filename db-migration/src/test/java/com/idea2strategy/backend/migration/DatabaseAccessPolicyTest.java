@@ -98,6 +98,22 @@ class DatabaseAccessPolicyTest {
                 "market_data",
                 "dataset_manifests"));
 
+        assertTrue(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKEND,
+                DatabaseAccessPolicy.Access.INSERT,
+                "backtest",
+                "runs"));
+        assertFalse(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKEND,
+                DatabaseAccessPolicy.Access.UPDATE,
+                "backtest",
+                "runs"));
+        assertFalse(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKEND,
+                DatabaseAccessPolicy.Access.INSERT,
+                "backtest",
+                "run_attempts"));
+
         for (var role : DatabaseAccessPolicy.ApplicationRole.values()) {
             assertFalse(DatabaseAccessPolicy.allows(
                     role, DatabaseAccessPolicy.Access.DDL, "market_data", "dataset_manifests"));

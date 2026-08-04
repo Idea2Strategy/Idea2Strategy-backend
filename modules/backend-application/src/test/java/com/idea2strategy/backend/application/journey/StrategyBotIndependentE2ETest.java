@@ -152,6 +152,7 @@ class StrategyBotIndependentE2ETest {
                 FEE_POLICY_ID,
                 BUFFER_POLICY_ID,
                 DATASET_ID,
+                "backtest-policy-v1",
                 "{\"policy\":\"FIRST_WINS\"}");
     }
 

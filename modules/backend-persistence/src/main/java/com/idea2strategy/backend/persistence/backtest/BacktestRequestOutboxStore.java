@@ -40,7 +40,7 @@ public class BacktestRequestOutboxStore {
                     || !request.requestHash().equals(found.requestHash())) {
                 throw new BacktestRequestIdempotencyConflictException();
             }
-            return new BacktestRequestReceipt(found.messageId(), found.eventType(), false);
+            return new BacktestRequestReceipt(found.messageId(), found.eventType(), false, request.aggregateId());
         }
 
         jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:aggregateKey, 0))")
@@ -72,7 +72,7 @@ public class BacktestRequestOutboxStore {
                 .param("producerKey", request.producerIdempotencyKey())
                 .param("createdAt", createdAt.atOffset(ZoneOffset.UTC))
                 .update();
-        return new BacktestRequestReceipt(request.messageId(), request.eventType(), true);
+        return new BacktestRequestReceipt(request.messageId(), request.eventType(), true, request.aggregateId());
     }
 
     private record Existing(UUID messageId, String eventType, String requestHash) {}

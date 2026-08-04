@@ -54,6 +54,7 @@ public record BacktestRequestEnvelope(
             String instrumentCatalogVersion,
             BigDecimal initialCashAmount,
             String assumptionsVersion,
+            String executionPolicyVersion,
             String clientIdempotencyKey,
             Instant occurredAt) {
         Objects.requireNonNull(accountId, "accountId");
@@ -66,6 +67,7 @@ public record BacktestRequestEnvelope(
         requireText(instrumentCatalogVersion, "instrumentCatalogVersion");
         requirePositive(initialCashAmount, "initialCashAmount");
         requireText(assumptionsVersion, "assumptionsVersion");
+        requireText(executionPolicyVersion, "executionPolicyVersion");
         requireText(clientIdempotencyKey, "clientIdempotencyKey");
         Objects.requireNonNull(occurredAt, "occurredAt");
 
@@ -73,13 +75,18 @@ public record BacktestRequestEnvelope(
         String requestHash = sha256(String.join("\n",
                 accountId.toString(), botId.toString(), datasetManifestId.toString(), expectedDatasetHash,
                 periodStart.toString(), periodEnd.toString(), expectedSnapshotHash, compiledPlanChecksum,
-                instrumentCatalogVersion, initialCashAmount.toPlainString(), assumptionsVersion));
+                instrumentCatalogVersion, initialCashAmount.toPlainString(), assumptionsVersion,
+                executionPolicyVersion));
         UUID messageId = derivedId(CUSTOM_EVENT, producerKey);
-        ObjectNode root = base(CUSTOM_EVENT, messageId, occurredAt, botId, producerKey);
+        UUID runId = derivedId("CUSTOM_BACKTEST_RUN", producerKey);
+        ObjectNode root = base(CUSTOM_EVENT, messageId, occurredAt, runId, producerKey);
         root.put("requestReason", "USER_PERIOD");
         root.put("requestHash", requestHash);
         root.put("requestingAccountId", accountId.toString());
         root.put("botId", botId.toString());
+        root.put("runId", runId.toString());
+        root.put("lane", "CUSTOM");
+        root.put("aggregateSequence", 1);
         root.put("expectedSnapshotHash", expectedSnapshotHash);
         root.put("compiledPlanChecksum", compiledPlanChecksum);
         root.put("datasetManifestId", datasetManifestId.toString());
@@ -89,7 +96,8 @@ public record BacktestRequestEnvelope(
         root.put("instrumentCatalogVersion", instrumentCatalogVersion);
         root.put("initialCashAmount", initialCashAmount.toPlainString());
         root.put("assumptionsVersion", assumptionsVersion);
-        return envelope(messageId, botId, CUSTOM_EVENT, producerKey, requestHash, root);
+        root.put("executionPolicyVersion", executionPolicyVersion);
+        return envelope(messageId, runId, CUSTOM_EVENT, producerKey, requestHash, root);
     }
 
     public static BacktestRequestEnvelope competition(
@@ -152,6 +160,73 @@ public record BacktestRequestEnvelope(
         ArrayNode periodNodes = root.putArray("periods");
         orderedPeriods.forEach(period -> writePeriod(periodNodes.addObject(), period));
         return envelope(messageId, participationId, COMPETITION_EVENT, producerKey, requestHash, root);
+    }
+
+    public static BacktestRequestEnvelope competitionPeriod(
+            UUID roomId,
+            UUID participationId,
+            UUID botId,
+            String planVersion,
+            String planHash,
+            String expectedSnapshotHash,
+            String compiledPlanChecksum,
+            String assumptionsVersion,
+            String executionPolicyVersion,
+            UUID scoringTemplateVersionId,
+            String roomRulesHash,
+            BigDecimal initialCashAmount,
+            String currencyCode,
+            CompetitionPeriod period,
+            Instant occurredAt) {
+        Objects.requireNonNull(roomId, "roomId");
+        Objects.requireNonNull(participationId, "participationId");
+        Objects.requireNonNull(botId, "botId");
+        requireText(planVersion, "planVersion");
+        requireSha256(planHash, "planHash");
+        requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
+        requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
+        requireText(assumptionsVersion, "assumptionsVersion");
+        requireText(executionPolicyVersion, "executionPolicyVersion");
+        Objects.requireNonNull(scoringTemplateVersionId, "scoringTemplateVersionId");
+        requireSha256(roomRulesHash, "roomRulesHash");
+        requirePositive(initialCashAmount, "initialCashAmount");
+        if (!"USD".equals(currencyCode)) {
+            throw new IllegalArgumentException("currencyCode must be USD");
+        }
+        Objects.requireNonNull(period, "period");
+        Objects.requireNonNull(occurredAt, "occurredAt");
+
+        String producerKey = sha256("COMPETITION_PERIOD\n" + roomId + "\n" + participationId
+                + "\n" + period.evaluationPeriodId() + "\n" + planHash);
+        StringBuilder requestMaterial = new StringBuilder(String.join("\n",
+                roomId.toString(), participationId.toString(), botId.toString(), planVersion, planHash,
+                expectedSnapshotHash, compiledPlanChecksum, assumptionsVersion, executionPolicyVersion,
+                scoringTemplateVersionId.toString(), roomRulesHash, initialCashAmount.toPlainString(), currencyCode));
+        appendPeriod(requestMaterial, period);
+        String requestHash = sha256(requestMaterial.toString());
+        UUID messageId = derivedId(COMPETITION_EVENT, producerKey);
+        UUID runId = derivedId("COMPETITION_BACKTEST_RUN", producerKey);
+        ObjectNode root = base(COMPETITION_EVENT, messageId, occurredAt, runId, producerKey);
+        root.put("requestReason", "COMPETITION_EVALUATION");
+        root.put("requestHash", requestHash);
+        root.put("runId", runId.toString());
+        root.put("lane", "COMPETITION");
+        root.put("aggregateSequence", 1);
+        root.put("roomId", roomId.toString());
+        root.put("participationId", participationId.toString());
+        root.put("botId", botId.toString());
+        root.put("planVersion", planVersion);
+        root.put("planHash", planHash);
+        root.put("expectedSnapshotHash", expectedSnapshotHash);
+        root.put("compiledPlanChecksum", compiledPlanChecksum);
+        root.put("assumptionsVersion", assumptionsVersion);
+        root.put("executionPolicyVersion", executionPolicyVersion);
+        root.put("scoringTemplateVersionId", scoringTemplateVersionId.toString());
+        root.put("roomRulesHash", roomRulesHash);
+        root.put("initialCashAmount", initialCashAmount.toPlainString());
+        root.put("currencyCode", currencyCode);
+        writePeriod(root.putArray("periods").addObject(), period);
+        return envelope(messageId, runId, COMPETITION_EVENT, producerKey, requestHash, root);
     }
 
     private static List<CompetitionPeriod> orderedPeriods(List<CompetitionPeriod> periods) {

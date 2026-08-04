@@ -76,7 +76,7 @@ public final class ImmutableStrategyReleaseCommandService {
                 .orElseThrow(() -> new NoSuchElementException("Strategy validation not found"));
         var plan = planService.compile(validationRunId, catalog);
         var backtestRequest = OfficialBacktestRequest.forRelease(
-                release, plan.planHash(), command.datasetManifestId());
+                release, plan.planHash(), command.datasetManifestId(), command.executionPolicyVersion());
         return releasePort.saveOnce(
                 release, backtestRequest, validationRunId,
                 validation.requestedEditSequence(), validation.semanticHash());

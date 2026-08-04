@@ -160,7 +160,8 @@ class ImmutableStrategyReleaseCommandServiceTest {
     private static ImmutableStrategyReleaseCommand command() {
         return new ImmutableStrategyReleaseCommand(
                 RELEASE_ID, new BigDecimal("100000.00"), 10_000, "broker/v1", "accounting/v1",
-                "precision/v1", FEE_ID, BUFFER_ID, DATASET_ID, "{\"policy\":\"FIRST_WINS\"}");
+                "precision/v1", FEE_ID, BUFFER_ID, DATASET_ID, "backtest-policy-v1",
+                "{\"policy\":\"FIRST_WINS\"}");
     }
 
     private static StrategyDocument document() {

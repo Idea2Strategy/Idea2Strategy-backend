@@ -83,11 +83,15 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from trading.ledger_accounts");
         jdbc.update("delete from competition.participation_events");
         jdbc.update("delete from competition.live_evaluation_segments");
+        jdbc.update("delete from competition.backtest_period_runs");
+        jdbc.update("delete from backtest.run_attempts");
+        jdbc.update("delete from backtest.runs");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from competition.backtest_period_feature_materializations");
         jdbc.update("delete from competition.backtest_period_datasets");
         jdbc.update("delete from competition.backtest_evaluation_periods");
         jdbc.update("delete from competition.backtest_evaluation_plans");
+        jdbc.update("delete from backtest.execution_policy_versions where version = 'competition-policy-v1'");
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.live_room_rules");
@@ -378,8 +382,10 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                                 + "payload_document #>> '{periods,0,evaluationPeriodId}' as first_period_id, "
                                 + "payload_document #>> '{periods,0,datasets,0,datasetManifestId}' as first_dataset_id "
                                 + "from operations.outbox_messages "
-                                + "where aggregate_id = ? and event_type = 'COMPETITION_BACKTEST_REQUESTED'",
-                        PARTICIPATION_ID))
+                                + "where event_type = 'COMPETITION_BACKTEST_REQUESTED' "
+                                + "and payload_document ->> 'participationId' = ? "
+                                + "and payload_document #>> '{periods,0,evaluationPeriodId}' = ?",
+                        PARTICIPATION_ID.toString(), FIRST_PERIOD_ID.toString()))
                 .containsEntry("event_schema_version", "backtest-request.v1")
                 .containsEntry("request_reason", "COMPETITION_EVALUATION")
                 .containsEntry("room_id", ROOM_ID.toString())
@@ -388,9 +394,19 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                 .containsEntry("room_rules_hash", "sha256:" + "7".repeat(64))
                 .containsEntry("initial_cash_amount", "100000.00000000")
                 .containsEntry("currency_code", "USD")
-                .containsEntry("period_count", 2)
+                .containsEntry("period_count", 1)
                 .containsEntry("first_period_id", FIRST_PERIOD_ID.toString())
                 .containsEntry("first_dataset_id", FIRST_DATASET_ID.toString());
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages "
+                                + "where event_type = 'COMPETITION_BACKTEST_REQUESTED'",
+                        Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from competition.backtest_period_runs where participation_id = ?",
+                        Integer.class, PARTICIPATION_ID))
+                .isEqualTo(2);
         assertThat(jdbc.queryForObject(
                         "select jsonb_exists(payload_document, 'liveEvaluationInputHash') "
                                 + "from competition.participation_events where participation_id = ?",
@@ -539,6 +555,11 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "commitment_nonce_ciphertext, nonce_key_version, locked_at) "
                         + "values (?, 'competition-plan.v1', 2, ?, ?, 'ciphertext', 1, ?)",
                 ROOM_ID, "sha256:" + "3".repeat(64), "sha256:" + "4".repeat(64), at.minusDays(1));
+        jdbc.update(
+                "insert into backtest.execution_policy_versions "
+                        + "(version, policy_artifact_hash, policy_document, locked_at) "
+                        + "values ('competition-policy-v1', ?, jsonb_build_object('competitionPlanHash', ?), ?)",
+                "a".repeat(64), "sha256:" + "3".repeat(64), at.minusDays(1));
         jdbc.update(
                 "insert into competition.backtest_evaluation_periods "
                         + "(id, evaluation_plan_room_id, period_sequence, evaluation_start, evaluation_end, "

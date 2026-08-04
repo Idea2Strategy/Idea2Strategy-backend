@@ -9,19 +9,18 @@ import java.util.UUID;
 /**
  * The versioned, deterministic request emitted once for an immutable strategy release.
  *
- * <p>The request carries no run id. D owns {@code backtest.runs} and addresses the run it creates as
- * {@code uuid5(namespace, idempotencyKey)} from the metadata below, so the identity of the official
- * run is a function of this message rather than something the backend assigns. B correlates a
- * release to its run through {@code bot_id}, which is how {@code StrategyLibraryJooqQueryAdapter}
- * reads the status back.
+ * <p>The Backend registers the stable run and this request in the release transaction. Consumers
+ * must execute the supplied run id and must never invent a replacement identity.
  */
 public record OfficialBacktestRequest(
         MessageMetadata metadata,
+        UUID runId,
         UUID botId,
         String expectedSnapshotHash,
         String compiledPlanChecksum,
         UUID datasetManifestId,
         String assumptionsVersion,
+        String executionPolicyVersion,
         String requestReason) {
     public static final String CONTRACT_VERSION = "strategy-bot.v1";
     public static final String MESSAGE_TYPE = "OFFICIAL_BACKTEST_REQUESTED";
@@ -29,11 +28,13 @@ public record OfficialBacktestRequest(
 
     public OfficialBacktestRequest {
         Objects.requireNonNull(metadata, "metadata");
+        Objects.requireNonNull(runId, "runId");
         Objects.requireNonNull(botId, "botId");
         requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
         requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
         Objects.requireNonNull(datasetManifestId, "datasetManifestId");
         requireText(assumptionsVersion, "assumptionsVersion");
+        requireText(executionPolicyVersion, "executionPolicyVersion");
         if (!REQUEST_REASON.equals(requestReason)) {
             throw new IllegalArgumentException("requestReason must be STRATEGY_RELEASE");
         }
@@ -42,9 +43,11 @@ public record OfficialBacktestRequest(
     public static OfficialBacktestRequest forRelease(
             ImmutableStrategyRelease release,
             String compiledPlanHash,
-            UUID datasetManifestId) {
+            UUID datasetManifestId,
+            String executionPolicyVersion) {
         Objects.requireNonNull(release, "release");
         Objects.requireNonNull(datasetManifestId, "datasetManifestId");
+        requireText(executionPolicyVersion, "executionPolicyVersion");
         String snapshotHash = prefixed(release.snapshotHash());
         String planChecksum = prefixed(compiledPlanHash);
         String operationKey = "OFFICIAL_BACKTEST|" + datasetManifestId + "|"
@@ -57,11 +60,12 @@ public record OfficialBacktestRequest(
                 "operationKey=" + operationKey);
         String idempotencyKey = "sha256:" + StrategyDocumentJson.sha256(material);
         UUID messageId = derivedId(release.botId(), "official-backtest-message");
+        UUID runId = derivedId(release.botId(), "official-backtest-run");
         var metadata = new MessageMetadata(
                 CONTRACT_VERSION, MESSAGE_TYPE, messageId, release.releasedAt(), release.botId(), idempotencyKey);
         return new OfficialBacktestRequest(
-                metadata, release.botId(), snapshotHash, planChecksum, datasetManifestId,
-                release.launchConfiguration().accountingRulesVersion(), REQUEST_REASON);
+                metadata, runId, release.botId(), snapshotHash, planChecksum, datasetManifestId,
+                release.launchConfiguration().accountingRulesVersion(), executionPolicyVersion, REQUEST_REASON);
     }
 
     private static UUID derivedId(UUID botId, String component) {
