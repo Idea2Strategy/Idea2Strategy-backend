@@ -96,7 +96,8 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update(
                 "insert into bot.launch_contract_plans "
                         + "(bot_id, contract_version, plan_schema_version, plan_checksum, plan_document, created_at) "
-                        + "values (?, 'strategy-bot.v1', 'basic-compiled-plan.v1', ?, '{}'::jsonb, ?)",
+                        + "values (?, 'strategy-bot.v1', 'basic-compiled-plan.v1', ?, "
+                        + "'{\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-04\"}'::jsonb, ?)",
                 BOT, "sha256:" + "1".repeat(64), at);
         jdbc.update(
                 "insert into bot.launch_configurations "
@@ -122,13 +123,23 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         Integer.class))
                 .isEqualTo(1);
         assertThat(jdbc.queryForMap(
-                        "select producer_idempotency_key, payload_hash, payload_document ->> 'requestReason' as reason "
+                        "select producer_idempotency_key, payload_hash, "
+                                + "payload_document ->> 'requestReason' as reason, "
+                                + "payload_document ->> 'requestingAccountId' as requesting_account_id, "
+                                + "payload_document ->> 'expectedDatasetHash' as expected_dataset_hash, "
+                                + "payload_document ->> 'instrumentCatalogVersion' as instrument_catalog_version, "
+                                + "payload_document ->> 'initialCashAmount' as initial_cash_amount "
                                 + "from operations.outbox_messages where id = ?",
                         created.messageId()))
                 .satisfies(row -> {
                     assertThat(row.get("producer_idempotency_key")).asString().matches("sha256:[0-9a-f]{64}");
                     assertThat(row.get("payload_hash")).asString().matches("[0-9a-f]{64}");
                     assertThat(row.get("reason")).isEqualTo("USER_PERIOD");
+                    assertThat(row.get("requesting_account_id")).isEqualTo(ACCOUNT.toString());
+                    assertThat(row.get("expected_dataset_hash")).isEqualTo("sha256:" + "a".repeat(64));
+                    assertThat(row.get("instrument_catalog_version"))
+                            .isEqualTo("us-supported-universe:2026-08-04");
+                    assertThat(row.get("initial_cash_amount")).isEqualTo("100000.00000000");
                 });
 
         assertThatThrownBy(() -> adapter.enqueue(

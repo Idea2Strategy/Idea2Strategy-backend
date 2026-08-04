@@ -8,9 +8,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -190,8 +192,11 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
     private void insertCompetitionBacktestRequest(
             UUID roomId, UUID participationId, UUID botId, OffsetDateTime observedAt) {
         var context = dsl.fetchOne(
-                "select ep.plan_version, ep.plan_hash, s.snapshot_hash, lp.plan_checksum, "
-                        + "lc.accounting_rules_version from competition.backtest_evaluation_plans ep "
+                "select ep.plan_version, ep.plan_hash, ep.period_count, s.snapshot_hash, lp.plan_checksum, "
+                        + "lc.accounting_rules_version, rr.scoring_template_version_id, rr.rules_hash, "
+                        + "rr.initial_cash_amount, rr.currency_code "
+                        + "from competition.backtest_evaluation_plans ep "
+                        + "join competition.room_rules rr on rr.room_id = ep.room_id "
                         + "join bot.launch_snapshots s on s.bot_id = ? "
                         + "join bot.launch_contract_plans lp on lp.bot_id = ? "
                         + "join bot.launch_configurations lc on lc.bot_id = ? where ep.room_id = ?",
@@ -208,6 +213,11 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                 prefixed(context.get("snapshot_hash", String.class)),
                 prefixed(context.get("plan_checksum", String.class)),
                 context.get("accounting_rules_version", String.class),
+                context.get("scoring_template_version_id", UUID.class),
+                prefixed(context.get("rules_hash", String.class)),
+                context.get("initial_cash_amount", BigDecimal.class),
+                context.get("currency_code", String.class).trim(),
+                competitionPeriods(roomId, context.get("period_count", Integer.class)),
                 observedAt.toInstant());
         Number sequence = (Number) dsl.fetchValue(
                 "select coalesce(max(aggregate_sequence), 0) + 1 from operations.outbox_messages "
@@ -222,6 +232,74 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                 request.messageId(), participationId, sequence.longValue(), request.eventType(),
                 request.eventSchemaVersion(), request.payloadDocument(), request.producerIdempotencyKey(),
                 request.producerIdempotencyKey(), observedAt);
+    }
+
+    private List<BacktestRequestEnvelope.CompetitionPeriod> competitionPeriods(UUID roomId, int expectedCount) {
+        var periodRows = dsl.fetch(
+                "select id, period_sequence, evaluation_start, evaluation_end, importance_weight, input_set_hash "
+                        + "from competition.backtest_evaluation_periods where evaluation_plan_room_id = ? "
+                        + "order by period_sequence, id",
+                roomId);
+        if (periodRows.size() != expectedCount) {
+            throw new IllegalStateException("Locked competition period count does not match its plan");
+        }
+        return periodRows.stream().map(period -> {
+            UUID periodId = period.get("id", UUID.class);
+            LocalDate start = period.get("evaluation_start", LocalDate.class);
+            LocalDate end = period.get("evaluation_end", LocalDate.class);
+            var datasets = dsl.fetch(
+                            "select pd.dataset_manifest_id, pd.purpose_code, pd.locked_dataset_hash, "
+                                    + "dm.dataset_hash, dm.status::text as dataset_status, dm.available_at, "
+                                    + "dm.period_start::date as dataset_start, dm.period_end::date as dataset_end "
+                                    + "from competition.backtest_period_datasets pd "
+                                    + "join market_data.dataset_manifests dm on dm.id = pd.dataset_manifest_id "
+                                    + "where pd.evaluation_period_id = ? order by pd.purpose_code, pd.dataset_manifest_id",
+                            periodId)
+                    .map(dataset -> {
+                        String locked = prefixed(dataset.get("locked_dataset_hash", String.class));
+                        String actual = prefixed(dataset.get("dataset_hash", String.class));
+                        if (!locked.equals(actual)
+                                || !"AVAILABLE".equals(dataset.get("dataset_status", String.class))
+                                || dataset.get("available_at", OffsetDateTime.class) == null
+                                || dataset.get("dataset_start", LocalDate.class).isAfter(start)
+                                || dataset.get("dataset_end", LocalDate.class).isBefore(end)) {
+                            throw new IllegalStateException(
+                                    "Locked competition dataset is unavailable, changed, or does not cover its period");
+                        }
+                        return new BacktestRequestEnvelope.CompetitionDataset(
+                                dataset.get("dataset_manifest_id", UUID.class),
+                                dataset.get("purpose_code", String.class), locked);
+                    });
+            var features = dsl.fetch(
+                            "select pf.feature_materialization_id, pf.locked_result_hash, fm.result_hash, "
+                                    + "fm.status::text as materialization_status, fm.available_at "
+                                    + "from competition.backtest_period_feature_materializations pf "
+                                    + "join market_data.feature_materializations fm "
+                                    + "on fm.id = pf.feature_materialization_id "
+                                    + "where pf.evaluation_period_id = ? order by pf.feature_materialization_id",
+                            periodId)
+                    .map(feature -> {
+                        String locked = prefixed(feature.get("locked_result_hash", String.class));
+                        String actual = prefixed(feature.get("result_hash", String.class));
+                        if (!locked.equals(actual)
+                                || !"SUCCEEDED".equals(feature.get("materialization_status", String.class))
+                                || feature.get("available_at", OffsetDateTime.class) == null) {
+                            throw new IllegalStateException(
+                                    "Locked competition feature materialization is unavailable or changed");
+                        }
+                        return new BacktestRequestEnvelope.CompetitionFeatureMaterialization(
+                                feature.get("feature_materialization_id", UUID.class), locked);
+                    });
+            return new BacktestRequestEnvelope.CompetitionPeriod(
+                    periodId,
+                    period.get("period_sequence", Integer.class),
+                    start,
+                    end,
+                    period.get("importance_weight", BigDecimal.class),
+                    prefixed(period.get("input_set_hash", String.class)),
+                    datasets,
+                    features);
+        }).toList();
     }
 
     private static String prefixed(String value) {

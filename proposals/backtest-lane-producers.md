@@ -16,24 +16,32 @@ The implementation candidate now provides backend producers and explicit routing
 - both use a stable producer key, a semantic request hash for conflict detection,
   the transactional Outbox, and dedicated runtime queue URLs.
 
-The following still require a protected canonical contract and matching consumer:
+The follow-up producer candidate carries every immutable input that can currently
+be resolved without inventing protected meaning. Custom requests expose the
+requesting account, dataset hash, compiled-plan instrument catalog, initial cash,
+and accounting assumptions. Competition requests carry the locked room/scoring
+facts and the complete ordered hidden-period input bundle, including shared dataset
+and feature-materialization evidence. Hidden periods exist only in the internal
+Outbox/SQS payload and are not copied to participant or public room events.
 
-- a user command/API for a date-range backtest;
-- the immutable inputs, authorization, idempotency scope, or payload contract for
-  that command;
-- a competition backtest request payload, whether it is one request per room,
-  participation, evaluation plan, or evaluation period, or its ordering rules;
-- consumer schemas or intake handlers for either request.
+Two approved-contract obligations remain unresolvable from the current backend
+schema: neither a custom bot release nor a competition room has a locked reference
+to the backtest engine's `ExecutionPolicyCatalog.version`, and the period-run
+linkage contract has no approved command/event representation. Accounting rules
+are not an execution-policy version and must not be relabelled as one. These gaps
+must remain explicit blockers rather than guessed constants or derived identifiers.
 
-The current backtest engine does not yet consume `backtest-request.v1`, so these
-events must not be enabled in a deployed relay until the matching consumer schemas
-and intake handlers pass cross-repository compatibility tests.
+The backtest engine's `backtest-request.v1` intake must therefore remain guarded,
+and the custom/competition relay routes must stay disabled until the protected
+execution-policy/linkage decision is approved and cross-repository compatibility
+tests pass.
 
 After product-authority approval, integrate in this order:
 
-1. Add versioned request contracts and consumer fixtures for both request kinds.
-2. Add backtest-engine intake tests and durable run identity derivation.
-3. Review and ratify the candidate producer payload fields and API behavior.
+1. Approve and persist the execution-policy reference and competition period-run
+   linkage without conflating them with accounting rules.
+2. Complete backtest-engine intake tests and durable run identity derivation.
+3. Ratify the additive producer payload fields and API failure behavior.
 4. Verify all three paths against PostgreSQL and LocalStack SQS, then update the
    deployment environment.
 
