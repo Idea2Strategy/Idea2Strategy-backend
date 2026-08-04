@@ -76,7 +76,8 @@ public class RoomEvaluationAccountResultSqsConfiguration {
 
         private void pollQueue(String queueUrl) {
             List<Message> messages = sqs.receiveMessage(request -> request.queueUrl(queueUrl)
-                            .maxNumberOfMessages(properties.batchSize()).waitTimeSeconds(0)
+                            .maxNumberOfMessages(properties.batchSize())
+                            .waitTimeSeconds(properties.longPollSeconds())
                             .messageAttributeNames("All"))
                     .messages();
             for (Message message : messages) {
@@ -114,10 +115,12 @@ public class RoomEvaluationAccountResultSqsConfiguration {
     public record Properties(
             boolean enabled, String openedQueueUrl, String rejectedQueueUrl,
             String endpointOverride, String region, String accessKeyId, String secretAccessKey,
-            String workerId, Integer batchSize, Duration lease) {
+            String workerId, Integer batchSize, Integer longPollSeconds, Duration lease) {
         public Properties {
             workerId = text(workerId) ? workerId : "backend-worker-room-ledger";
             batchSize = batchSize == null ? 10 : Math.max(1, Math.min(10, batchSize));
+            longPollSeconds = longPollSeconds == null
+                    ? 5 : Math.max(1, Math.min(20, longPollSeconds));
             lease = lease == null ? Duration.ofSeconds(30) : lease;
         }
     }
