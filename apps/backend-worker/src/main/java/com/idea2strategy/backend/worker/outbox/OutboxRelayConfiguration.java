@@ -11,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -63,7 +64,8 @@ public class OutboxRelayConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "idea2strategy.outbox-relay", name = "enabled", havingValue = "true")
-    SqsOutboxMessagePublisher outboxMessagePublisher(SqsClient sqs, RelayProperties properties) {
+    SqsOutboxMessagePublisher outboxMessagePublisher(
+            @Qualifier("outboxRelaySqsClient") SqsClient sqs, RelayProperties properties) {
         var configuredRoutes = new LinkedHashMap<String, String>();
         properties.queues().forEach((eventType, queueUrl) -> {
             if (queueUrl != null && !queueUrl.isBlank()) {
