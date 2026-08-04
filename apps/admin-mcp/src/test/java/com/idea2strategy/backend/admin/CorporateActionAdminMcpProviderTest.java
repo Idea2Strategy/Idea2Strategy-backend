@@ -21,8 +21,7 @@ class CorporateActionAdminMcpProviderTest {
                 Map.of(
                         "candidateId", CANDIDATE,
                         "decision", "APPROVE",
-                        "evidenceBindings", List.of("b".repeat(64)),
-                        "aggregateSequence", 1),
+                        "evidenceBindings", List.of("b".repeat(64))),
                 "approve-1"));
 
         assertThat(result.status()).isEqualTo(AdminMcpProviderPort.Result.Status.SUCCEEDED);
@@ -30,7 +29,7 @@ class CorporateActionAdminMcpProviderTest {
                 .containsEntry("candidateId", CANDIDATE)
                 .containsEntry("decidedContentHash", "a".repeat(64))
                 .containsEntry("decision", "APPROVE")
-                .containsEntry("aggregateSequence", 1L);
+                .doesNotContainKey("aggregateSequence");
     }
 
     @Test
@@ -40,14 +39,13 @@ class CorporateActionAdminMcpProviderTest {
                 "corporate_action_candidate.approve", "CORPORATE_ACTION", CANDIDATE,
                 "a".repeat(64),
                 Map.of("candidateId", "10000000-0000-4000-8000-000000000002",
-                        "decision", "APPROVE", "evidenceBindings", List.of("b".repeat(64)),
-                        "aggregateSequence", 1),
+                        "decision", "APPROVE", "evidenceBindings", List.of("b".repeat(64))),
                 "approve-2"));
         var missingEvidence = provider.invoke(new AdminMcpProviderPort.Request(
                 "corporate_action_candidate.approve", "CORPORATE_ACTION", CANDIDATE,
                 "a".repeat(64),
                 Map.of("candidateId", CANDIDATE, "decision", "APPROVE",
-                        "evidenceBindings", List.of(), "aggregateSequence", 1),
+                        "evidenceBindings", List.of()),
                 "approve-3"));
 
         assertThat(mismatch.code()).isEqualTo("CORPORATE_ACTION_CANDIDATE_MISMATCH");

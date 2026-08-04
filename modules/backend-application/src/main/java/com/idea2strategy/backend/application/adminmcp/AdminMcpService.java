@@ -124,7 +124,6 @@ public final class AdminMcpService {
         envelope.put("deliveryId", UUID.nameUUIDFromBytes(
                 ("corporate-action-approval:" + invocation.idempotencyKey())
                         .getBytes(StandardCharsets.UTF_8)));
-        envelope.put("aggregateSequence", providerResult.get("aggregateSequence"));
         Object rationale = providerResult.get("rationale");
         if (rationale != null) {
             envelope.put("rationale", rationale);

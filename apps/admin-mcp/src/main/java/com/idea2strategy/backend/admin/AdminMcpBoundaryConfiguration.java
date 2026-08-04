@@ -77,15 +77,15 @@ public class AdminMcpBoundaryConfiguration {
             AdminMcpToolRegistry.Mode mode,
             UUID permissionId) {
         Set<String> required = mode == AdminMcpToolRegistry.Mode.APPROVAL
-                ? Set.of("candidateId", "decision", "evidenceBindings", "aggregateSequence")
+                ? Set.of("candidateId", "decision", "evidenceBindings")
                 : Set.of("candidateId");
         Set<String> allowedInput = mode == AdminMcpToolRegistry.Mode.APPROVAL
-                ? Set.of("candidateId", "decision", "evidenceBindings", "aggregateSequence",
+                ? Set.of("candidateId", "decision", "evidenceBindings",
                         "supersedesCandidateId", "rationale")
                 : Set.of("candidateId");
         Set<String> allowedOutput = mode == AdminMcpToolRegistry.Mode.APPROVAL
                 ? Set.of("candidateId", "decision", "decidedContentHash", "evidenceBindings",
-                        "aggregateSequence", "supersedesCandidateId", "rationale", "status")
+                        "supersedesCandidateId", "rationale", "status")
                 : Set.of("candidateId", "version", "status");
         return new AdminMcpToolRegistry.Tool(
                 name,

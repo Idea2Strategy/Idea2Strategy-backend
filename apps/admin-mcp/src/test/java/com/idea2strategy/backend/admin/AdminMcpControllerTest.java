@@ -40,8 +40,7 @@ class AdminMcpControllerTest {
                  "targetId":"10000000-0000-4000-8000-000000000001",
                  "decidedContentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                  "input":{"candidateId":"10000000-0000-4000-8000-000000000001",
-                          "decision":"APPROVE","evidenceBindings":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
-                          "aggregateSequence":1}}
+                          "decision":"APPROVE","evidenceBindings":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]}}
                 """;
 
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -177,7 +176,6 @@ class AdminMcpControllerTest {
                             "decision", "APPROVE",
                             "decidedContentHash", request.decidedContentHash(),
                             "evidenceBindings", request.input().get("evidenceBindings"),
-                            "aggregateSequence", request.input().get("aggregateSequence"),
                             "status", "APPROVED"));
         }
     }

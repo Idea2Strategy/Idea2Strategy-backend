@@ -3,6 +3,7 @@ package com.idea2strategy.backend.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -31,6 +32,8 @@ class AdminMcpJdbcConfigurationTest {
     void persistsAuditAndOutboxInTheSameExecutionCall() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         when(jdbc.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
+        when(jdbc.queryForObject(anyString(), eq(String.class), any())).thenReturn("");
+        when(jdbc.queryForObject(anyString(), eq(Long.class), any())).thenReturn(1L);
         when(jdbc.update(anyString(), any(Object[].class))).thenReturn(1);
         ObjectMapper json = new ObjectMapper().findAndRegisterModules();
         var executions = new AdminMcpJdbcConfiguration.JdbcExecutions(jdbc, json);

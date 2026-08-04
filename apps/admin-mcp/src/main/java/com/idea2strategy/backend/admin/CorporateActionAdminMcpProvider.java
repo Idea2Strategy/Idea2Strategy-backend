@@ -31,10 +31,6 @@ final class CorporateActionAdminMcpProvider implements AdminMcpProviderPort {
                     || evidence.stream().anyMatch(item -> !String.valueOf(item).matches("[0-9a-f]{64}"))) {
                 return rejected("CORPORATE_ACTION_EVIDENCE_INVALID");
             }
-            Object sequenceValue = request.input().get("aggregateSequence");
-            if (!(sequenceValue instanceof Number sequence) || sequence.longValue() < 1) {
-                return rejected("CORPORATE_ACTION_SEQUENCE_INVALID");
-            }
             Object supersedes = request.input().get("supersedesCandidateId");
             if (supersedes != null) {
                 UUID.fromString(String.valueOf(supersedes));
@@ -45,7 +41,6 @@ final class CorporateActionAdminMcpProvider implements AdminMcpProviderPort {
             after.put("decision", decision);
             after.put("decidedContentHash", request.decidedContentHash());
             after.put("evidenceBindings", List.copyOf(evidence));
-            after.put("aggregateSequence", sequence.longValue());
             after.put("status", decision.equals("APPROVE") ? "APPROVED" : "WITHDRAWN");
             if (supersedes != null) {
                 after.put("supersedesCandidateId", String.valueOf(supersedes));

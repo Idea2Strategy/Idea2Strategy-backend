@@ -76,6 +76,7 @@ class AdminMcpJdbcConfiguration {
         @Transactional
         public AdminMcpExecutionResult executeIdempotently(
                 AdminMcpInvocation invocation, Instant evaluatedAt, Decision decision) {
+            advisoryLock(invocation.idempotencyKey());
             List<Map<String, Object>> prior = jdbc.queryForList("""
                     select request_hash, evidence_document::text as evidence_document
                     from operations.audit_events where idempotency_key = ? for update
@@ -88,6 +89,13 @@ class AdminMcpJdbcConfiguration {
             }
 
             AdminMcpExecutionResult result = decision.decide();
+            if (result.status() == AdminMcpExecutionResult.Status.APPLIED) {
+                long sequence = nextAggregateSequence(invocation.targetId());
+                Map<String, Object> response = new java.util.LinkedHashMap<>(result.response());
+                response.put("aggregateSequence", sequence);
+                result = new AdminMcpExecutionResult(
+                        result.status(), result.code(), response, result.auditEvidence());
+            }
             String request = write(Map.of(
                     "toolName", invocation.toolName(),
                     "targetId", invocation.targetId(),
@@ -122,6 +130,26 @@ class AdminMcpJdbcConfiguration {
                 writeOutbox(invocation, result, evaluatedAt);
             }
             return result;
+        }
+
+        private void advisoryLock(String identity) {
+            jdbc.queryForObject(
+                    "select pg_advisory_xact_lock(hashtextextended(?::text, 0))::text",
+                    String.class,
+                    identity);
+        }
+
+        private long nextAggregateSequence(String candidateId) {
+            advisoryLock("corporate-action:" + candidateId);
+            Long next = jdbc.queryForObject("""
+                    select coalesce(max(aggregate_sequence), 0) + 1
+                    from operations.outbox_messages
+                    where owner_domain = 'CORPORATE_ACTION' and aggregate_id = ?
+                    """, Long.class, UUID.fromString(candidateId));
+            if (next == null || next < 1) {
+                throw new IllegalStateException("corporate-action aggregate sequence unavailable");
+            }
+            return next;
         }
 
         private void writeOutbox(
