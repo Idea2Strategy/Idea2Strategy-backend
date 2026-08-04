@@ -11,6 +11,7 @@ import com.idea2strategy.backend.application.competition.PlatformRoomInvalidatio
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
 import com.idea2strategy.backend.application.competition.RoomInvitationService;
+import com.idea2strategy.backend.application.competition.RoomInputCatalogQueryService;
 import com.idea2strategy.backend.application.competition.RoomLeaderboardQueryService;
 import com.idea2strategy.backend.application.competition.RoomParticipationAdmissionService;
 import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
@@ -22,6 +23,7 @@ import com.idea2strategy.backend.application.competition.UserRoomTerminationServ
 import com.idea2strategy.backend.application.strategy.BasicExecutionPlanCommandService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandService;
+import com.idea2strategy.backend.application.strategy.OwnedStrategyValidationCatalogQueryService;
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.AnonymousLeaderboardJooqAdapter;
@@ -31,6 +33,7 @@ import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJoo
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomInvitationJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.RoomExecutionPolicyCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomLeaderboardJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomParticipationAdmissionJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
@@ -56,6 +59,7 @@ import org.springframework.context.annotation.Import;
     OperatorRoomJooqAdapter.class,
     AnonymousLeaderboardJooqAdapter.class,
     RoomConfigurationJooqAdapter.class,
+    RoomExecutionPolicyCatalogJooqQueryAdapter.class,
     ScoringTemplateCatalogJooqQueryAdapter.class,
     PublicRoomSearchJooqAdapter.class,
     RoomInvitationJooqAdapter.class,
@@ -230,6 +234,20 @@ public class CompetitionRoomConfiguration {
     ScoringTemplateCatalogService scoringTemplateCatalogService(
             ScoringTemplateCatalogJooqQueryAdapter queryAdapter) {
         return new ScoringTemplateCatalogService(queryAdapter, Clock.systemUTC(), new ObjectMapper());
+    }
+
+    @Bean
+    RoomInputCatalogQueryService roomInputCatalogQueryService(
+            ScoringTemplateCatalogService scoringCatalog,
+            RoomExecutionPolicyCatalogJooqQueryAdapter executionPolicies) {
+        return new RoomInputCatalogQueryService(scoringCatalog, executionPolicies, Clock.systemUTC());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentPrincipal.class)
+    OwnedStrategyValidationCatalogQueryService ownedStrategyValidationCatalogQueryService(
+            StrategyValidationRunJooqQueryAdapter validationAdapter, CurrentPrincipal principal) {
+        return new OwnedStrategyValidationCatalogQueryService(validationAdapter, principal);
     }
 
     @Bean
