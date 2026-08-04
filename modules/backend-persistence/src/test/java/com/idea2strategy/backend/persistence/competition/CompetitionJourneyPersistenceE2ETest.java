@@ -118,6 +118,12 @@ class CompetitionJourneyPersistenceE2ETest {
         assertThat(new RoomEvaluationStartService(evaluationStarts, fixed(EVALUATION_AT)).run(10)
                         .participantsStarted())
                 .isZero();
+        // The full journey substitutes F's separately tested matching OPENED facts.
+        jdbc.update("update competition.live_evaluation_segments set start_event_sequence = 1, "
+                + "initial_state_hash = 'sha256:' || repeat('1', 64) where start_event_sequence is null");
+        jdbc.update("update competition.participations set status = 'EVALUATING', evaluation_started_at = ? "
+                + "where room_id = ? and status = 'PENDING_LEDGER'",
+                EVALUATION_AT.atOffset(ZoneOffset.UTC), SECRET_ROOM_ID);
 
         assertThatThrownBy(() -> leaderboard(OUTSIDER_ID).query(SECRET_ROOM_ID, null, 20))
                 .isInstanceOf(LeaderboardAccessException.class);

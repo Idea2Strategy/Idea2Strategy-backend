@@ -71,6 +71,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260804090000__backend_seed_basic_element_catalog.sql",
                         "V20260804090100__pipeline_register_official_rsi_14.sql",
                         "V20260804100000__backend_bot_launch_contract_plans.sql",
+                        "V20260804145900__backend_room_ledger_handoff.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))

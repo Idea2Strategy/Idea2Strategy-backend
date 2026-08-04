@@ -60,11 +60,7 @@ class SchemaWriteOwnershipTest {
      * and F10 requires the official ledger to be reconstructible from F's own writes. E has to ask F
      * to open the account instead. Tracked on root #181.
      */
-    private static final Set<QualifiedTable> KNOWN_VIOLATIONS = Set.of(
-            new QualifiedTable("bot", "bot_events"),
-            new QualifiedTable("trading", "ledger_accounts"),
-            new QualifiedTable("trading", "ledger_transactions"),
-            new QualifiedTable("trading", "ledger_entries"));
+    private static final Set<QualifiedTable> KNOWN_VIOLATIONS = Set.of();
 
     @Test
     void writesOnlyToBackendOwnedTables() throws Exception {
