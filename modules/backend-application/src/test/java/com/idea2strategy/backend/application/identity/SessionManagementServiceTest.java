@@ -31,6 +31,30 @@ class SessionManagementServiceTest {
     }
 
     @Test
+    void rejectsAValidSessionWhenTheAccountHasAnActiveSanction() {
+        var repository = new Repository(session(CURRENT_ID, null, true));
+        var service = service(repository);
+
+        assertThatThrownBy(() -> service.authenticate("current-digest"))
+                .isInstanceOf(SanctionedAccountAccessException.class)
+                .hasMessageContaining("appeal");
+        assertThat(repository.eventType).isEqualTo("SESSION_REJECTED");
+        assertThat(repository.eventReason).isEqualTo("ACTIVE_ACCOUNT_SANCTION");
+    }
+
+    @Test
+    void permitsOnlyExplicitRestrictedAccessForAnActiveSanction() {
+        var repository = new Repository(session(CURRENT_ID, null, true));
+        var service = service(repository);
+
+        assertThat(service.authenticate(
+                        "current-digest", UUID.randomUUID(), CustomerAccessScope.APPEAL))
+                .isEqualTo(new AuthenticatedSession(ACCOUNT_ID, CURRENT_ID, true));
+        assertThat(repository.eventType).isEqualTo("SANCTION_RESTRICTED_ACCESS_VALIDATED");
+        assertThat(repository.eventReason).isEqualTo("APPEAL");
+    }
+
+    @Test
     void listsOnlySafeActiveSessionMetadataAndMarksTheCurrentSession() {
         var repository = new Repository(session(CURRENT_ID, null));
         repository.active.add(new ActiveSession(
@@ -68,6 +92,10 @@ class SessionManagementServiceTest {
     }
 
     private static StoredSession session(UUID id, Instant revokedAt) {
+        return session(id, revokedAt, false);
+    }
+
+    private static StoredSession session(UUID id, Instant revokedAt, boolean activeSanction) {
         return new StoredSession(
                 id,
                 ACCOUNT_ID,
@@ -82,7 +110,8 @@ class SessionManagementServiceTest {
                 NOW.minusSeconds(120),
                 NOW.minusSeconds(10),
                 NOW.plusSeconds(3600),
-                revokedAt);
+                revokedAt,
+                activeSanction);
     }
 
     private static final class Repository implements SessionQueryPort, SessionCommandPort {

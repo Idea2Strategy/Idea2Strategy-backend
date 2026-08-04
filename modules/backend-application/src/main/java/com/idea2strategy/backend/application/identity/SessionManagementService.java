@@ -35,8 +35,13 @@ public final class SessionManagementService {
     }
 
     public AuthenticatedSession authenticate(String tokenDigest, UUID correlationId) {
-        var session = loadValid(tokenDigest, correlationId);
-        return new AuthenticatedSession(session.accountId(), session.id());
+        return authenticate(tokenDigest, correlationId, CustomerAccessScope.STANDARD);
+    }
+
+    public AuthenticatedSession authenticate(
+            String tokenDigest, UUID correlationId, CustomerAccessScope accessScope) {
+        var session = loadValid(tokenDigest, correlationId, accessScope);
+        return new AuthenticatedSession(session.accountId(), session.id(), session.activeSanction());
     }
 
     public List<SessionView> list(String tokenDigest) {
@@ -44,7 +49,7 @@ public final class SessionManagementService {
     }
 
     public List<SessionView> list(String tokenDigest, UUID correlationId) {
-        var current = loadValid(tokenDigest, correlationId);
+        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.STANDARD);
         return queries.findActiveByAccountId(current.accountId(), clock.instant()).stream()
                 .map(session -> new SessionView(
                         session.sessionId(),
@@ -57,7 +62,7 @@ public final class SessionManagementService {
     }
 
     public void revokeCurrent(String tokenDigest, UUID correlationId) {
-        var current = loadValid(tokenDigest, correlationId);
+        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
         revoke(current, current.id(), "LOGOUT", correlationId);
     }
 
@@ -65,7 +70,7 @@ public final class SessionManagementService {
         if (tokenIssuer == null || sessionLifetime.isZero() || sessionLifetime.isNegative()) {
             throw new IllegalStateException("Session rotation is not configured");
         }
-        var current = loadValid(tokenDigest, correlationId);
+        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.STANDARD);
         var replacement = tokenIssuer.issue();
         var now = clock.instant();
         var expiresAt = now.plus(sessionLifetime);
@@ -88,7 +93,7 @@ public final class SessionManagementService {
 
     public void revokeOther(String tokenDigest, UUID targetSessionId, UUID correlationId) {
         Objects.requireNonNull(targetSessionId, "targetSessionId");
-        var current = loadValid(tokenDigest, correlationId);
+        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
         if (current.id().equals(targetSessionId)) {
             commands.recordEvent(
                     current.accountId(), current.loginIdentityId(), current.id(),
@@ -99,7 +104,7 @@ public final class SessionManagementService {
     }
 
     public int revokeAll(String tokenDigest, UUID correlationId) {
-        var current = loadValid(tokenDigest, correlationId);
+        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
         return commands.revokeAll(
                 current.accountId(), "LOGOUT_ALL", Objects.requireNonNull(correlationId, "correlationId"), clock.instant());
     }
@@ -124,7 +129,8 @@ public final class SessionManagementService {
         }
     }
 
-    private StoredSession loadValid(String tokenDigest, UUID correlationId) {
+    private StoredSession loadValid(
+            String tokenDigest, UUID correlationId, CustomerAccessScope accessScope) {
         if (tokenDigest == null || tokenDigest.isBlank()) {
             throw new AuthenticationRejectedException("A session token is required");
         }
@@ -143,13 +149,25 @@ public final class SessionManagementService {
                     now);
             throw new AuthenticationRejectedException("Session is not valid");
         }
+        Objects.requireNonNull(accessScope, "accessScope");
+        if (session.activeSanction() && !accessScope.allowedDuringSanction()) {
+            commands.recordEvent(
+                    session.accountId(),
+                    session.loginIdentityId(),
+                    session.id(),
+                    "SESSION_REJECTED",
+                    "ACTIVE_ACCOUNT_SANCTION",
+                    Objects.requireNonNull(correlationId, "correlationId"),
+                    now);
+            throw new SanctionedAccountAccessException();
+        }
         commands.touch(session.accountId(), session.id(), now);
         commands.recordEvent(
                 session.accountId(),
                 session.loginIdentityId(),
                 session.id(),
-                "SESSION_VALIDATED",
-                null,
+                session.activeSanction() ? "SANCTION_RESTRICTED_ACCESS_VALIDATED" : "SESSION_VALIDATED",
+                session.activeSanction() ? accessScope.name() : null,
                 Objects.requireNonNull(correlationId, "correlationId"),
                 now);
         return session;

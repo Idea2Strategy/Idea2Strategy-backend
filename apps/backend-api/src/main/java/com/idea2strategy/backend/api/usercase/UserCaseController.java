@@ -1,6 +1,8 @@
 package com.idea2strategy.backend.api.usercase;
 
-import com.idea2strategy.backend.application.common.CurrentPrincipal;
+import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
+import com.idea2strategy.backend.application.identity.CustomerAccessScope;
+import com.idea2strategy.backend.application.identity.SanctionedAccountAccessException;
 import com.idea2strategy.backend.application.usercase.UserCaseCommand;
 import com.idea2strategy.backend.application.usercase.UserCaseEvidenceReference;
 import com.idea2strategy.backend.application.usercase.UserCaseService;
@@ -31,9 +33,9 @@ import org.springframework.web.bind.annotation.RestController;
 @ConditionalOnBean(UserCaseService.class)
 public class UserCaseController {
     private final UserCaseService cases;
-    private final CurrentPrincipal principal;
+    private final CustomerAccessPrincipal principal;
 
-    public UserCaseController(UserCaseService cases, CurrentPrincipal principal) {
+    public UserCaseController(UserCaseService cases, CustomerAccessPrincipal principal) {
         this.cases = Objects.requireNonNull(cases, "cases");
         this.principal = Objects.requireNonNull(principal, "principal");
     }
@@ -47,7 +49,9 @@ public class UserCaseController {
         UUID correlation = correlation(correlationId);
         List<UserCaseEvidenceReference> evidence = references(request.evidence());
         return cases.submit(new UserCaseCommand(
-                principal.accountId(), request.type(), request.subject(), request.description(), evidence,
+                principal.accountId(request.type() == UserCaseType.APPEAL
+                        ? CustomerAccessScope.APPEAL : CustomerAccessScope.STANDARD),
+                request.type(), request.subject(), request.description(), evidence,
                 idempotencyKey,
                 hash("SUBMIT", request.type().name(), request.subject(), request.description(), evidence),
                 correlation));
@@ -61,14 +65,21 @@ public class UserCaseController {
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         List<UserCaseEvidenceReference> evidence = references(request.evidence());
         return cases.supplement(new UserCaseSupplementCommand(
-                principal.accountId(), caseId, request.expectedVersion(), evidence, idempotencyKey,
+                principal.accountId(CustomerAccessScope.STANDARD), caseId,
+                request.expectedVersion(), evidence, idempotencyKey,
                 hash("ADD_EVIDENCE", caseId.toString(), Long.toString(request.expectedVersion()), evidence),
                 correlation(correlationId)));
     }
 
     @GetMapping("/{caseId}")
     public UserCaseView detail(@PathVariable UUID caseId) {
-        return cases.detail(principal.accountId(), caseId);
+        UserCaseView view = cases.detail(principal.accountId(CustomerAccessScope.APPEAL), caseId);
+        if (principal.activeSanction() && view.type() != UserCaseType.APPEAL) {
+            // Re-enter the central standard-access gate so the denial is audited consistently.
+            principal.accountId(CustomerAccessScope.STANDARD);
+            throw new SanctionedAccountAccessException();
+        }
+        return view;
     }
 
     private static List<UserCaseEvidenceReference> references(List<EvidenceRequest> evidence) {

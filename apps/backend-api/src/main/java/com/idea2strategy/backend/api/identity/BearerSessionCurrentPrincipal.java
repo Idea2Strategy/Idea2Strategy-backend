@@ -1,21 +1,22 @@
 package com.idea2strategy.backend.api.identity;
 
-import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
 import com.idea2strategy.backend.application.identity.AuthenticatedSession;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
+import com.idea2strategy.backend.application.identity.CustomerAccessScope;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Objects;
 import java.util.UUID;
 
 /** Resolves the current application principal from the backend-owned opaque session token. */
-public class BearerSessionCurrentPrincipal implements CurrentSessionPrincipal {
+public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final HttpServletRequest request;
     private final SessionManagementService sessions;
     private final HmacSessionTokens tokens;
     private AuthenticatedSession resolved;
+    private CustomerAccessScope resolvedScope;
 
     public BearerSessionCurrentPrincipal(
             HttpServletRequest request,
@@ -28,16 +29,26 @@ public class BearerSessionCurrentPrincipal implements CurrentSessionPrincipal {
 
     @Override
     public UUID accountId() {
-        return resolve().accountId();
+        return accountId(CustomerAccessScope.STANDARD);
+    }
+
+    @Override
+    public UUID accountId(CustomerAccessScope accessScope) {
+        return resolve(accessScope).accountId();
     }
 
     @Override
     public UUID sessionId() {
-        return resolve().sessionId();
+        return resolve(CustomerAccessScope.STANDARD).sessionId();
     }
 
-    private AuthenticatedSession resolve() {
-        if (resolved != null) return resolved;
+    @Override
+    public boolean activeSanction() {
+        return resolved != null && resolved.activeSanction();
+    }
+
+    private AuthenticatedSession resolve(CustomerAccessScope accessScope) {
+        if (resolved != null && resolvedScope == accessScope) return resolved;
         String authorization = request.getHeader("Authorization");
         if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
             throw new AuthenticationRejectedException("A bearer session token is required");
@@ -46,7 +57,8 @@ public class BearerSessionCurrentPrincipal implements CurrentSessionPrincipal {
         if (raw.isEmpty()) {
             throw new AuthenticationRejectedException("A bearer session token is required");
         }
-        resolved = sessions.authenticate(tokens.digest(raw), correlation());
+        resolved = sessions.authenticate(tokens.digest(raw), correlation(), accessScope);
+        resolvedScope = accessScope;
         return resolved;
     }
 

@@ -402,6 +402,25 @@ public class IdentityJpaCommandAdapter
         }
         createSession(session);
         recordLoginSuccess(success);
+        Number activeSanctions = (Number) entityManager.createNativeQuery("""
+                        select count(*) from identity.account_sanctions
+                        where account_id = :accountId
+                          and status = cast('ACTIVE' as identity.sanction_status)
+                          and sanction_type in ('SUSPENSION', 'PERMANENT')
+                        """)
+                .setParameter("accountId", session.accountId())
+                .getSingleResult();
+        if (activeSanctions.longValue() > 0) {
+            insertAuthenticationEvent(
+                    success.accountId(),
+                    "SANCTIONED_LOGIN_SUCCEEDED",
+                    success.loginIdentityId(),
+                    "USER",
+                    "ACTIVE_ACCOUNT_SANCTION",
+                    success.correlationId(),
+                    "sanctioned-login-success:" + success.correlationId(),
+                    utc(success.occurredAt()));
+        }
     }
 
     @Override

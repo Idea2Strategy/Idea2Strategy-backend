@@ -262,6 +262,32 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(status().isUnauthorized());
 
         String appealSession = login(mvc, email, PASSWORD, accountId);
+        assertThat(count("""
+                select count(*) from identity.authentication_events
+                where account_id = ? and event_type = 'SANCTIONED_LOGIN_SUCCEEDED'
+                  and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
+                """, accountId)).isOne();
+        mvc.perform(get("/api/v1/auth/sessions")
+                        .header("Authorization", "Bearer " + appealSession)
+                        .header("X-Correlation-Id", CORRELATION))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SANCTION_ACTIVE"))
+                .andExpect(jsonPath("$.appeal_available").value(true));
+        mvc.perform(post("/api/v1/cases")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer " + appealSession)
+                        .header("Idempotency-Key", "a22f-non-appeal")
+                        .content("""
+                                {"type":"INQUIRY","subject":"Unrelated access",
+                                 "description":"This is outside the sanction allowlist.","evidence":[]}
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCOUNT_SANCTION_ACTIVE"));
+        assertThat(count("""
+                select count(*) from identity.authentication_events
+                where account_id = ? and event_type = 'SESSION_REJECTED'
+                  and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
+                """, accountId)).isGreaterThanOrEqualTo(2);
         String appealBody = """
                 {"type":"APPEAL","subject":"Appeal the suspension",
                  "description":"The sanction was applied to the wrong account.","evidence":[]}
@@ -275,6 +301,10 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         UUID caseId = UUID.fromString(json.readTree(appeal).get("id").asText());
+        mvc.perform(get("/api/v1/cases/{caseId}", caseId)
+                        .header("Authorization", "Bearer " + appealSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.type").value("APPEAL"));
 
         String queue = mvc.perform(get("/api/v1/operations/cases")
                         .param("type", "APPEAL")

@@ -218,7 +218,15 @@ public class IdentityJooqQueryAdapter
                         field(name("session", "issued_at"), Instant.class),
                         field(name("session", "last_seen_at"), Instant.class),
                         field(name("session", "expires_at"), Instant.class),
-                        field(name("session", "revoked_at"), Instant.class))
+                        field(name("session", "revoked_at"), Instant.class),
+                        field("""
+                                exists (
+                                    select 1 from identity.account_sanctions sanction
+                                    where sanction.account_id = account.id
+                                      and sanction.status = 'ACTIVE'
+                                      and sanction.sanction_type in ('SUSPENSION', 'PERMANENT')
+                                )
+                                """, Boolean.class))
                 .from(sessions)
                 .join(accounts).on(field(name("account", "id"), UUID.class)
                         .eq(field(name("session", "account_id"), UUID.class)))
@@ -243,7 +251,8 @@ public class IdentityJooqQueryAdapter
                         record.value11(),
                         record.value12(),
                         record.value13(),
-                        record.value14()));
+                        record.value14(),
+                        Boolean.TRUE.equals(record.value15())));
     }
 
     @Override
