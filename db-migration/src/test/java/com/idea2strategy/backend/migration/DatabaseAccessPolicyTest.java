@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class DatabaseAccessPolicyTest {
@@ -25,8 +26,27 @@ class DatabaseAccessPolicyTest {
         assertEquals(MigrationOwner.TRADING, ownership.ownerOf("trading", "orders"));
         assertEquals(MigrationOwner.BACKTEST, ownership.ownerOf("backtest", "runs"));
         assertEquals(MigrationOwner.PIPELINE, ownership.ownerOf("market_data", "dataset_manifests"));
-        assertEquals(MigrationOwner.SHARED, ownership.ownerOf("storage", "objects"));
+        assertEquals(MigrationOwner.PIPELINE, ownership.ownerOf("storage", "objects"));
         assertTrue(ownership.tables().size() > 100);
+    }
+
+    @Test
+    void generatesNoLoginRuntimeRolesAndExactTablePrivilegesFromThePolicy() throws Exception {
+        String baseline;
+        try (var input = getClass().getClassLoader().getResourceAsStream("db/migration/V1__initial_schema.sql")) {
+            baseline = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(baseline));
+
+        assertTrue(sql.contains("CREATE ROLE idea2strategy_backend NOLOGIN"));
+        assertTrue(sql.contains("ALTER ROLE idea2strategy_pipeline NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"));
+        assertTrue(sql.contains("application group role idea2strategy_pipeline must not own database objects"));
+        assertTrue(sql.contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
+        assertTrue(sql.contains("GRANT SELECT, INSERT ON TABLE \"storage\".\"objects\" TO idea2strategy_pipeline"));
+        assertFalse(sql.contains("GRANT DELETE ON TABLE \"market_data\".\"dataset_manifests\" TO idea2strategy_pipeline"));
+        assertFalse(sql.contains("GRANT INSERT ON TABLE \"backtest\".\"runs\" TO idea2strategy_pipeline"));
+        assertFalse(sql.contains("GRANT CREATE ON SCHEMA"));
     }
 
     @Test
