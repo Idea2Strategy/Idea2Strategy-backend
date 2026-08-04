@@ -1,0 +1,16 @@
+.git
+.github
+.gradle
+.harness/local
+.idea
+.vscode
+**/build
+**/.classpath
+**/.project
+**/.settings
+*.iml
+*.log
+.env
+.env.*
+docs
+

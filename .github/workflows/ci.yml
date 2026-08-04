@@ -28,3 +28,7 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew test --no-daemon
+      - name: Verify container contracts
+        run: |
+          chmod +x scripts/test-container-contracts.sh
+          ./scripts/test-container-contracts.sh
