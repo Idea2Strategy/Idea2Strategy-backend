@@ -650,8 +650,10 @@ class AccountClosurePersistenceIntegrationTest {
         UUID feeId = UUID.randomUUID();
         UUID bufferId = UUID.randomUUID();
         UUID runId = UUID.randomUUID();
+        UUID messageId = UUID.randomUUID();
         UUID periodId = UUID.randomUUID();
         String suffix = UUID.randomUUID().toString();
+        String executionPolicyVersion = "retention-policy-" + suffix;
         jdbc.update("""
                 insert into competition.rooms
                     (id, competition_type, organizer_type, creator_account_id, name, access_type, status)
@@ -677,15 +679,26 @@ class AccountClosurePersistenceIntegrationTest {
                 """, bufferId, suffix, "buffer-" + suffix, REQUESTED.atOffset(ZoneOffset.UTC),
                 REQUESTED.atOffset(ZoneOffset.UTC));
         jdbc.update("""
+                insert into backtest.execution_policy_versions
+                    (version, policy_artifact_hash, policy_document, locked_at)
+                values (?, ?, '{}'::jsonb, ?)
+                """, executionPolicyVersion, "policy-" + suffix,
+                REQUESTED.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
                 insert into backtest.runs
-                    (id, bot_id, owner_account_id, configuration_hash, status,
+                    (id, lane, message_id, bot_id, owner_account_id, configuration_hash,
+                     canonical_payload_hash, aggregate_sequence, status,
                      evaluation_start, evaluation_end, initial_cash_amount, market_rules_version,
-                     accounting_rules_version, precision_rules_version, fee_policy_id,
-                     slippage_rate_bps, buying_power_buffer_policy_id, idempotency_key, queued_at)
-                values (?, ?, ?, ?, 'QUEUED', '2026-01-01', '2026-01-31', 100000,
-                        '1', '1', '1', ?, 5, ?, ?, ?)
-                """, runId, botId, accountId, "configuration-" + suffix, feeId, bufferId,
-                "retention-run-" + suffix, REQUESTED.atOffset(ZoneOffset.UTC));
+                     accounting_rules_version, execution_policy_version, precision_rules_version,
+                     fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id,
+                     idempotency_scope, idempotency_key, queued_at)
+                values (?, 'COMPETITION', ?, ?, ?, ?, ?, 1, 'QUEUED',
+                        '2026-01-01', '2026-01-31', 100000,
+                        '1', '1', ?, '1', ?, 5, ?, ?, ?, ?)
+                """, runId, messageId, botId, accountId, "configuration-" + suffix,
+                "payload-" + suffix, executionPolicyVersion, feeId, bufferId,
+                participationId.toString(), "retention-run-" + suffix,
+                REQUESTED.atOffset(ZoneOffset.UTC));
         jdbc.update("""
                 insert into competition.backtest_evaluation_plans
                     (room_id, plan_version, period_count, plan_hash, commitment_hash,

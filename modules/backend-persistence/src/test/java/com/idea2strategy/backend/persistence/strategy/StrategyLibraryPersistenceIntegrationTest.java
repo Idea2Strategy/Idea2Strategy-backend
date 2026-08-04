@@ -37,6 +37,7 @@ class StrategyLibraryPersistenceIntegrationTest {
     private static final UUID CATALOG_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final UUID FEE_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID BUFFER_ID = UUID.fromString("71000000-0000-4000-8000-000000000001");
+    private static final String EXECUTION_POLICY_VERSION = "library-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-01T12:00:00Z");
 
     @Container
@@ -59,6 +60,7 @@ class StrategyLibraryPersistenceIntegrationTest {
     @BeforeEach
     void seedLibrary() {
         jdbc.update("delete from backtest.runs");
+        jdbc.update("delete from backtest.execution_policy_versions where version = ?", EXECUTION_POLICY_VERSION);
         jdbc.update("delete from strategy.validation_runs");
         jdbc.update("delete from strategy.package_versions");
         jdbc.update("delete from strategy.packages");
@@ -99,8 +101,12 @@ class StrategyLibraryPersistenceIntegrationTest {
                 "insert into trading.buying_power_buffer_policy_versions (id, policy_code, version, buffer_bps, rounding_rules_version, rules_hash, effective_from, published_at) values (?, 'DEFAULT', '1', 100, '1', ?, ?, ?)",
                 BUFFER_ID, "d".repeat(64), now.minusDays(1), now.minusDays(1));
         jdbc.update(
-                "insert into backtest.runs (id, bot_id, owner_account_id, configuration_hash, status, evaluation_start, evaluation_end, initial_cash_amount, market_rules_version, accounting_rules_version, precision_rules_version, fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, idempotency_key, queued_at, completed_at, result_hash) values (?, ?, ?, ?, 'COMPLETED', '2026-01-01', '2026-06-30', 100000, '1', '1', '1', ?, 5, ?, ?, ?, ?, ?)",
-                UUID.randomUUID(), BOT_ID, OWNER_ID, "e".repeat(64), FEE_ID, BUFFER_ID,
+                "insert into backtest.execution_policy_versions (version, policy_artifact_hash, policy_document, locked_at) values (?, ?, '{}'::jsonb, ?)",
+                EXECUTION_POLICY_VERSION, "9".repeat(64), now.minusDays(1));
+        jdbc.update(
+                "insert into backtest.runs (id, lane, message_id, bot_id, owner_account_id, configuration_hash, canonical_payload_hash, aggregate_sequence, status, evaluation_start, evaluation_end, initial_cash_amount, market_rules_version, accounting_rules_version, execution_policy_version, precision_rules_version, fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, idempotency_scope, idempotency_key, queued_at, completed_at, result_hash) values (?, 'BASIC', ?, ?, ?, ?, ?, 1, 'COMPLETED', '2026-01-01', '2026-06-30', 100000, '1', '1', ?, '1', ?, 5, ?, ?, ?, ?, ?, ?)",
+                UUID.randomUUID(), UUID.randomUUID(), BOT_ID, OWNER_ID, "e".repeat(64), "8".repeat(64),
+                EXECUTION_POLICY_VERSION, FEE_ID, BUFFER_ID, BOT_ID.toString(),
                 "library-test", now.minusSeconds(19), now.minusSeconds(18), "f".repeat(64));
         jdbc.update(
                 "insert into strategy.packages (id, code, status, created_at) values (?, 'MOMENTUM', 'ACTIVE', ?)",
