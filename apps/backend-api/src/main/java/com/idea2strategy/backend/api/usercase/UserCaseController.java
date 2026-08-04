@@ -30,7 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/cases")
-@ConditionalOnBean(UserCaseService.class)
+@ConditionalOnBean({UserCaseService.class, CustomerAccessPrincipal.class})
 public class UserCaseController {
     private final UserCaseService cases;
     private final CustomerAccessPrincipal principal;
