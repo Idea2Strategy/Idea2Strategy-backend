@@ -104,7 +104,8 @@ public final class StrategyBotContractFixtures {
                         "RUN|2026-08-03T13:30:00Z"),
                 BOT_ID,
                 SNAPSHOT_HASH,
-                "2026-08-03T13:30:00Z");
+                "2026-08-03T13:30:00Z",
+                null);
         var stopCommand = new BotStopCommand(
                 metadata(
                         "BOT_STOP_COMMAND",
@@ -130,6 +131,29 @@ public final class StrategyBotContractFixtures {
                 "STRATEGY_RELEASE");
 
         return new FixtureSet(compiledPlan, runCommand, stopCommand, officialBacktestRequest);
+    }
+
+    /**
+     * The run command for a bot a room schedule bounds, which carries both ends of its window.
+     *
+     * <p>Separate from {@link #standard()} rather than replacing its run command, because a personal
+     * bot genuinely has no end to publish: its window closes when its owner stops it. Both shapes are
+     * on the wire, so both are pinned.
+     */
+    public static BotRunCommand roomRunCommand() {
+        String eligibleFrom = "2026-08-03T13:30:00Z";
+        String eligibleUntil = "2026-08-10T20:00:00Z";
+        return new BotRunCommand(
+                metadata(
+                        "BOT_RUN_COMMAND",
+                        "00000000-0000-4000-8000-000000000213",
+                        BOT_ID,
+                        SNAPSHOT_HASH,
+                        "RUN|" + eligibleFrom + ".." + eligibleUntil),
+                BOT_ID,
+                SNAPSHOT_HASH,
+                eligibleFrom,
+                eligibleUntil);
     }
 
     public static String calculatePlanChecksum(BasicCompiledPlan plan) {
@@ -433,12 +457,24 @@ public final class StrategyBotContractFixtures {
             MessageMetadata metadata,
             String botId,
             String expectedSnapshotHash,
-            String executionEligibleFrom) {
+            String executionEligibleFrom,
+            /**
+             * The room schedule's evaluation end, absent for a bot no schedule bounds.
+             *
+             * <p>C93: the evaluation runtime stops deciding at this boundary rather than when the stop
+             * command happens to be delivered, so a room's window is followed rather than hoped for.
+             */
+            String executionEligibleUntil) {
         public BotRunCommand {
             Objects.requireNonNull(metadata);
             requireText(botId, "botId");
             requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
             requireText(executionEligibleFrom, "executionEligibleFrom");
+            if (executionEligibleUntil != null
+                    && executionEligibleUntil.compareTo(executionEligibleFrom) <= 0) {
+                throw new IllegalArgumentException(
+                        "an evaluation window that ends before it opens can never evaluate anything");
+            }
         }
     }
 

@@ -123,6 +123,10 @@ class BotRunCommandPersistenceIntegrationTest {
         assertThat(transported.botId()).isEqualTo(WAITING_BOT_ID.toString());
         assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_B);
         assertThat(transported.executionEligibleFrom()).isEqualTo(ROOM_START.toString());
+        // C93: the room's evaluation end travels with the command that opens the window, so the
+        // evaluation runtime stops deciding at the boundary rather than when the stop is delivered.
+        assertThat(transported.executionEligibleUntil())
+                .isEqualTo(ROOM_START.plusSeconds(86_400).toString());
         assertThat(jdbc.queryForObject(
                         "select event_schema_version from operations.outbox_messages where aggregate_id = ?",
                         String.class,
@@ -165,6 +169,14 @@ class BotRunCommandPersistenceIntegrationTest {
                         Integer.class,
                         WAITING_BOT_ID))
                 .isZero();
+        // A personal bot publishes no end: nothing schedules it, and its window closes on its owner's
+        // stop. Publishing one anyway would have the runtime stop a bot nobody asked to stop.
+        assertThat(jdbc.queryForObject(
+                        "select payload_document ->> 'executionEligibleUntil' "
+                                + "from operations.outbox_messages where aggregate_id = ?",
+                        String.class,
+                        PERSONAL_BOT_ID))
+                .isNull();
         assertThat(adapter.issueOwned(PERSONAL_BOT_ID, UUID.randomUUID(), NOW)).isEmpty();
     }
 
