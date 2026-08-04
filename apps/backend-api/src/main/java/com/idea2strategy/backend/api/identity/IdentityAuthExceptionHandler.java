@@ -7,6 +7,7 @@ import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.PasswordPolicyException;
 import com.idea2strategy.backend.application.identity.PasswordResetRejectedException;
 import com.idea2strategy.backend.application.identity.PolicyDecisionRejectedException;
+import com.idea2strategy.backend.application.identity.SanctionedAccountAccessException;
 import com.idea2strategy.backend.application.identity.VerificationRejectedException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -56,6 +57,13 @@ public class IdentityAuthExceptionHandler {
     @ExceptionHandler(AuthenticationRejectedException.class)
     ResponseEntity<Map<String, String>> authentication(AuthenticationRejectedException exception) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("code", "AUTHENTICATION_REJECTED"));
+    }
+
+    @ExceptionHandler(SanctionedAccountAccessException.class)
+    ResponseEntity<Map<String, Object>> activeSanction(SanctionedAccountAccessException exception) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                "code", "ACCOUNT_SANCTION_ACTIVE",
+                "appeal_available", true));
     }
 
     @ExceptionHandler({PasswordPolicyException.class, PasswordResetRejectedException.class, VerificationRejectedException.class, IllegalArgumentException.class})

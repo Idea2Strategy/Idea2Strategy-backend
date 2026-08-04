@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.idea2strategy.backend.application.identity.AuthenticatedSession;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
+import com.idea2strategy.backend.application.identity.CustomerAccessScope;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
@@ -25,14 +26,30 @@ class BearerSessionCurrentPrincipalTest {
         HmacSessionTokens tokens = new HmacSessionTokens(new byte[32]);
         when(request.getHeader("Authorization")).thenReturn("Bearer session-secret");
         when(request.getHeader("X-Correlation-Id")).thenReturn(CORRELATION.toString());
-        when(sessions.authenticate(tokens.digest("session-secret"), CORRELATION))
+        when(sessions.authenticate(tokens.digest("session-secret"), CORRELATION, CustomerAccessScope.STANDARD))
                 .thenReturn(new AuthenticatedSession(ACCOUNT, SESSION));
 
         var principal = new BearerSessionCurrentPrincipal(request, sessions, tokens);
 
         assertThat(principal.accountId()).isEqualTo(ACCOUNT);
         assertThat(principal.sessionId()).isEqualTo(SESSION);
-        verify(sessions).authenticate(tokens.digest("session-secret"), CORRELATION);
+        verify(sessions).authenticate(tokens.digest("session-secret"), CORRELATION, CustomerAccessScope.STANDARD);
+    }
+
+    @Test
+    void passesAnExplicitAppealScopeToTheSingleSessionGate() {
+        HttpServletRequest request = mock(HttpServletRequest.class);
+        SessionManagementService sessions = mock(SessionManagementService.class);
+        HmacSessionTokens tokens = new HmacSessionTokens(new byte[32]);
+        when(request.getHeader("Authorization")).thenReturn("Bearer session-secret");
+        when(request.getHeader("X-Correlation-Id")).thenReturn(CORRELATION.toString());
+        when(sessions.authenticate(tokens.digest("session-secret"), CORRELATION, CustomerAccessScope.APPEAL))
+                .thenReturn(new AuthenticatedSession(ACCOUNT, SESSION));
+
+        var principal = new BearerSessionCurrentPrincipal(request, sessions, tokens);
+
+        assertThat(principal.accountId(CustomerAccessScope.APPEAL)).isEqualTo(ACCOUNT);
+        verify(sessions).authenticate(tokens.digest("session-secret"), CORRELATION, CustomerAccessScope.APPEAL);
     }
 
     @Test

@@ -1,12 +1,16 @@
 package com.idea2strategy.backend.api.usercase;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.idea2strategy.backend.application.usercase.UserCaseCommand;
+import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
+import com.idea2strategy.backend.application.identity.CustomerAccessScope;
+import com.idea2strategy.backend.application.identity.SanctionedAccountAccessException;
 import com.idea2strategy.backend.application.usercase.UserCaseService;
 import com.idea2strategy.backend.application.usercase.UserCaseStatus;
 import com.idea2strategy.backend.application.usercase.UserCaseStore;
@@ -61,15 +65,43 @@ class UserCaseControllerTest {
                 .andExpect(jsonPath("$.title").value("RESOURCE_NOT_AVAILABLE"));
     }
 
+    @Test
+    void sanctionedPrincipalCannotUseAppealDetailScopeToReadAnotherCaseType() {
+        var store = new RecordingStore();
+        store.found = Optional.of(store.view());
+        var service = new UserCaseService(store, Clock.fixed(NOW, ZoneOffset.UTC));
+        CustomerAccessPrincipal principal = new CustomerAccessPrincipal() {
+            @Override public UUID accountId() { return accountId(CustomerAccessScope.STANDARD); }
+            @Override public UUID accountId(CustomerAccessScope accessScope) {
+                if (accessScope == CustomerAccessScope.STANDARD) {
+                    throw new SanctionedAccountAccessException();
+                }
+                return ACCOUNT;
+            }
+            @Override public UUID sessionId() { return id(9); }
+            @Override public boolean activeSanction() { return true; }
+        };
+
+        assertThatThrownBy(() -> new UserCaseController(service, principal).detail(CASE))
+                .isInstanceOf(SanctionedAccountAccessException.class);
+    }
+
     private static MockMvc mvc(RecordingStore store) {
         var service = new UserCaseService(store, Clock.fixed(NOW, ZoneOffset.UTC));
-        return MockMvcBuilders.standaloneSetup(new UserCaseController(service, () -> ACCOUNT))
+        CustomerAccessPrincipal principal = new CustomerAccessPrincipal() {
+            @Override public UUID accountId() { return ACCOUNT; }
+            @Override public UUID accountId(CustomerAccessScope accessScope) { return ACCOUNT; }
+            @Override public UUID sessionId() { return id(9); }
+            @Override public boolean activeSanction() { return false; }
+        };
+        return MockMvcBuilders.standaloneSetup(new UserCaseController(service, principal))
                 .setControllerAdvice(new UserCaseExceptionHandler())
                 .build();
     }
 
     private static final class RecordingStore implements UserCaseStore {
         private UserCaseCommand submitted;
+        private Optional<UserCaseView> found = Optional.empty();
 
         @Override
         public CommandResult submit(UserCaseCommand command, Instant now) {
@@ -84,7 +116,7 @@ class UserCaseControllerTest {
 
         @Override
         public Optional<UserCaseView> findOwned(UUID accountId, UUID caseId) {
-            return Optional.empty();
+            return found;
         }
 
         private UserCaseView view() {

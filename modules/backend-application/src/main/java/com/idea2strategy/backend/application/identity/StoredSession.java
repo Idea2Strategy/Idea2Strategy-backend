@@ -17,4 +17,5 @@ public record StoredSession(
         Instant issuedAt,
         Instant lastSeenAt,
         Instant expiresAt,
-        Instant revokedAt) {}
+        Instant revokedAt,
+        boolean activeSanction) {}
