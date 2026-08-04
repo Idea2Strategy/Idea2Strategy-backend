@@ -59,16 +59,28 @@ import java.util.regex.Pattern;
  *       delay every bot's first decision by a bar and would disagree with the pinned contract sample.
  * </ul>
  *
- * <p>The contract carries one step sequence and one side for the whole plan, and both consumers
- * implement it that way — D's backtest runtime and C's plan interpreter each apply the single
- * {@code steps} list to every flow. A strategy whose groups disagree on their container or their
- * blocks therefore cannot be expressed, so it is refused here rather than flattened into a plan that
- * would trade the wrong side. Per-flow steps need a contract version agreed with C and D.
+ * <p><strong>One container per trade side.</strong> A Basic strategy is a buy container and a sell
+ * container, and the blocks inside a container are an AND chain, so each flow carries its own
+ * {@code side}, {@code allocation} and {@code steps}. Version 1 of the contract put them on the plan
+ * and could therefore describe only one container, which is why that ordinary strategy used to be
+ * refused at release (root #202).
  */
 public final class StrategyBotCompiledPlanAssembler {
 
     public static final String CONTRACT_VERSION = "strategy-bot.v1";
-    public static final String PLAN_SCHEMA_VERSION = "basic-compiled-plan.v1";
+    /**
+     * The shape this assembler publishes.
+     *
+     * <p>Version 2, always. A Basic strategy is one container per trade side and each container is
+     * its own AND chain of blocks, so {@code side}, {@code allocation} and {@code steps} belong to
+     * the flow. Version 1 put them on the plan and could therefore describe only one container,
+     * which is why a strategy with a buy rule and a sell rule was refused at release (root #202).
+     *
+     * <p>A single-container strategy is published as version 2 too. One live shape for everything
+     * newly released is worth more than saving a few bytes: version 1 survives only because plans
+     * already published exist in it, and both consumers still read it.
+     */
+    public static final String PLAN_SCHEMA_VERSION = "basic-compiled-plan.v2";
 
     /**
      * The supported universe is a query over listing and symbol effectivity observed on one market
@@ -119,7 +131,7 @@ public final class StrategyBotCompiledPlanAssembler {
         Map<String, StrategyFeatureDefinition> features = new HashMap<>();
         catalog.features().forEach(feature -> features.put(feature.featureCode(), feature));
 
-        List<PlanStep> steps = sharedSteps(planRoot, elements);
+        Map<String, List<PlanStep>> containers = containersByKey(planRoot, elements);
         List<RequiredFeature> requiredFeatures = requiredFeatures(planRoot, elements, features);
 
         ObjectNode root = objectMapper.createObjectNode();
@@ -162,57 +174,68 @@ public final class StrategyBotCompiledPlanAssembler {
                     node.put("key", flow.name());
                     ArrayNode instruments = node.putArray("officialInstrumentIds");
                     flow.instrumentIds().stream().map(UUID::toString).sorted().forEach(instruments::add);
+                    List<PlanStep> container = containers.get(flow.name());
+                    if (container == null) {
+                        throw new IllegalStateException(
+                                "released flow " + flow.name() + " has no compiled container: the "
+                                        + "release and the compiled plan disagree about which flows exist");
+                    }
+                    appendSteps(node.putArray("steps"), container);
                 });
 
-        ArrayNode stepNodes = root.putArray("steps");
-        steps.forEach(step -> {
-            ObjectNode node = stepNodes.addObject();
-            node.put("sequence", step.sequence());
-            node.put("operation", step.operation());
-            ObjectNode arguments = node.putObject("arguments");
-            step.arguments().forEach(arguments::put);
-        });
-
-        String checksum = checksum(root, requiredFeatures, steps);
+        String checksum = checksum(root, requiredFeatures);
         root.put("planChecksum", checksum);
         return new ContractPlan(CONTRACT_VERSION, PLAN_SCHEMA_VERSION, checksum, canonical(root));
     }
 
     /**
-     * The step sequence every flow shares.
+     * Each container's own step sequence, keyed by the flow key it belongs to.
      *
-     * <p>Each group is translated independently and the results must agree, because the contract
-     * publishes one sequence. Comparing the translated steps rather than the source blocks is what
-     * makes the check meaningful: two groups can differ in block ids and still mean the same thing,
-     * and two groups can share block ids yet differ in the container their order side comes from.
+     * <p>One entry per group, because a group <em>is</em> a trade container: a strategy with a buy
+     * rule and a sell rule is two groups whose sequences differ and whose sides differ. Version 1 of
+     * the contract carried one sequence for the whole plan, so that ordinary strategy could not be
+     * published at all and this method used to refuse it (root #202). Nothing is compared across
+     * containers now — a difference between them is the point, not a conflict.
      */
-    private List<PlanStep> sharedSteps(JsonNode planRoot, Map<String, StrategyElementDefinition> elements) {
+    private Map<String, List<PlanStep>> containersByKey(
+            JsonNode planRoot, Map<String, StrategyElementDefinition> elements) {
         JsonNode flows = planRoot.path("flows");
         if (!flows.isArray() || flows.isEmpty()) {
             throw new IllegalStateException("A compiled plan declares no flows");
         }
-        List<PlanStep> shared = null;
+        Map<String, List<PlanStep>> containers = new LinkedHashMap<>();
         for (JsonNode flow : flows) {
+            String key = requiredText(flow, "key");
             List<PlanStep> steps = steps(flow, elements);
             if (steps.isEmpty()) {
-                throw new IllegalStateException("Flow " + flow.path("key").asText() + " declares no steps");
+                throw new IllegalStateException("Flow " + key + " declares no steps");
             }
             if (!TERMINAL_OPERATION.equals(steps.getLast().operation())) {
                 throw new IllegalStateException(
-                        "A compiled plan must end with " + TERMINAL_OPERATION + ", not "
+                        "Container " + key + " must end with " + TERMINAL_OPERATION + ", not "
                                 + steps.getLast().operation());
             }
-            if (shared == null) {
-                shared = steps;
-            } else if (!shared.equals(steps)) {
-                throw new ImmutableStrategyReleaseRejectedException(
-                        "This strategy's groups do not compile to one execution sequence, and the "
-                                + "published contract carries a single sequence for the whole plan. "
-                                + "Release each group as its own strategy until per-group sequences "
-                                + "are agreed with the evaluation and backtest runtimes.");
+            if (steps.size() < 2) {
+                throw new IllegalStateException(
+                        "Container " + key + " states no condition before " + TERMINAL_OPERATION
+                                + ": an unconditional container would trade on every event");
+            }
+            if (containers.put(key, steps) != null) {
+                throw new IllegalStateException("Flow key " + key + " is declared more than once");
             }
         }
-        return shared;
+        return containers;
+    }
+
+    /** One container's steps, written as the contract carries them. */
+    private static void appendSteps(ArrayNode target, List<PlanStep> steps) {
+        steps.forEach(step -> {
+            ObjectNode node = target.addObject();
+            node.put("sequence", step.sequence());
+            node.put("operation", step.operation());
+            ObjectNode arguments = node.putObject("arguments");
+            step.arguments().forEach(arguments::put);
+        });
     }
 
     private List<PlanStep> steps(JsonNode flow, Map<String, StrategyElementDefinition> elements) {
@@ -390,7 +413,7 @@ public final class StrategyBotCompiledPlanAssembler {
      * the serialised document: the consumer recomputes it from the fields it decoded, so anything the
      * two sides disagree about has to be a field, never a formatting choice.
      */
-    private String checksum(ObjectNode root, List<RequiredFeature> features, List<PlanStep> steps) {
+    private String checksum(ObjectNode root, List<RequiredFeature> features) {
         JsonNode snapshot = root.path("executionSnapshot");
         JsonNode version = snapshot.path("immutableStrategyVersion");
         StringBuilder material = new StringBuilder()
@@ -428,12 +451,19 @@ public final class StrategyBotCompiledPlanAssembler {
                 List<String> instruments = new ArrayList<>();
                 flow.path("officialInstrumentIds").forEach(node -> instruments.add(node.asText()));
                 material.append(String.join(",", instruments));
+                // The container's steps, hashed immediately after its own flow line. Both consumers
+                // append them in this position; anywhere else and every plan would fail its checksum
+                // on one side only.
+                flow.path("steps").forEach(step -> {
+                    material.append('\n').append("step=").append(step.path("sequence").asInt())
+                            .append('|').append(step.path("operation").asText());
+                    JsonNode arguments = step.path("arguments");
+                    new TreeSet<>(arguments.propertyStream().map(Map.Entry::getKey).toList())
+                            .forEach(name -> material
+                                    .append('|').append(name).append('=')
+                                    .append(arguments.path(name).asText()));
+                });
             });
-        });
-        steps.forEach(step -> {
-            material.append('\n').append("step=").append(step.sequence()).append('|').append(step.operation());
-            new TreeMap<>(step.arguments()).forEach((name, value) -> material
-                    .append('|').append(name).append('=').append(value));
         });
         return digest(material.toString());
     }

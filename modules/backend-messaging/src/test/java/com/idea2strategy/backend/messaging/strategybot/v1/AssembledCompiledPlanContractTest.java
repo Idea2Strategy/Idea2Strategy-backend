@@ -42,10 +42,15 @@ class AssembledCompiledPlanContractTest {
                 OBJECT_MAPPER.readTree(assembled()), StrategyBotContractFixtures.BasicCompiledPlan.class);
 
         assertThat(plan.contractVersion()).isEqualTo(StrategyBotContractFixtures.CONTRACT_VERSION);
-        assertThat(plan.schemaVersion()).isEqualTo(StrategyBotContractFixtures.COMPILED_PLAN_SCHEMA_VERSION);
+        assertThat(plan.schemaVersion())
+                .isEqualTo(StrategyBotContractFixtures.MULTI_CONTAINER_COMPILED_PLAN_SCHEMA_VERSION);
         assertThat(plan.executionSnapshot().immutableStrategyVersion().snapshotHash())
                 .isEqualTo("sha256:" + HASH_B);
-        assertThat(plan.steps()).hasSize(3);
+        // The chain lives on the container now, and the plan states none of its own.
+        assertThat(plan.steps()).isNull();
+        assertThat(plan.executionSnapshot().partitions().getFirst().flows())
+                .singleElement()
+                .satisfies(flow -> assertThat(flow.steps()).hasSize(3));
         assertThat(plan.requiredFeatures()).singleElement().satisfies(feature -> {
             assertThat(feature.featureId()).isEqualTo(FEATURE_ID.toString());
             assertThat(feature.resolution()).isEqualTo("PT1M");

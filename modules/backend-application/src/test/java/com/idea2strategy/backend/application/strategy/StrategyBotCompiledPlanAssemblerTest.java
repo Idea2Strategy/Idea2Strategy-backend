@@ -38,7 +38,7 @@ class StrategyBotCompiledPlanAssemblerTest {
     void publishesTheElementCatalogRuntimeOperationsRatherThanItsElementCodes() {
         ContractPlan plan = assemble(planWith(buyFlow("buy", List.of(AAPL))));
 
-        JsonNode steps = parse(plan.planDocument()).path("steps");
+        JsonNode steps = stepsOf(plan, 0);
         assertThat(steps).hasSize(3);
         assertThat(steps.get(0).path("operation").asText()).isEqualTo("LOAD_FEATURE");
         assertThat(steps.get(0).path("arguments").path("resolution").asText()).isEqualTo("1m");
@@ -75,16 +75,38 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     /**
-     * The contract publishes one step sequence and one side for the whole plan, and both consumers
-     * apply it to every flow. A buy rule and a sell rule flattened into that shape would trade the
-     * wrong side on one of them, so the release is refused instead.
+     * Root #202: the ordinary Basic strategy — a buy container and a sell container, each with its
+     * own AND chain and its own side. Version 1 had no shape for it, so this used to be refused.
      */
     @Test
-    void refusesAStrategyWhoseGroupsDoNotCompileToOneSequence() {
-        assertThatThrownBy(() -> assemble(planWith(
-                        buyFlow("buy", List.of(AAPL)), sellFlow("sell", List.of(AAPL)))))
-                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
-                .hasMessageContaining("one execution sequence");
+    void publishesOneContainerPerTradeSide() {
+        ContractPlan plan = assemble(planWith(
+                buyFlow("buy", List.of(AAPL)), sellFlow("sell", List.of(AAPL))));
+
+        JsonNode flows = parse(plan.planDocument())
+                .path("executionSnapshot").path("partitions").get(0).path("flows");
+        assertThat(plan.planSchemaVersion()).isEqualTo("basic-compiled-plan.v2");
+        assertThat(flows).hasSize(2);
+        assertThat(sideOf(flows.get(0))).isEqualTo("BUY");
+        assertThat(sideOf(flows.get(1))).isEqualTo("SELL");
+        // Each container keeps its own chain: that is what makes the two sides differ at all.
+        assertThat(flows.get(0).path("steps")).hasSize(3);
+        assertThat(flows.get(1).path("steps")).hasSize(3);
+        assertThat(parse(plan.planDocument()).has("steps"))
+                .as("version 2 states no plan-wide step list")
+                .isFalse();
+    }
+
+    private static String sideOf(JsonNode flow) {
+        JsonNode steps = flow.path("steps");
+        return steps.get(steps.size() - 1).path("arguments").path("side").asText();
+    }
+
+    /** One container's published steps: they live on the flow, which is the container. */
+    private JsonNode stepsOf(ContractPlan plan, int flowIndex) {
+        return parse(plan.planDocument())
+                .path("executionSnapshot").path("partitions").get(0)
+                .path("flows").get(flowIndex).path("steps");
     }
 
     @Test

@@ -24,6 +24,13 @@ public final class StrategyBotContractFixtures {
 
     public static final String CONTRACT_VERSION = "strategy-bot.v1";
     public static final String COMPILED_PLAN_SCHEMA_VERSION = "basic-compiled-plan.v1";
+    /**
+     * The shape a strategy with more than one trade container is published in.
+     *
+     * <p>Root #202: version 1 stated one chain and one side for the whole plan, so a buy container
+     * and a sell container could not both be described. Version 2 moves them onto the flow.
+     */
+    public static final String MULTI_CONTAINER_COMPILED_PLAN_SCHEMA_VERSION = "basic-compiled-plan.v2";
     public static final String EXECUTION_SNAPSHOT_SCHEMA_VERSION = "basic-launch-snapshot.v1";
 
     private static final String BOT_ID = "00000000-0000-4000-8000-000000000201";
@@ -268,13 +275,34 @@ public final class StrategyBotContractFixtures {
         }
     }
 
-    public record Flow(String key, List<String> officialInstrumentIds) {
+    /**
+     * One trade container.
+     *
+     * <p>{@code steps} is this container's own AND chain, present from
+     * {@code basic-compiled-plan.v2}. A version 1 plan stated one chain for the whole plan and
+     * therefore only one side, which is why a strategy with a buy container and a sell container had
+     * no shape to be published in (root #202). It is nullable rather than required so that a plan
+     * published before version 2 still binds.
+     */
+    public record Flow(String key, List<String> officialInstrumentIds, List<PlanStep> steps) {
         public Flow {
             requireText(key, "flow.key");
             officialInstrumentIds = List.copyOf(officialInstrumentIds);
             if (officialInstrumentIds.isEmpty()) {
                 throw new IllegalArgumentException("At least one official instrument is required");
             }
+            if (steps != null) {
+                steps = List.copyOf(steps);
+                if (steps.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "a container that declares steps must declare at least one");
+                }
+            }
+        }
+
+        /** The version 1 shape: the chain lived on the plan, so a flow carried none. */
+        public Flow(String key, List<String> officialInstrumentIds) {
+            this(key, officialInstrumentIds, null);
         }
     }
 
@@ -380,12 +408,25 @@ public final class StrategyBotContractFixtures {
                 result.append('\n')
                         .append("partition=").append(partition.key())
                         .append('|').append("budgetCapBps=").append(partition.budgetCapBps());
-                partition.flows().forEach(flow -> result.append('\n')
-                        .append("flow=").append(flow.key())
-                        .append('|').append("officialInstrumentIds=")
-                        .append(String.join(",", flow.officialInstrumentIds())));
+                partition.flows().forEach(flow -> {
+                    result.append('\n')
+                            .append("flow=").append(flow.key())
+                            .append('|').append("officialInstrumentIds=")
+                            .append(String.join(",", flow.officialInstrumentIds()));
+                    // A container's steps hash immediately after its own flow line, which is where
+                    // both consumers append them. Anywhere else and a version 2 plan would fail its
+                    // checksum on one side only.
+                    if (flow.steps() != null) {
+                        flow.steps().forEach(step -> result.append('\n')
+                                .append("step=").append(step.checksumMaterial()));
+                    }
+                });
             });
-            steps.forEach(step -> result.append('\n').append("step=").append(step.checksumMaterial()));
+            // A version 1 plan's single chain, hashed exactly where it always was.
+            if (steps != null) {
+                steps.forEach(step -> result.append('\n')
+                        .append("step=").append(step.checksumMaterial()));
+            }
             return result.toString();
         }
     }
@@ -428,9 +469,23 @@ public final class StrategyBotContractFixtures {
                 }
             }
             Objects.requireNonNull(executionSnapshot);
-            steps = List.copyOf(steps);
-            if (steps.isEmpty()) {
-                throw new IllegalArgumentException("At least one compiled step is required");
+            // A plan states its chain once for the whole plan (version 1) or once per container
+            // (version 2), and exactly one of the two. Neither is a plan that would trade on every
+            // event; both would leave two disagreeing answers to "what does this container check".
+            boolean planWide = steps != null;
+            if (planWide) {
+                steps = List.copyOf(steps);
+                if (steps.isEmpty()) {
+                    throw new IllegalArgumentException("At least one compiled step is required");
+                }
+            }
+            boolean perContainer = executionSnapshot.partitions().stream()
+                    .flatMap(partition -> partition.flows().stream())
+                    .allMatch(flow -> flow.steps() != null);
+            if (planWide == perContainer) {
+                throw new IllegalArgumentException(
+                        "a compiled plan declares its steps for the plan or for every container, "
+                                + "never both and never neither");
             }
             requireSha256(planChecksum, "planChecksum");
         }
