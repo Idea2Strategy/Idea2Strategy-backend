@@ -74,12 +74,12 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update(
                 "insert into trading.fee_policy_versions "
                         + "(id, policy_code, version, fee_rate_bps, calculation_rules_version, rules_hash, "
-                        + "effective_from, published_at) values (?, 'CUSTOM_TEST', 'v1', 0, 'v1', ?, ?, ?)",
+                        + "effective_from, published_at) values (?, 'CUSTOM_TEST', 'v1', 20, 'v1', ?, ?, ?)",
                 FEE, "b".repeat(64), at.minusDays(1), at.minusDays(1));
         jdbc.update(
                 "insert into trading.buying_power_buffer_policy_versions "
                         + "(id, policy_code, version, buffer_bps, rounding_rules_version, rules_hash, "
-                        + "effective_from, published_at) values (?, 'CUSTOM_TEST', 'v1', 0, 'v1', ?, ?, ?)",
+                        + "effective_from, published_at) values (?, 'CUSTOM_TEST', 'v1', 100, 'v1', ?, ?, ?)",
                 BUFFER, "c".repeat(64), at.minusDays(1), at.minusDays(1));
         jdbc.update(
                 "insert into bot.bots "
@@ -103,7 +103,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "(bot_id, initial_cash_amount, currency_code, broker_rules_version, accounting_rules_version, "
                         + "precision_rules_version, fee_policy_id, slippage_rate_bps, buying_power_buffer_policy_id, "
                         + "candidate_conflict_policy, configuration_hash) "
-                        + "values (?, 100000, 'USD', 'v1', 'v1', 'v1', ?, 0, ?, '{}'::jsonb, ?)",
+                        + "values (?, 100000, 'USD', 'v1', 'v1', 'v1', ?, 5, ?, '{}'::jsonb, ?)",
                 BOT, FEE, BUFFER, "2".repeat(64));
     }
 
