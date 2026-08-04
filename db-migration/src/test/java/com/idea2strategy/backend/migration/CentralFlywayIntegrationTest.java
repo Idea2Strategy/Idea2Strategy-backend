@@ -102,6 +102,20 @@ class CentralFlywayIntegrationTest {
 
             statement.execute("SET ROLE idea2strategy_pipeline");
             statement.execute("SELECT * FROM market_data.dataset_manifests LIMIT 0");
+            statement.execute("SELECT status, disabled_at FROM operations.operator_accounts LIMIT 0");
+            statement.execute("SELECT actor_id, target_id, response_document FROM operations.audit_events LIMIT 0");
+            var operatorWriteDenied = assertThrows(
+                    SQLException.class,
+                    () -> statement.execute("UPDATE operations.operator_accounts SET status = status WHERE false"));
+            assertEquals("42501", operatorWriteDenied.getSQLState());
+            statement.execute("ROLLBACK");
+            statement.execute("SET ROLE idea2strategy_pipeline");
+            var auditWriteDenied = assertThrows(
+                    SQLException.class,
+                    () -> statement.execute("DELETE FROM operations.audit_events WHERE false"));
+            assertEquals("42501", auditWriteDenied.getSQLState());
+            statement.execute("ROLLBACK");
+            statement.execute("SET ROLE idea2strategy_pipeline");
             statement.execute("RESET ROLE");
 
             statement.execute("SET ROLE idea2strategy_backend");
