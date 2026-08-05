@@ -44,7 +44,7 @@ class StrategyReleaseControllerTest {
         when(releaseService.release(eq(STRATEGY_ID), eq(VALIDATION_ID), eq(catalogService), any()))
                 .thenReturn(release);
         mvc = MockMvcBuilders.standaloneSetup(new StrategyReleaseController(releaseService, catalogService))
-                .setControllerAdvice(new StrategyAuthoringExceptionHandler())
+                .setControllerAdvice(new StrategyReleaseExceptionHandler())
                 .build();
     }
 
@@ -89,5 +89,47 @@ class StrategyReleaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"validationRunId\":\"" + VALIDATION_ID + "\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void reportsReleaseSpecificConflictMeaning() throws Exception {
+        when(releaseService.release(eq(STRATEGY_ID), eq(VALIDATION_ID), eq(catalogService), any()))
+                .thenThrow(new IllegalStateException("Strategy validation is stale"));
+
+        mvc.perform(post("/api/v1/strategies/{strategyId}/releases", STRATEGY_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequest()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.title").value("Strategy release rejected"));
+    }
+
+    @Test
+    void exceptionAdviceDoesNotBroadenTheExistingAuthoringControllers() {
+        var releaseAdvice = StrategyReleaseExceptionHandler.class
+                .getAnnotation(org.springframework.web.bind.annotation.RestControllerAdvice.class);
+        var authoringAdvice = StrategyAuthoringExceptionHandler.class
+                .getAnnotation(org.springframework.web.bind.annotation.RestControllerAdvice.class);
+
+        assertThat(releaseAdvice.assignableTypes()).containsExactly(StrategyReleaseController.class);
+        assertThat(authoringAdvice.assignableTypes())
+                .containsExactly(StrategyDraftController.class, StrategyDocumentController.class);
+    }
+
+    private static String validRequest() {
+        return """
+                {
+                  "validationRunId":"30000000-0000-4000-8000-000000000001",
+                  "initialCashAmount":100000.00,
+                  "budgetCapBps":10000,
+                  "brokerRulesVersion":"broker/v1",
+                  "accountingRulesVersion":"accounting/v1",
+                  "precisionRulesVersion":"precision/v1",
+                  "feePolicyId":"80000000-0000-4000-8000-000000000001",
+                  "buyingPowerBufferPolicyId":"90000000-0000-4000-8000-000000000001",
+                  "datasetManifestId":"a0000000-0000-4000-8000-000000000001",
+                  "executionPolicyVersion":"backtest-policy-v1",
+                  "candidateConflictPolicy":{"policy":"FIRST_WINS"}
+                }
+                """;
     }
 }
