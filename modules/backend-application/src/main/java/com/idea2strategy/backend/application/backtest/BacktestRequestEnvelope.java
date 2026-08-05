@@ -52,6 +52,7 @@ public record BacktestRequestEnvelope(
             String expectedSnapshotHash,
             String compiledPlanChecksum,
             String instrumentCatalogVersion,
+            List<CompetitionFeatureMaterialization> featureMaterializations,
             BigDecimal initialCashAmount,
             String assumptionsVersion,
             String executionPolicyVersion,
@@ -65,6 +66,7 @@ public record BacktestRequestEnvelope(
         requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
         requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
         requireText(instrumentCatalogVersion, "instrumentCatalogVersion");
+        featureMaterializations = orderedFeatures(featureMaterializations);
         requirePositive(initialCashAmount, "initialCashAmount");
         requireText(assumptionsVersion, "assumptionsVersion");
         requireText(executionPolicyVersion, "executionPolicyVersion");
@@ -75,7 +77,8 @@ public record BacktestRequestEnvelope(
         String requestHash = sha256(String.join("\n",
                 accountId.toString(), botId.toString(), datasetManifestId.toString(), expectedDatasetHash,
                 periodStart.toString(), periodEnd.toString(), expectedSnapshotHash, compiledPlanChecksum,
-                instrumentCatalogVersion, initialCashAmount.toPlainString(), assumptionsVersion,
+                instrumentCatalogVersion, featureHashMaterial(featureMaterializations),
+                initialCashAmount.toPlainString(), assumptionsVersion,
                 executionPolicyVersion));
         UUID messageId = derivedId(CUSTOM_EVENT, producerKey);
         UUID runId = derivedId("CUSTOM_BACKTEST_RUN", producerKey);
@@ -94,6 +97,7 @@ public record BacktestRequestEnvelope(
         root.put("periodStart", periodStart.toString());
         root.put("periodEnd", periodEnd.toString());
         root.put("instrumentCatalogVersion", instrumentCatalogVersion);
+        writeFeatures(root.putArray("featureMaterializations"), featureMaterializations);
         root.put("initialCashAmount", initialCashAmount.toPlainString());
         root.put("assumptionsVersion", assumptionsVersion);
         root.put("executionPolicyVersion", executionPolicyVersion);
@@ -268,14 +272,30 @@ public record BacktestRequestEnvelope(
                     datasetNode.put("purposeCode", dataset.purposeCode());
                     datasetNode.put("expectedDatasetHash", dataset.expectedDatasetHash());
                 });
-        ArrayNode features = node.putArray("featureMaterializations");
-        period.featureMaterializations().stream()
+        writeFeatures(node.putArray("featureMaterializations"), period.featureMaterializations());
+    }
+
+    private static List<CompetitionFeatureMaterialization> orderedFeatures(
+            List<CompetitionFeatureMaterialization> features) {
+        return List.copyOf(Objects.requireNonNull(features, "featureMaterializations")).stream()
                 .sorted(Comparator.comparing(feature -> feature.featureMaterializationId().toString()))
-                .forEach(feature -> {
-                    ObjectNode featureNode = features.addObject();
-                    featureNode.put("featureMaterializationId", feature.featureMaterializationId().toString());
-                    featureNode.put("lockedResultHash", feature.lockedResultHash());
-                });
+                .toList();
+    }
+
+    private static void writeFeatures(
+            ArrayNode nodes, List<CompetitionFeatureMaterialization> featureMaterializations) {
+        orderedFeatures(featureMaterializations).forEach(feature -> {
+            ObjectNode featureNode = nodes.addObject();
+            featureNode.put("featureMaterializationId", feature.featureMaterializationId().toString());
+            featureNode.put("lockedResultHash", feature.lockedResultHash());
+        });
+    }
+
+    private static String featureHashMaterial(List<CompetitionFeatureMaterialization> features) {
+        StringBuilder material = new StringBuilder();
+        orderedFeatures(features).forEach(feature -> material.append(feature.featureMaterializationId())
+                .append(':').append(feature.lockedResultHash()).append(';'));
+        return material.toString();
     }
 
     private static void appendPeriod(StringBuilder material, CompetitionPeriod period) {

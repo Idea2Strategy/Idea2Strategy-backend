@@ -20,5 +20,11 @@
   "assumptionsVersion": "accounting:1.0.0",
   "executionPolicyVersion": "backtest-policy:1.0.0",
   "requestReason": "STRATEGY_RELEASE",
+  "featureMaterializations": [
+    {
+      "featureMaterializationId": "00000000-0000-4000-8000-000000000215",
+      "lockedResultHash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ],
   "requestHash": "sha256:4df5ec8056b0857c8c841fc3a9e4f4d75c90196aef1e7ece7716445284523f33"
 }

@@ -9,6 +9,7 @@ import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import com.idea2strategy.backend.messaging.strategybot.v1.StrategyBotContractFixtures;
 import com.idea2strategy.backend.persistence.competition.RoomStrategyBotProvisioningJooqAdapter;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -48,6 +49,11 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
+    private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
+    private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
+    private static final UUID FEATURE_OBJECT_ID = UUID.fromString("e3000000-0000-4000-8000-000000000011");
+    private static final UUID FEATURE_DATASET_OBJECT_ID = UUID.fromString("e4000000-0000-4000-8000-000000000011");
+    private static final UUID FEATURE_MATERIALIZATION_ID = UUID.fromString("e5000000-0000-4000-8000-000000000011");
     private static final Instant NOW = Instant.parse("2026-08-01T09:00:00Z");
     private static final String HASH_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static final String HASH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -125,6 +131,37 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
                         + "values (?, ?, 'RSI_14', '1.0.0', '1m', '{}'::jsonb, 'NUMBER', 14, ?)",
                 FEATURE_ID, CATALOG_ID, HASH_B);
+        jdbc.update("insert into market_data.pipeline_runs "
+                        + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
+                        + "started_at, completed_at) values (?, 'FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                FEATURE_PIPELINE_ID, FEATURE_PIPELINE_ID.toString(), HASH_A, HASH_B, at, at);
+        jdbc.update("insert into market_data.dataset_manifests "
+                        + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
+                        + "period_end, schema_version, dataset_hash, created_at, available_at) values "
+                        + "(?, ?, ?, 'DERIVED', '1m', 1, 'AVAILABLE', '2024-12-31T00:00:00Z', "
+                        + "'2026-01-01T00:00:00Z', 'feature-series.parquet.v1', ?, ?, ?)",
+                FEATURE_MANIFEST_ID, FEED_ID, INSTRUMENT_ID, HASH_A, at, at);
+        jdbc.update("insert into storage.objects "
+                        + "(id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, "
+                        + "byte_size, file_format, compression_codec, media_type, schema_version, row_count, "
+                        + "period_start, period_end, retention_policy_version, created_at, verified_at) values "
+                        + "(?, 'AVAILABLE', 'S3', 'test', 'features/rsi.parquet', 'v1', ?, 100, 'PARQUET', "
+                        + "'SNAPPY', 'application/vnd.apache.parquet', 'feature-series.parquet.v1', 100, "
+                        + "'2024-12-31T00:00:00Z', '2026-01-01T00:00:00Z', 'v1', ?, ?)",
+                FEATURE_OBJECT_ID, HASH_A, at, at);
+        jdbc.update("insert into market_data.dataset_objects "
+                        + "(id, dataset_manifest_id, object_id, object_kind, partition_granularity, partition_start, "
+                        + "partition_end, period_start, period_end, shard_key, part_number, row_count) values "
+                        + "(?, ?, ?, 'FEATURE_SERIES', 'YEAR', '2025-01-01', '2026-01-01', "
+                        + "'2024-12-31T00:00:00Z', '2026-01-01T00:00:00Z', 'all', 1, 100)",
+                FEATURE_DATASET_OBJECT_ID, FEATURE_MANIFEST_ID, FEATURE_OBJECT_ID);
+        jdbc.update("insert into market_data.feature_materializations "
+                        + "(id, feature_definition_id, instrument_id, pipeline_run_id, input_dataset_set_hash, "
+                        + "period_start, period_end, source_watermark, output_dataset_manifest_id, result_hash, "
+                        + "status, available_at, created_at) values (?, ?, ?, ?, ?, '2024-12-31T00:00:00Z', "
+                        + "'2026-01-01T00:00:00Z', 'complete', ?, ?, 'SUCCEEDED', ?, ?)",
+                FEATURE_MATERIALIZATION_ID, FEATURE_ID, INSTRUMENT_ID, FEATURE_PIPELINE_ID, HASH_A,
+                FEATURE_MANIFEST_ID, HASH_B, at, at);
         jdbc.update(
                 "insert into trading.fee_policy_versions "
                         + "(id, policy_code, version, fee_rate_bps, calculation_rules_version, rules_hash, "
@@ -182,6 +219,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.run_input_pins")).isEqualTo(1);
         assertThat(count("backtest.input_bundles")).isEqualTo(1);
         assertThat(count("backtest.input_datasets")).isEqualTo(1);
+        assertThat(count("backtest.input_feature_materializations")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
@@ -204,6 +242,9 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(transported.compiledPlanChecksum()).isEqualTo("sha256:" + HASH_C);
         assertThat(transported.datasetManifestId()).isEqualTo(DATASET_ID.toString());
         assertThat(transported.expectedDatasetHash()).isEqualTo("sha256:" + HASH_D);
+        assertThat(transported.featureMaterializations()).containsExactly(
+                new StrategyBotContractFixtures.PinnedFeatureMaterialization(
+                        FEATURE_MATERIALIZATION_ID.toString(), "sha256:" + HASH_B));
         assertThat(transported.periodStart()).isEqualTo("2025-01-01");
         assertThat(transported.periodEnd()).isEqualTo("2025-12-31");
         assertThat(transported.requestHash()).matches("sha256:[0-9a-f]{64}");
@@ -301,11 +342,15 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static ImmutableStrategyRelease.ContractPlan contractPlan() {
         return new ImmutableStrategyRelease.ContractPlan(
                 "strategy-bot.v1", "basic-compiled-plan.v1", "sha256:" + "c".repeat(64),
-                "{\"contractVersion\":\"strategy-bot.v1\"}");
+                "{\"contractVersion\":\"strategy-bot.v1\",\"requiredFeatures\":[{"
+                        + "\"requirementId\":\"rsi-14-pt1m\",\"featureId\":\"" + FEATURE_ID + "\","
+                        + "\"featureVersion\":\"1.0.0\",\"instruments\":[\"" + INSTRUMENT_ID + "\"],"
+                        + "\"resolution\":\"PT1M\",\"requiredObservations\":13}]}");
     }
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({ImmutableStrategyReleaseJooqCommandAdapter.class, RoomStrategyBotProvisioningJooqAdapter.class})
+    @Import({FeatureMaterializationPinResolver.class, ImmutableStrategyReleaseJooqCommandAdapter.class,
+            RoomStrategyBotProvisioningJooqAdapter.class})
     static class TestApplication {}
 }

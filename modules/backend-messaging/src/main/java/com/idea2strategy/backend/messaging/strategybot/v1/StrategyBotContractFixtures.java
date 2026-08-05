@@ -143,6 +143,8 @@ public final class StrategyBotContractFixtures {
                 "accounting:1.0.0",
                 "backtest-policy:1.0.0",
                 "STRATEGY_RELEASE",
+                List.of(new PinnedFeatureMaterialization(
+                        "00000000-0000-4000-8000-000000000215", "sha256:" + "5".repeat(64))),
                 "sha256:4df5ec8056b0857c8c841fc3a9e4f4d75c90196aef1e7ece7716445284523f33");
 
         return new FixtureSet(compiledPlan, runCommand, stopCommand, officialBacktestRequest);
@@ -569,6 +571,7 @@ public final class StrategyBotContractFixtures {
             String assumptionsVersion,
             String executionPolicyVersion,
             String requestReason,
+            List<PinnedFeatureMaterialization> featureMaterializations,
             String requestHash) {
         public OfficialBacktestRequest {
             Objects.requireNonNull(metadata);
@@ -588,7 +591,18 @@ public final class StrategyBotContractFixtures {
             if (!"STRATEGY_RELEASE".equals(requestReason)) {
                 throw new IllegalArgumentException("Only the official release backtest belongs to this fixture");
             }
+            featureMaterializations = List.copyOf(featureMaterializations);
+            if (featureMaterializations.isEmpty()) {
+                throw new IllegalArgumentException("Official release backtests pin required feature outputs");
+            }
             requireSha256(requestHash, "requestHash");
+        }
+    }
+
+    public record PinnedFeatureMaterialization(String featureMaterializationId, String lockedResultHash) {
+        public PinnedFeatureMaterialization {
+            requireText(featureMaterializationId, "featureMaterializationId");
+            requireSha256(lockedResultHash, "lockedResultHash");
         }
     }
 

@@ -11,7 +11,9 @@ import com.idea2strategy.backend.application.strategy.StrategyDocumentJson;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -24,10 +26,14 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStrategyReleaseCommandPort {
     private final DSLContext dsl;
+    private final FeatureMaterializationPinResolver featurePins;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public ImmutableStrategyReleaseJooqCommandAdapter(DSLContext dsl) {
+    public ImmutableStrategyReleaseJooqCommandAdapter(
+            DSLContext dsl,
+            FeatureMaterializationPinResolver featurePins) {
         this.dsl = dsl;
+        this.featurePins = featurePins;
     }
 
     @Override
@@ -231,7 +237,10 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         String expectedDatasetHash = prefixed(dataset.get("dataset_hash", String.class));
         java.time.LocalDate periodStart = dataset.get("period_start", java.time.LocalDate.class);
         java.time.LocalDate periodEnd = dataset.get("period_end", java.time.LocalDate.class);
-        BasicPayload basicPayload = payloadDocument(request, expectedDatasetHash, periodStart, periodEnd);
+        List<FeaturePin> resolvedFeatures = featurePins.resolve(
+                release.contractPlan().planDocument(), periodStart, periodEnd, queuedAt);
+        BasicPayload basicPayload = payloadDocument(
+                request, expectedDatasetHash, periodStart, periodEnd, resolvedFeatures);
         String payload = basicPayload.document();
         var configuration = release.launchConfiguration();
 
@@ -258,7 +267,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 request.compiledPlanChecksum(), request.expectedSnapshotHash(), request.executionPolicyVersion(),
                 queuedAt,
                 List.of(new DatasetPin(request.datasetManifestId(), "MARKET_BARS", expectedDatasetHash)),
-                List.of()));
+                resolvedFeatures));
 
         var existingOutbox = dsl.fetchOne(
                 "select event_type, event_schema_version, payload_document ->> 'requestHash' as request_hash "
@@ -288,7 +297,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             OfficialBacktestRequest request,
             String expectedDatasetHash,
             java.time.LocalDate periodStart,
-            java.time.LocalDate periodEnd) {
+            java.time.LocalDate periodEnd,
+            List<FeaturePin> resolvedFeatures) {
         ObjectNode root = objectMapper.createObjectNode();
         ObjectNode metadata = root.putObject("metadata");
         metadata.put("contractVersion", request.metadata().contractVersion());
@@ -310,8 +320,17 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         root.put("assumptionsVersion", request.assumptionsVersion());
         root.put("executionPolicyVersion", request.executionPolicyVersion());
         root.put("requestReason", request.requestReason());
+        var features = root.putArray("featureMaterializations");
+        resolvedFeatures.stream()
+                .sorted(java.util.Comparator.comparing(feature -> feature.featureMaterializationId().toString()))
+                .forEach(feature -> {
+                    var node = features.addObject();
+                    node.put("featureMaterializationId", feature.featureMaterializationId().toString());
+                    node.put("lockedResultHash", feature.lockedResultHash());
+                });
         try {
-            String requestHash = basicRequestHash(request, expectedDatasetHash, periodStart, periodEnd);
+            String requestHash = basicRequestHash(
+                    request, expectedDatasetHash, periodStart, periodEnd, resolvedFeatures);
             root.put("requestHash", requestHash);
             return new BasicPayload(
                     requestHash,
@@ -325,8 +344,9 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             OfficialBacktestRequest request,
             String expectedDatasetHash,
             java.time.LocalDate periodStart,
-            java.time.LocalDate periodEnd) {
-        String material = String.join("\n",
+            java.time.LocalDate periodEnd,
+            List<FeaturePin> resolvedFeatures) {
+        StringBuilder material = new StringBuilder(String.join("\n",
                 request.metadata().contractVersion(),
                 request.metadata().messageType(),
                 request.runId().toString(),
@@ -339,8 +359,12 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 periodEnd.toString(),
                 request.assumptionsVersion(),
                 request.executionPolicyVersion(),
-                request.requestReason());
-        return "sha256:" + StrategyDocumentJson.sha256(material);
+                request.requestReason()));
+        resolvedFeatures.stream()
+                .sorted(java.util.Comparator.comparing(feature -> feature.featureMaterializationId().toString()))
+                .forEach(feature -> material.append('\n').append(feature.featureMaterializationId())
+                        .append('\n').append(feature.lockedResultHash()));
+        return "sha256:" + StrategyDocumentJson.sha256(material.toString());
     }
 
     private static String prefixed(String value) {

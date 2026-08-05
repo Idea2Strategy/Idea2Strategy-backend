@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.backtest.BacktestRequestReceipt;
 import com.idea2strategy.backend.application.backtest.CustomBacktestCommand;
 import com.idea2strategy.backend.application.backtest.CustomBacktestCommandPort;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -20,17 +21,22 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
     private final DSLContext dsl;
     private final BacktestRequestOutboxStore outbox;
+    private final FeatureMaterializationPinResolver featurePins;
 
-    public CustomBacktestJooqAdapter(DSLContext dsl, BacktestRequestOutboxStore outbox) {
+    public CustomBacktestJooqAdapter(
+            DSLContext dsl,
+            BacktestRequestOutboxStore outbox,
+            FeatureMaterializationPinResolver featurePins) {
         this.dsl = dsl;
         this.outbox = outbox;
+        this.featurePins = featurePins;
     }
 
     @Override
     @Transactional
     public BacktestRequestReceipt enqueue(UUID accountId, CustomBacktestCommand command, Instant occurredAt) {
         var context = dsl.fetchOne(
-                "select s.snapshot_hash, p.plan_checksum, "
+                "select s.snapshot_hash, p.plan_checksum, p.plan_document::text as plan_document, "
                         + "p.plan_document ->> 'instrumentCatalogVersion' as instrument_catalog_version, "
                         + "c.initial_cash_amount, c.broker_rules_version, c.accounting_rules_version, "
                         + "c.precision_rules_version, c.fee_policy_id, c.slippage_rate_bps, "
@@ -57,6 +63,9 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
         if (policy == null || policy.get("policy_artifact_hash", String.class) == null) {
             throw new IllegalStateException("Locked backtest execution policy was not found");
         }
+        List<FeaturePin> resolvedFeatures = featurePins.resolve(
+                context.get("plan_document", String.class), command.periodStart(), command.periodEnd(),
+                occurredAt.atOffset(ZoneOffset.UTC));
         var request = BacktestRequestEnvelope.custom(
                 accountId,
                 command.botId(),
@@ -67,6 +76,10 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
                 prefixed(context.get("snapshot_hash", String.class)),
                 prefixed(context.get("plan_checksum", String.class)),
                 context.get("instrument_catalog_version", String.class),
+                resolvedFeatures.stream()
+                        .map(feature -> new BacktestRequestEnvelope.CompetitionFeatureMaterialization(
+                                feature.featureMaterializationId(), feature.lockedResultHash()))
+                        .toList(),
                 context.get("initial_cash_amount", BigDecimal.class),
                 context.get("accounting_rules_version", String.class),
                 command.executionPolicyVersion(),
@@ -101,7 +114,7 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
                 List.of(new DatasetPin(
                         command.datasetManifestId(), "MARKET_BARS",
                         prefixed(dataset.get("dataset_hash", String.class)))),
-                List.of()));
+                resolvedFeatures));
         return outbox.enqueue(request, occurredAt);
     }
 
