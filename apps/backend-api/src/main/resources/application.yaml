@@ -13,6 +13,14 @@ management:
       exposure:
         include: health,info
 
+email:
+  delivery:
+    enabled: ${EMAIL_DELIVERY_ENABLED:false}
+    provider: ${EMAIL_DELIVERY_PROVIDER:ses}
+    from-address: ${EMAIL_DELIVERY_FROM_ADDRESS:}
+    aws-region: ${EMAIL_DELIVERY_AWS_REGION:ap-northeast-2}
+    base-url: ${EMAIL_DELIVERY_BASE_URL:}
+
 idea2strategy:
   operator-auth:
     enabled: ${OPERATOR_AUTH_ENABLED:false}
