@@ -56,6 +56,16 @@ class DatabaseAccessPolicyTest {
     }
 
     @Test
+    void keepsOneOwnershipEntryWhenAnUpgradeConditionallyRedeclaresABaselineTable() {
+        var ownership = DatabaseAccessPolicy.ownershipManifest(List.of(
+                "CREATE TABLE market_data.corporate_actions (id uuid PRIMARY KEY);",
+                "DO $migration$ BEGIN CREATE TABLE market_data.corporate_actions (id uuid PRIMARY KEY); END $migration$;"));
+
+        assertEquals(MigrationOwner.PIPELINE, ownership.ownerOf("market_data", "corporate_actions"));
+        assertEquals(1, ownership.tables().size());
+    }
+
+    @Test
     void limitsPythonRolesToDocumentedReadAndWriteBoundaries() {
         assertTrue(DatabaseAccessPolicy.allows(
                 DatabaseAccessPolicy.ApplicationRole.BACKTEST,
