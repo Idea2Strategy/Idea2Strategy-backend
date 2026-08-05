@@ -17,6 +17,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
@@ -26,9 +27,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBean(
-        value = CurrentSessionPrincipal.class,
-        type = {"org.jooq.DSLContext", "org.springframework.jdbc.core.JdbcTemplate"})
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
 @EntityScan(basePackageClasses = {StrategyJpaEntity.class, StrategyDocumentJpaEntity.class})
 @EnableJpaRepositories(basePackageClasses = {
     StrategySpringDataRepository.class,

@@ -5,12 +5,13 @@ import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.persistence.botoperations.BotOperationsJooqQueryAdapter;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBean(value = CurrentPrincipal.class, type = "org.jooq.DSLContext")
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
 @Import(BotOperationsJooqQueryAdapter.class)
 public class BotOperationsConfiguration {
     @Bean

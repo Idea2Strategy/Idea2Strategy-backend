@@ -49,12 +49,13 @@ import java.time.Clock;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBean(type = "org.jooq.DSLContext")
+@ConditionalOnProperty(prefix = "spring.datasource", name = "url")
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
     OperatorRoomJooqAdapter.class,
@@ -107,14 +108,14 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     UserPostEvaluationChoiceService userPostEvaluationChoiceService(
             PostEvaluationChoiceJooqAdapter adapter, CurrentPrincipal principal) {
         return new UserPostEvaluationChoiceService(adapter, principal, Clock.systemUTC());
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     UserRoomTerminationService userRoomTerminationService(
             RoomTerminationJooqAdapter adapter, CurrentPrincipal principal) {
         return new UserRoomTerminationService(adapter, principal, Clock.systemUTC());
@@ -155,7 +156,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     RoomInvitationService roomInvitationService(
             RoomInvitationJooqAdapter invitationAdapter,
             RoomInvitationSecretIssuer secretIssuer,
@@ -165,7 +166,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     RoomParticipationAdmissionService roomParticipationAdmissionService(
             RoomParticipationAdmissionJooqAdapter admissionAdapter, CurrentPrincipal principal) {
         return new RoomParticipationAdmissionService(
@@ -177,7 +178,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     BasicExecutionPlanCommandService roomBasicExecutionPlanCommandService(
             CompiledFlowPlanJooqCommandAdapter planAdapter,
             StrategyValidationRunJooqQueryAdapter validationAdapter,
@@ -195,7 +196,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     ImmutableStrategyReleaseCommandService roomImmutableStrategyReleaseCommandService(
             ImmutableStrategyReleaseJooqCommandAdapter releaseAdapter,
             BasicExecutionPlanCommandService planService,
@@ -214,7 +215,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     RoomStrategyParticipationService roomStrategyParticipationService(
             RoomParticipationAdmissionService admissionService,
             RoomStrategyBotProvisioningJooqAdapter provisioningAdapter,
@@ -246,14 +247,14 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     OwnedStrategyValidationCatalogQueryService ownedStrategyValidationCatalogQueryService(
             StrategyValidationRunJooqQueryAdapter validationAdapter, CurrentPrincipal principal) {
         return new OwnedStrategyValidationCatalogQueryService(validationAdapter, principal);
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     UserCompetitionRoomCreationService userCompetitionRoomCreationService(
             CompetitionRoomJpaCommandAdapter commandAdapter,
             ScoringTemplateCatalogService scoringCatalog,
@@ -268,7 +269,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(CurrentPrincipal.class)
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
     UserRoomConfigurationService userRoomConfigurationService(
             RoomConfigurationJooqAdapter configurationAdapter,
             ScoringTemplateCatalogService scoringCatalog,
