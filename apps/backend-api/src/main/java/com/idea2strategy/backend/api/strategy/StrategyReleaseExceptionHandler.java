@@ -1,42 +1,32 @@
 package com.idea2strategy.backend.api.strategy;
 
-import com.idea2strategy.backend.application.strategy.StrategyDraftConflictException;
-import com.idea2strategy.backend.application.strategy.StrategyEditLeaseInvalidException;
-import com.idea2strategy.backend.application.strategy.StrategyEditLeaseUnavailableException;
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import java.util.NoSuchElementException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-@RestControllerAdvice(assignableTypes = {
-    StrategyDraftController.class,
-    StrategyDocumentController.class
-})
-public class StrategyAuthoringExceptionHandler {
+@RestControllerAdvice(assignableTypes = StrategyReleaseController.class)
+public class StrategyReleaseExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
-    ProblemDetail invalidDraft(IllegalArgumentException exception) {
+    ProblemDetail invalidRelease(IllegalArgumentException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
-        problem.setTitle("Invalid strategy draft");
+        problem.setTitle("Invalid strategy release");
         return problem;
     }
 
     @ExceptionHandler(NoSuchElementException.class)
     ProblemDetail notFound(NoSuchElementException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
-        problem.setTitle("Strategy not found");
+        problem.setTitle("Strategy validation not found");
         return problem;
     }
 
-    @ExceptionHandler({
-        StrategyDraftConflictException.class,
-        StrategyEditLeaseInvalidException.class,
-        StrategyEditLeaseUnavailableException.class
-    })
-    ProblemDetail editConflict(RuntimeException exception) {
+    @ExceptionHandler({ImmutableStrategyReleaseRejectedException.class, IllegalStateException.class})
+    ProblemDetail releaseConflict(RuntimeException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
-        problem.setTitle("Strategy edit conflict");
+        problem.setTitle("Strategy release rejected");
         return problem;
     }
-
 }
