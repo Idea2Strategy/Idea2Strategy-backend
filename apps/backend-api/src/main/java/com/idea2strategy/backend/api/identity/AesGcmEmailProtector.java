@@ -72,6 +72,28 @@ public final class AesGcmEmailProtector implements EmailProtector, EmailLookup {
         return hmac(normalize(rawEmail));
     }
 
+    public String reveal(String ciphertext) {
+        if (ciphertext == null || !ciphertext.startsWith("v" + encryptionKeyVersion + ":")) {
+            throw new IllegalStateException("Protected email key version is unavailable");
+        }
+        try {
+            byte[] payload = Base64.getUrlDecoder().decode(ciphertext.substring(ciphertext.indexOf(':') + 1));
+            if (payload.length <= IV_BYTES) {
+                throw new IllegalStateException("Protected email payload is invalid");
+            }
+            byte[] iv = java.util.Arrays.copyOfRange(payload, 0, IV_BYTES);
+            byte[] encrypted = java.util.Arrays.copyOfRange(payload, IV_BYTES, payload.length);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(
+                    Cipher.DECRYPT_MODE,
+                    new SecretKeySpec(encryptionKey, "AES"),
+                    new GCMParameterSpec(128, iv));
+            return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
+        } catch (GeneralSecurityException | IllegalArgumentException exception) {
+            throw new IllegalStateException("Protected email could not be opened", exception);
+        }
+    }
+
     private String encrypt(String normalized) {
         try {
             byte[] iv = new byte[IV_BYTES];

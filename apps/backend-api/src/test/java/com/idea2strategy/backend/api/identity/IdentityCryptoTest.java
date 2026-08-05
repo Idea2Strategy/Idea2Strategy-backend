@@ -23,6 +23,7 @@ class IdentityCryptoTest {
         assertThat(first.ciphertext()).doesNotContain("person@example.com");
         assertThat(first.ciphertext()).isNotEqualTo(second.ciphertext());
         assertThat(first.lookupHmac()).isEqualTo(second.lookupHmac()).isEqualTo(protector.lookup("person@example.com"));
+        assertThat(protector.reveal(first.ciphertext())).isEqualTo("person@example.com");
     }
 
     @Test

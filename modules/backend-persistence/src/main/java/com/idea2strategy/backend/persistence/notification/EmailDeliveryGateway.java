@@ -6,7 +6,7 @@ import java.util.UUID;
 public interface EmailDeliveryGateway {
     DeliveryResult send(EmailMessage message);
 
-    record EmailMessage(UUID notificationId, String templateVersion, String locale,
+    record EmailMessage(UUID notificationId, UUID accountId, String templateVersion, String locale,
                         Map<String, String> templateArguments) {}
 
     record DeliveryResult(Outcome outcome, String providerMessageKey, String failureCode) {

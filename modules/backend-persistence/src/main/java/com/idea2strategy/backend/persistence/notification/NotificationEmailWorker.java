@@ -38,10 +38,11 @@ public class NotificationEmailWorker {
         }
         UUID notificationId = notificationId(message.payload());
         var snapshot = jdbc.queryForObject("""
-                select template_version, locale, payload_document::text
+                select account_id, template_version, locale, payload_document::text
                 from operations.notifications where id = ?
                 """, (rs, row) -> new EmailDeliveryGateway.EmailMessage(notificationId,
-                rs.getString(1), rs.getString(2), readArguments(rs.getString(3))), notificationId);
+                rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
+                readArguments(rs.getString(4))), notificationId);
         Instant attemptedAt = databaseNow();
         UUID attemptId = UUID.randomUUID();
         jdbc.update("""

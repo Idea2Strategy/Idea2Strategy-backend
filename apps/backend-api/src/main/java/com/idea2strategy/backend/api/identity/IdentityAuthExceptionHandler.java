@@ -17,6 +17,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class IdentityAuthExceptionHandler {
+    @ExceptionHandler(EmailDeliveryUnavailableException.class)
+    ResponseEntity<Map<String, String>> emailDelivery(EmailDeliveryUnavailableException exception) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("code", "EMAIL_DELIVERY_UNAVAILABLE"));
+    }
+
     @ExceptionHandler(LifecycleRequestRejectedException.class)
     ResponseEntity<Map<String, String>> lifecycleRequest(LifecycleRequestRejectedException exception) {
         HttpStatus status = switch (exception.code()) {
