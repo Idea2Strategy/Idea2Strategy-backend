@@ -7,6 +7,7 @@ import com.idea2strategy.backend.api.caseoperations.OperatorCaseController;
 import com.idea2strategy.backend.api.caseoperations.OperatorCaseConfiguration;
 import com.idea2strategy.backend.api.sanction.AccountSanctionController;
 import com.idea2strategy.backend.application.accountsanction.AccountSanctionCommandService;
+import com.idea2strategy.backend.application.accountsanction.AccountSanctionAuthorizationPort;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseApiGuardCatalog;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseCommandService;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseQueryService;
@@ -16,6 +17,9 @@ import com.idea2strategy.backend.application.operatorrbac.OperatorRbacCommandSer
 import com.idea2strategy.backend.application.operatorrbac.OperatorRbacReadPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.jdbc.core.JdbcTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.idea2strategy.backend.api.sanction.AccountSanctionConfiguration;
 
 class OperatorEndpointsConditionalWiringTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
@@ -86,6 +90,25 @@ class OperatorEndpointsConditionalWiringTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).doesNotHaveBean(OperatorRbacApiGuardCatalog.class);
+                });
+    }
+
+    @Test
+    void emptySanctionGuardInputsDoNotBreakPublicApiStartupWhenOperatorAuthIsDisabled() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(AccountSanctionConfiguration.class)
+                .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
+                .withBean(ObjectMapper.class, ObjectMapper::new)
+                .withBean(AccountSanctionAuthorizationPort.class,
+                        () -> mock(AccountSanctionAuthorizationPort.class))
+                .withPropertyValues(
+                        "spring.datasource.url=jdbc:postgresql://unused/test",
+                        "idea2strategy.operator-auth.enabled=false",
+                        "idea2strategy.operator-sanction.guard.apply-permission-id=",
+                        "idea2strategy.operator-sanction.guard.lift-permission-id=")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(AccountSanctionCommandService.class);
                 });
     }
 }
