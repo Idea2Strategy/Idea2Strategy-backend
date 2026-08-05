@@ -7,6 +7,7 @@ import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -30,9 +31,13 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
     private static final String LIVE_EVALUATION_INPUT_VERSION = "live-evaluation-input.v1";
     private static final String INITIAL_STATE_VERSION = "live-evaluation-initial-state.v1";
     private final DSLContext dsl;
+    private final FeatureMaterializationPinResolver featurePins;
 
-    public RoomEvaluationStartJooqAdapter(DSLContext dsl) {
+    public RoomEvaluationStartJooqAdapter(
+            DSLContext dsl,
+            FeatureMaterializationPinResolver featurePins) {
         this.dsl = dsl;
+        this.featurePins = featurePins;
     }
 
     @Override
@@ -148,7 +153,8 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             UUID roomId, UUID participationId, UUID botId, OffsetDateTime observedAt) {
         var context = dsl.fetchOne(
                 "select ep.plan_version, ep.plan_hash, ep.period_count, s.snapshot_hash, lp.plan_checksum, "
-                        + "p.owner_account_id, lc.configuration_hash, lc.broker_rules_version, "
+                        + "p.owner_account_id, lp.plan_document::text as plan_document, "
+                        + "lc.configuration_hash, lc.broker_rules_version, "
                         + "lc.accounting_rules_version, lc.precision_rules_version, lc.fee_policy_id, "
                         + "lc.slippage_rate_bps, lc.buying_power_buffer_policy_id, "
                         + "rr.scoring_template_version_id, rr.rules_hash, rr.initial_cash_amount, rr.currency_code "
@@ -172,7 +178,11 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
             throw new IllegalStateException("Competition plan must resolve to exactly one locked execution policy");
         }
         String executionPolicyVersion = policies.get(0).get("version", String.class);
-        var periods = competitionPeriods(roomId, context.get("period_count", Integer.class));
+        var periods = competitionPeriods(
+                roomId,
+                context.get("period_count", Integer.class),
+                context.get("plan_document", String.class),
+                observedAt);
         for (var period : periods) {
             var request = BacktestRequestEnvelope.competitionPeriod(
                     roomId, participationId, botId, context.get("plan_version", String.class), planHash,
@@ -257,7 +267,11 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                 participation.get("bot_id", UUID.class), observedAt);
     }
 
-    private List<BacktestRequestEnvelope.CompetitionPeriod> competitionPeriods(UUID roomId, int expectedCount) {
+    private List<BacktestRequestEnvelope.CompetitionPeriod> competitionPeriods(
+            UUID roomId,
+            int expectedCount,
+            String compiledPlanDocument,
+            OffsetDateTime asOf) {
         var periodRows = dsl.fetch(
                 "select id, period_sequence, evaluation_start, evaluation_end, importance_weight, input_set_hash "
                         + "from competition.backtest_evaluation_periods where evaluation_plan_room_id = ? "
@@ -293,7 +307,7 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                                 dataset.get("dataset_manifest_id", UUID.class),
                                 dataset.get("purpose_code", String.class), locked);
                     });
-            var features = dsl.fetch(
+            var lockedFeatures = dsl.fetch(
                             "select pf.feature_materialization_id, pf.locked_result_hash, fm.result_hash, "
                                     + "fm.status::text as materialization_status, fm.available_at "
                                     + "from competition.backtest_period_feature_materializations pf "
@@ -313,6 +327,17 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                         return new BacktestRequestEnvelope.CompetitionFeatureMaterialization(
                                 feature.get("feature_materialization_id", UUID.class), locked);
                     });
+            var resolvedFeatures = featurePins.resolve(compiledPlanDocument, start, end, asOf);
+            var lockedSet = lockedFeatures.stream()
+                    .map(feature -> feature.featureMaterializationId() + "|" + feature.lockedResultHash())
+                    .collect(java.util.stream.Collectors.toSet());
+            var resolvedSet = resolvedFeatures.stream()
+                    .map(feature -> feature.featureMaterializationId() + "|" + feature.lockedResultHash())
+                    .collect(java.util.stream.Collectors.toSet());
+            if (lockedFeatures.size() != resolvedFeatures.size() || !lockedSet.equals(resolvedSet)) {
+                throw new IllegalStateException(
+                        "Competition feature pins must exactly match requiredFeatures x instruments");
+            }
             return new BacktestRequestEnvelope.CompetitionPeriod(
                     periodId,
                     period.get("period_sequence", Integer.class),
@@ -321,7 +346,10 @@ public class RoomEvaluationStartJooqAdapter implements RoomEvaluationStartPort {
                     period.get("importance_weight", BigDecimal.class),
                     prefixed(period.get("input_set_hash", String.class)),
                     datasets,
-                    features);
+                    resolvedFeatures.stream()
+                            .map(feature -> new BacktestRequestEnvelope.CompetitionFeatureMaterialization(
+                                    feature.featureMaterializationId(), feature.lockedResultHash()))
+                            .toList());
         }).toList();
     }
 

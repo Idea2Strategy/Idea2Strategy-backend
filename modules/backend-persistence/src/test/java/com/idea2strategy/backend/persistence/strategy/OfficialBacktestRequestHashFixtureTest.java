@@ -3,9 +3,11 @@ package com.idea2strategy.backend.persistence.strategy;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class OfficialBacktestRequestHashFixtureTest {
@@ -35,7 +37,10 @@ class OfficialBacktestRequestHashFixtureTest {
                         request,
                         "sha256:" + "3".repeat(64),
                         LocalDate.parse("2025-01-01"),
-                        LocalDate.parse("2025-12-31")))
-                .isEqualTo("sha256:e50b49c9978a27b0cf62b18eac55cebbe4280525677fcc0cd27c50af4788e176");
+                        LocalDate.parse("2025-12-31"),
+                        List.of(new FeaturePin(
+                                UUID.fromString("50000000-0000-4000-8000-000000000001"),
+                                "sha256:" + "5".repeat(64)))))
+                .isEqualTo("sha256:bdf3474e890de34991f6caf4c6e9c0a2807f5a6728701eb03000f05797deebfb");
     }
 }

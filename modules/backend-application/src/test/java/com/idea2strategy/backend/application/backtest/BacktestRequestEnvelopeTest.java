@@ -21,23 +21,28 @@ class BacktestRequestEnvelopeTest {
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
     private static final String SNAPSHOT = "sha256:" + "1".repeat(64);
     private static final String PLAN = "sha256:" + "2".repeat(64);
+    private static final List<BacktestRequestEnvelope.CompetitionFeatureMaterialization> FEATURES = List.of(
+            new BacktestRequestEnvelope.CompetitionFeatureMaterialization(id(10), "sha256:" + "7".repeat(64)));
 
     @Test
     void customProducerKeyIsStableForTheClientKeyButPayloadDetectsReuse() {
         var first = BacktestRequestEnvelope.custom(
                 ACCOUNT, BOT, DATASET, "sha256:" + "3".repeat(64),
                 LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"),
-                SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", new BigDecimal("100000.00000000"),
+                SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", FEATURES,
+                new BigDecimal("100000.00000000"),
                 "accounting-v1", "backtest-policy-v1", "request-42", NOW.plusSeconds(30));
         var duplicate = BacktestRequestEnvelope.custom(
                 ACCOUNT, BOT, DATASET, "sha256:" + "3".repeat(64),
                 LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"),
-                SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", new BigDecimal("100000.00000000"),
+                SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", FEATURES,
+                new BigDecimal("100000.00000000"),
                 "accounting-v1", "backtest-policy-v1", "request-42", NOW);
         var conflict = BacktestRequestEnvelope.custom(
                 ACCOUNT, BOT, DATASET, "sha256:" + "3".repeat(64),
                 LocalDate.parse("2023-01-01"), LocalDate.parse("2023-12-31"),
-                SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", new BigDecimal("100000.00000000"),
+                SNAPSHOT, PLAN, "us-supported-universe:2026-08-04", FEATURES,
+                new BigDecimal("100000.00000000"),
                 "accounting-v1", "backtest-policy-v1", "request-42", NOW);
 
         assertThat(first.eventType()).isEqualTo("CUSTOM_BACKTEST_REQUESTED");
@@ -54,6 +59,7 @@ class BacktestRequestEnvelopeTest {
                 "\"expectedDatasetHash\":\"sha256:" + "3".repeat(64) + "\"",
                 "\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-04\"",
                 "\"initialCashAmount\":\"100000.00000000\"",
+                "\"featureMaterializationId\":\"" + id(10) + "\"",
                 "\"runId\":\"" + first.aggregateId() + "\"",
                 "\"lane\":\"CUSTOM\"",
                 "\"executionPolicyVersion\":\"backtest-policy-v1\"",

@@ -22,6 +22,7 @@ import com.idea2strategy.backend.domain.competition.RoomAccessType;
 import com.idea2strategy.backend.domain.competition.RoomSchedule;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -484,6 +485,7 @@ class RoomBotRealProvisioningAcceptanceE2ETest {
         ScoringTemplateCatalogJooqQueryAdapter.class,
         RoomScheduleTransitionJooqAdapter.class,
         RoomParticipationAdmissionJooqAdapter.class,
+        FeatureMaterializationPinResolver.class,
         RoomEvaluationStartJooqAdapter.class,
         PostEvaluationChoiceJooqAdapter.class,
         FinalRoomResultJooqAdapter.class,

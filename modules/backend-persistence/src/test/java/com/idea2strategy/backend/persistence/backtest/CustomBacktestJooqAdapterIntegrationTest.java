@@ -34,6 +34,14 @@ class CustomBacktestJooqAdapterIntegrationTest {
     private static final UUID DATASET = id(5);
     private static final UUID FEE = id(6);
     private static final UUID BUFFER = id(7);
+    private static final UUID CATALOG = id(8);
+    private static final UUID INSTRUMENT = id(9);
+    private static final UUID FEATURE = id(10);
+    private static final UUID PIPELINE = id(11);
+    private static final UUID FEATURE_MANIFEST = id(12);
+    private static final UUID FEATURE_OBJECT = id(13);
+    private static final UUID FEATURE_DATASET_OBJECT = id(14);
+    private static final UUID MATERIALIZATION = id(15);
     private static final String POLICY = "backtest-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
 
@@ -68,12 +76,20 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update("delete from bot.launch_configurations where bot_id = ?", BOT);
         jdbc.update("delete from bot.launch_snapshots where bot_id = ?", BOT);
         jdbc.update("delete from bot.bots where id = ?", BOT);
+        jdbc.update("delete from market_data.feature_materializations where id = ?", MATERIALIZATION);
+        jdbc.update("delete from market_data.dataset_objects where id = ?", FEATURE_DATASET_OBJECT);
+        jdbc.update("delete from storage.objects where id = ?", FEATURE_OBJECT);
+        jdbc.update("delete from market_data.dataset_manifests where id = ?", FEATURE_MANIFEST);
+        jdbc.update("delete from market_data.pipeline_runs where id = ?", PIPELINE);
+        jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
+        jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.dataset_manifests where id = ?", DATASET);
         jdbc.update("delete from market_data.feeds where id = ?", FEED);
         jdbc.update("delete from market_data.providers where id = ?", PROVIDER);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER);
         jdbc.update("delete from backtest.execution_policy_versions where version = ?", POLICY);
+        jdbc.update("delete from strategy.element_catalog_versions where id = ?", CATALOG);
         jdbc.update(
                 "insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE') on conflict (id) do nothing",
                 ACCOUNT);
@@ -99,6 +115,49 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "values (?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2024-01-01T00:00:00Z', "
                         + "'2024-12-31T23:59:59Z', 'v1', ?, ?, ?)",
                 DATASET, FEED, "a".repeat(64), at, at);
+        jdbc.update("insert into strategy.element_catalog_versions "
+                        + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
+                        + "definition_hash, published_at) values (?, 'basic/v1', 'schema/v1', 'catalog/v1', "
+                        + "'data/v1', ?, ?)", CATALOG, "b".repeat(64), at.minusDays(1));
+        jdbc.update("insert into market_data.instruments "
+                        + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
+                INSTRUMENT);
+        jdbc.update("insert into market_data.feature_definitions "
+                        + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
+                        + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
+                        + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
+                FEATURE, CATALOG, "c".repeat(64));
+        jdbc.update("insert into market_data.pipeline_runs "
+                        + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
+                        + "started_at, completed_at) values (?, 'FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                PIPELINE, PIPELINE.toString(), "b".repeat(64), "f".repeat(64), at.minusDays(1), at.minusDays(1));
+        jdbc.update("insert into market_data.dataset_manifests "
+                        + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
+                        + "period_end, schema_version, dataset_hash, created_at, available_at) values "
+                        + "(?, ?, ?, 'DERIVED', '1d', 1, 'AVAILABLE', '2023-12-01T00:00:00Z', "
+                        + "'2025-01-01T00:00:00Z', 'feature-series.parquet.v1', ?, ?, ?)",
+                FEATURE_MANIFEST, FEED, INSTRUMENT, "d".repeat(64), at.minusDays(1), at.minusDays(1));
+        jdbc.update("insert into storage.objects "
+                        + "(id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, "
+                        + "byte_size, file_format, compression_codec, media_type, schema_version, row_count, "
+                        + "period_start, period_end, retention_policy_version, created_at, verified_at) values "
+                        + "(?, 'AVAILABLE', 'S3', 'test', 'features/custom.parquet', 'v1', ?, 100, 'PARQUET', "
+                        + "'SNAPPY', 'application/vnd.apache.parquet', 'feature-series.parquet.v1', 366, "
+                        + "'2023-12-01T00:00:00Z', '2025-01-01T00:00:00Z', 'v1', ?, ?)",
+                FEATURE_OBJECT, "e".repeat(64), at.minusDays(1), at.minusDays(1));
+        jdbc.update("insert into market_data.dataset_objects "
+                        + "(id, dataset_manifest_id, object_id, object_kind, partition_granularity, partition_start, "
+                        + "partition_end, period_start, period_end, shard_key, part_number, row_count) values "
+                        + "(?, ?, ?, 'FEATURE_SERIES', 'YEAR', '2024-01-01', '2025-01-01', "
+                        + "'2023-12-01T00:00:00Z', '2025-01-01T00:00:00Z', 'all', 1, 366)",
+                FEATURE_DATASET_OBJECT, FEATURE_MANIFEST, FEATURE_OBJECT);
+        jdbc.update("insert into market_data.feature_materializations "
+                        + "(id, feature_definition_id, instrument_id, pipeline_run_id, input_dataset_set_hash, "
+                        + "period_start, period_end, source_watermark, output_dataset_manifest_id, result_hash, "
+                        + "status, available_at, created_at) values (?, ?, ?, ?, ?, '2023-12-01T00:00:00Z', "
+                        + "'2025-01-01T00:00:00Z', 'complete', ?, ?, 'SUCCEEDED', ?, ?)",
+                MATERIALIZATION, FEATURE, INSTRUMENT, PIPELINE, "b".repeat(64), FEATURE_MANIFEST,
+                "f".repeat(64), at.minusDays(1), at.minusDays(1));
         jdbc.update(
                 "insert into trading.fee_policy_versions "
                         + "(id, policy_code, version, fee_rate_bps, calculation_rules_version, rules_hash, "
@@ -125,8 +184,8 @@ class CustomBacktestJooqAdapterIntegrationTest {
                 "insert into bot.launch_contract_plans "
                         + "(bot_id, contract_version, plan_schema_version, plan_checksum, plan_document, created_at) "
                         + "values (?, 'strategy-bot.v1', 'basic-compiled-plan.v1', ?, "
-                        + "'{\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-04\"}'::jsonb, ?)",
-                BOT, "sha256:" + "1".repeat(64), at);
+                        + "?::jsonb, ?)",
+                BOT, "sha256:" + "1".repeat(64), planDocument(), at);
         jdbc.update(
                 "insert into bot.launch_configurations "
                         + "(bot_id, initial_cash_amount, currency_code, broker_rules_version, accounting_rules_version, "
@@ -170,6 +229,12 @@ class CustomBacktestJooqAdapterIntegrationTest {
                 .containsEntry("purpose_code", "MARKET_BARS")
                 .containsEntry("locked_dataset_hash", "sha256:" + "a".repeat(64));
         assertThat(jdbc.queryForMap(
+                        "select f.feature_materialization_id, f.locked_result_hash "
+                                + "from backtest.input_feature_materializations f join backtest.run_input_pins p "
+                                + "on p.input_bundle_id = f.input_bundle_id where p.run_id = ?", created.runId()))
+                .containsEntry("feature_materialization_id", MATERIALIZATION)
+                .containsEntry("locked_result_hash", "sha256:" + "f".repeat(64));
+        assertThat(jdbc.queryForMap(
                         "select id, message_id, lane::text as lane, execution_policy_version, "
                                 + "canonical_payload_hash, aggregate_sequence from backtest.runs"))
                 .satisfies(row -> {
@@ -205,6 +270,10 @@ class CustomBacktestJooqAdapterIntegrationTest {
                             .isEqualTo("us-supported-universe:2026-08-04");
                     assertThat(row.get("initial_cash_amount")).isEqualTo("100000.00000000");
                 });
+        assertThat(jdbc.queryForObject(
+                        "select jsonb_array_length(payload_document -> 'featureMaterializations') "
+                                + "from operations.outbox_messages where id = ?", Integer.class, created.messageId()))
+                .isEqualTo(1);
 
         assertThatThrownBy(() -> adapter.enqueue(
                         ACCOUNT,
@@ -228,6 +297,23 @@ class CustomBacktestJooqAdapterIntegrationTest {
         assertThat(jdbc.queryForObject("select count(*) from operations.outbox_messages", Integer.class)).isZero();
     }
 
+    @Test
+    void rejectsAnIncompleteRequiredFeatureSetBeforeWritingRunPinsOrOutbox() {
+        jdbc.update("update market_data.feature_materializations set status = 'FAILED', "
+                        + "output_dataset_manifest_id = null, result_hash = null, available_at = null where id = ?",
+                MATERIALIZATION);
+
+        assertThatThrownBy(() -> adapter.enqueue(
+                        ACCOUNT,
+                        command(LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31")),
+                        NOW))
+                .hasRootCauseInstanceOf(IllegalStateException.class)
+                .hasStackTraceContaining("exactly one");
+        assertThat(jdbc.queryForObject("select count(*) from backtest.runs", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from backtest.input_bundles", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from operations.outbox_messages", Integer.class)).isZero();
+    }
+
     private static CustomBacktestCommand command(LocalDate start, LocalDate end) {
         return new CustomBacktestCommand(BOT, DATASET, start, end, POLICY, "custom-key-1");
     }
@@ -236,8 +322,16 @@ class CustomBacktestJooqAdapterIntegrationTest {
         return UUID.fromString("99000000-0000-4000-8000-" + String.format("%012d", suffix));
     }
 
+    private static String planDocument() {
+        return "{\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-04\","
+                + "\"requiredFeatures\":[{\"requirementId\":\"rsi-14-pt24h\",\"featureId\":\"" + FEATURE
+                + "\",\"featureVersion\":\"1.0.0\",\"instruments\":[\"" + INSTRUMENT
+                + "\"],\"resolution\":\"PT24H\",\"requiredObservations\":13}]}";
+    }
+
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({BacktestRequestOutboxStore.class, CustomBacktestJooqAdapter.class})
+    @Import({BacktestRequestOutboxStore.class, FeatureMaterializationPinResolver.class,
+            CustomBacktestJooqAdapter.class})
     static class TestApplication {}
 }

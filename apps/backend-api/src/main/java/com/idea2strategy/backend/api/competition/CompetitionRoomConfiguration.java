@@ -41,6 +41,7 @@ import com.idea2strategy.backend.persistence.competition.RoomTerminationJooqAdap
 import com.idea2strategy.backend.persistence.competition.ScoringTemplateCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.CompiledFlowPlanJooqCommandAdapter;
 import com.idea2strategy.backend.persistence.strategy.ImmutableStrategyReleaseJooqCommandAdapter;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJooqQueryAdapter;
@@ -71,6 +72,7 @@ import org.springframework.context.annotation.Import;
     BotRunCommandJooqAdapter.class,
     BotStopCommandJooqAdapter.class,
     CompiledFlowPlanJooqCommandAdapter.class,
+    FeatureMaterializationPinResolver.class,
     ImmutableStrategyReleaseJooqCommandAdapter.class,
     StrategyDocumentJooqQueryAdapter.class,
     StrategyJooqQueryAdapter.class,

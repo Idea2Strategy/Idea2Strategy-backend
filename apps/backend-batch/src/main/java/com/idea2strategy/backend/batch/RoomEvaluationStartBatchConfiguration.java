@@ -2,6 +2,7 @@ package com.idea2strategy.backend.batch;
 
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartService;
 import com.idea2strategy.backend.persistence.competition.RoomEvaluationStartJooqAdapter;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import java.time.Clock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -16,7 +17,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         name = "idea2strategy.batch.room-evaluation-start.enabled",
         havingValue = "true",
         matchIfMissing = true)
-@Import(RoomEvaluationStartJooqAdapter.class)
+@Import({FeatureMaterializationPinResolver.class, RoomEvaluationStartJooqAdapter.class})
 class RoomEvaluationStartBatchConfiguration {
     @Bean
     RoomEvaluationStartService roomEvaluationStartService(RoomEvaluationStartJooqAdapter adapter) {

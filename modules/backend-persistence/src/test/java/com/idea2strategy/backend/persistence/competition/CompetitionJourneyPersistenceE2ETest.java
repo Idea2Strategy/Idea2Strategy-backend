@@ -28,6 +28,7 @@ import com.idea2strategy.backend.application.competition.RoomScheduleTransitionS
 import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.UserCompetitionRoomCreationService;
 import com.idea2strategy.backend.application.competition.UserPostEvaluationChoiceService;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import com.idea2strategy.backend.domain.competition.RoomAccessType;
 import com.idea2strategy.backend.domain.competition.RoomSchedule;
 import com.idea2strategy.backend.domain.competition.ScoringComponent;
@@ -429,6 +430,7 @@ class CompetitionJourneyPersistenceE2ETest {
         PublicRoomSearchJooqAdapter.class,
         RoomScheduleTransitionJooqAdapter.class,
         RoomParticipationAdmissionJooqAdapter.class,
+        FeatureMaterializationPinResolver.class,
         RoomEvaluationStartJooqAdapter.class,
         PostEvaluationChoiceJooqAdapter.class,
         FinalRoomResultJooqAdapter.class,

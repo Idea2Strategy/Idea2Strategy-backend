@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.idea2strategy.backend.application.competition.RoomEvaluationStartReport;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
+import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -53,6 +54,9 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID FEATURE_INSTRUMENT_ID = id(17);
     private static final UUID FEATURE_PIPELINE_RUN_ID = id(18);
     private static final UUID FEATURE_MATERIALIZATION_ID = id(19);
+    private static final UUID FEATURE_MANIFEST_ID = id(20);
+    private static final UUID FEATURE_OBJECT_ID = id(21);
+    private static final UUID FEATURE_DATASET_OBJECT_ID = id(22);
     private static final Instant EVALUATION_START = Instant.parse("2026-08-02T04:00:00Z");
     private static final Instant OBSERVED_AT = EVALUATION_START.plusSeconds(15);
 
@@ -105,6 +109,9 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from competition.backtest_evaluation_plans");
         jdbc.update("delete from backtest.execution_policy_versions where version = 'competition-policy-v1'");
         jdbc.update("delete from market_data.feature_materializations where id = ?", FEATURE_MATERIALIZATION_ID);
+        jdbc.update("delete from market_data.dataset_objects where id = ?", FEATURE_DATASET_OBJECT_ID);
+        jdbc.update("delete from storage.objects where id = ?", FEATURE_OBJECT_ID);
+        jdbc.update("delete from market_data.dataset_manifests where id = ?", FEATURE_MANIFEST_ID);
         jdbc.update("delete from market_data.pipeline_runs where id = ?", FEATURE_PIPELINE_RUN_ID);
         jdbc.update("delete from bot.bot_events");
         jdbc.update("delete from competition.room_schedules");
@@ -673,8 +680,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update(
                 "insert into bot.launch_contract_plans "
                         + "(bot_id, contract_version, plan_schema_version, plan_checksum, plan_document, created_at) "
-                        + "values (?, 'strategy-bot.v1', 'basic-compiled-plan.v1', ?, '{}'::jsonb, ?)",
-                BOT_ID, "sha256:" + "2".repeat(64), at.minusHours(1));
+                        + "values (?, 'strategy-bot.v1', 'basic-compiled-plan.v1', ?, ?::jsonb, ?)",
+                BOT_ID, "sha256:" + "2".repeat(64), featurePlanDocument(), at.minusHours(1));
         jdbc.update(
                 "insert into competition.backtest_evaluation_plans "
                         + "(room_id, plan_version, period_count, plan_hash, commitment_hash, "
@@ -710,6 +717,27 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "started_at, completed_at) values (?, 'TEST_FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
                 FEATURE_PIPELINE_RUN_ID, "competition-feature:" + FEATURE_PIPELINE_RUN_ID,
                 "sha256:" + "c".repeat(64), "sha256:" + "d".repeat(64), at.minusHours(2), at.minusHours(1));
+        jdbc.update("insert into market_data.dataset_manifests "
+                        + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
+                        + "period_end, schema_version, dataset_hash, created_at, available_at) values "
+                        + "(?, ?, ?, 'DERIVED', '1m', 1, 'AVAILABLE', '2024-12-31T00:00:00Z', "
+                        + "'2026-01-01T00:00:00Z', 'feature-series.parquet.v1', ?, ?, ?)",
+                FEATURE_MANIFEST_ID, FEED_ID, FEATURE_INSTRUMENT_ID, "a".repeat(64),
+                at.minusHours(2), at.minusHours(1));
+        jdbc.update("insert into storage.objects "
+                        + "(id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, "
+                        + "byte_size, file_format, compression_codec, media_type, schema_version, row_count, "
+                        + "period_start, period_end, retention_policy_version, created_at, verified_at) values "
+                        + "(?, 'AVAILABLE', 'S3', 'test', 'features/competition.parquet', 'v1', ?, 100, 'PARQUET', "
+                        + "'SNAPPY', 'application/vnd.apache.parquet', 'feature-series.parquet.v1', 100, "
+                        + "'2024-12-31T00:00:00Z', '2026-01-01T00:00:00Z', 'v1', ?, ?)",
+                FEATURE_OBJECT_ID, "f".repeat(64), at.minusHours(2), at.minusHours(1));
+        jdbc.update("insert into market_data.dataset_objects "
+                        + "(id, dataset_manifest_id, object_id, object_kind, partition_granularity, partition_start, "
+                        + "partition_end, period_start, period_end, shard_key, part_number, row_count) values "
+                        + "(?, ?, ?, 'FEATURE_SERIES', 'YEAR', '2025-01-01', '2026-01-01', "
+                        + "'2024-12-31T00:00:00Z', '2026-01-01T00:00:00Z', 'all', 1, 100)",
+                FEATURE_DATASET_OBJECT_ID, FEATURE_MANIFEST_ID, FEATURE_OBJECT_ID);
         jdbc.update(
                 "insert into market_data.feature_materializations "
                         + "(id, feature_definition_id, instrument_id, pipeline_run_id, input_dataset_set_hash, "
@@ -718,7 +746,9 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "'SUCCEEDED', ?, ?)",
                 FEATURE_MATERIALIZATION_ID, UUID.fromString("0f1b0000-0000-4000-8000-000000000001"),
                 FEATURE_INSTRUMENT_ID, FEATURE_PIPELINE_RUN_ID, "sha256:" + "e".repeat(64),
-                at.minusYears(1), at, FIRST_DATASET_ID, "sha256:" + "b".repeat(64), at.minusHours(1), at.minusHours(2));
+                java.time.OffsetDateTime.parse("2024-12-31T00:00:00Z"),
+                java.time.OffsetDateTime.parse("2026-01-01T00:00:00Z"),
+                FEATURE_MANIFEST_ID, "sha256:" + "b".repeat(64), at.minusHours(1), at.minusHours(2));
         jdbc.update(
                 "insert into competition.backtest_period_feature_materializations "
                         + "(evaluation_period_id, feature_materialization_id, locked_result_hash) values "
@@ -783,6 +813,13 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         return UUID.fromString("86000000-0000-4000-8000-" + String.format("%012d", suffix));
     }
 
+    private static String featurePlanDocument() {
+        return "{\"requiredFeatures\":[{\"requirementId\":\"rsi-14-pt1m\","
+                + "\"featureId\":\"0f1b0000-0000-4000-8000-000000000001\","
+                + "\"featureVersion\":\"1.0.0\",\"instruments\":[\"" + FEATURE_INSTRUMENT_ID
+                + "\"],\"resolution\":\"PT1M\",\"requiredObservations\":14}]}";
+    }
+
     private void seedDataset(UUID datasetId, String hashDigit, java.time.OffsetDateTime at) {
         jdbc.update(
                 "insert into market_data.dataset_manifests "
@@ -795,7 +832,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({RoomEvaluationStartJooqAdapter.class, RoomEvaluationAccountResultConsumer.class,
+    @Import({FeatureMaterializationPinResolver.class, RoomEvaluationStartJooqAdapter.class, RoomEvaluationAccountResultConsumer.class,
             TransactionalOutboxStore.class})
     static class TestApplication {}
 }
