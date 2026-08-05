@@ -11,7 +11,9 @@ import com.idea2strategy.backend.application.caseoperations.OperatorCaseApiGuard
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseCommandService;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseQueryService;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRbacApiGuardCatalog;
+import com.idea2strategy.backend.application.operatorrbac.OperatorRbacCommandPort;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRbacCommandService;
+import com.idea2strategy.backend.application.operatorrbac.OperatorRbacReadPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
@@ -66,6 +68,24 @@ class OperatorEndpointsConditionalWiringTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(OperatorCaseApiGuardCatalog.class);
+                });
+    }
+
+    @Test
+    void emptyRbacGuardInputsDoNotBreakPublicApiStartupWhenOperatorAuthIsDisabled() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(OperatorRbacConfiguration.class)
+                .withBean(OperatorRbacCommandPort.class, () -> mock(OperatorRbacCommandPort.class))
+                .withBean(OperatorRbacReadPort.class, () -> mock(OperatorRbacReadPort.class))
+                .withPropertyValues(
+                        "spring.datasource.url=jdbc:postgresql://unused/test",
+                        "idea2strategy.operator-auth.enabled=false",
+                        "idea2strategy.operator-rbac.guard.catalog-version=",
+                        "idea2strategy.operator-rbac.guard.grant-permission-id=",
+                        "idea2strategy.operator-rbac.guard.revoke-permission-id=")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(OperatorRbacApiGuardCatalog.class);
                 });
     }
 }

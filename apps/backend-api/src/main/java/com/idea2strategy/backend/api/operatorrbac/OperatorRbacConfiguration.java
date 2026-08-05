@@ -68,6 +68,10 @@ public class OperatorRbacConfiguration {
 
     @Bean
     @ConditionalOnProperty(
+            prefix = "idea2strategy.operator-auth",
+            name = "enabled",
+            havingValue = "true")
+    @ConditionalOnProperty(
             prefix = "idea2strategy.operator-rbac.guard",
             name = {"catalog-version", "grant-permission-id", "revoke-permission-id"})
     OperatorRbacApiGuardCatalog operatorRbacApiGuardCatalog(
