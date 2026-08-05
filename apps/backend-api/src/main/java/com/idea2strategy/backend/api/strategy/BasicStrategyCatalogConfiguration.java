@@ -6,12 +6,13 @@ import java.time.Clock;
 import java.time.ZoneId;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBean(type = "org.jooq.DSLContext")
+@ConditionalOnProperty(prefix = "spring.datasource", name = "url")
 @Import(BasicStrategyCatalogJooqQueryAdapter.class)
 public class BasicStrategyCatalogConfiguration {
     @Bean
