@@ -34,6 +34,24 @@ class OperatorTrustConfigurationTest {
         assertThatThrownBy(properties::validated).hasMessage("OPERATOR_TRUST_CONFIGURATION_INVALID");
     }
 
+    @Test
+    void namespacedMfaClaimRequiresAnHttpsNameAndExactAllowedValue() {
+        OperatorTrustProperties properties = validProperties();
+        properties.setAllowedAmrValues(java.util.Set.of());
+        properties.setMfaClaimName("https://ideatostrategy.com/claims/mfa");
+        properties.setAllowedMfaClaimValues(java.util.Set.of("cognito:mfa-required"));
+        assertThat(properties.validated().mfaClaimName())
+                .isEqualTo("https://ideatostrategy.com/claims/mfa");
+
+        properties.setMfaClaimName("mfa");
+        assertThatThrownBy(properties::validated).hasMessage("OPERATOR_TRUST_CONFIGURATION_INVALID");
+
+        properties = validProperties();
+        properties.setAllowedAmrValues(java.util.Set.of());
+        properties.setMfaClaimName("https://ideatostrategy.com/claims/mfa");
+        assertThatThrownBy(properties::validated).hasMessage("OPERATOR_TRUST_CONFIGURATION_INVALID");
+    }
+
     private static OperatorTrustProperties validProperties() {
         OperatorTrustProperties value = new OperatorTrustProperties();
         value.setIssuer("https://operator.example");
