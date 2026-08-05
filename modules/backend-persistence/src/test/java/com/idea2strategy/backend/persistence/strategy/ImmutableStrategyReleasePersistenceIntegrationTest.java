@@ -49,6 +49,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
+    private static final UUID FEATURE_FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000012");
     private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_OBJECT_ID = UUID.fromString("e3000000-0000-4000-8000-000000000011");
@@ -107,13 +108,19 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 PLAN_ID, CATALOG_ID, HASH_A, HASH_B, HASH_C, at);
         jdbc.update(
                 "insert into market_data.providers (id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'TEST', 'Test', 'rights/v1', 'ACTIVE', ?)",
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Test', 'rights/v1', 'ACTIVE', ?)",
                 UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'OFFICIAL', 'BAR', '1d', 'UTC', 'v1', ?)",
                 FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'FEATURE_RSI_14_1M_RSI_1_0_0', 'FEATURE_SERIES', '1m', 'UTC', "
+                        + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
+                FEATURE_FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
         jdbc.update(
                 "insert into market_data.dataset_manifests "
                         + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
@@ -140,7 +147,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "period_end, schema_version, dataset_hash, created_at, available_at) values "
                         + "(?, ?, ?, 'DERIVED', '1m', 1, 'AVAILABLE', '2024-12-31T00:00:00Z', "
                         + "'2026-01-01T00:00:00Z', 'feature-series.parquet.v1', ?, ?, ?)",
-                FEATURE_MANIFEST_ID, FEED_ID, INSTRUMENT_ID, HASH_A, at, at);
+                FEATURE_MANIFEST_ID, FEATURE_FEED_ID, INSTRUMENT_ID, HASH_A, at, at);
         jdbc.update("insert into storage.objects "
                         + "(id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, "
                         + "byte_size, file_format, compression_codec, media_type, schema_version, row_count, "
@@ -207,6 +214,16 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.runs")).isZero();
         assertThat(count("operations.outbox_messages")).isZero();
         jdbc.update("update strategy.element_catalog_versions set retired_at = null where id = ?", CATALOG_ID);
+
+        jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", HASH_C, FEATURE_PIPELINE_ID);
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("pipeline result hash");
+        assertThat(count("bot.bots")).isZero();
+        assertThat(count("backtest.runs")).isZero();
+        assertThat(count("backtest.input_bundles")).isZero();
+        assertThat(count("operations.outbox_messages")).isZero();
+        jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", HASH_B, FEATURE_PIPELINE_ID);
 
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);

@@ -76,10 +76,10 @@ class FeatureMaterializationPinResolverIntegrationTest {
                         + "'data/v1', ?, ?)", CATALOG, HASH, created);
         jdbc.update("insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'FEATURE_TEST', 'Feature Test', 'v1', 'ACTIVE', ?)", PROVIDER, created);
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Feature Test', 'v1', 'ACTIVE', ?)", PROVIDER, created);
         jdbc.update("insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
-                        + "values (?, ?, 'FEATURE_TEST', 'FEATURE', '1d', 'UTC', 'v1', ?)",
+                        + "values (?, ?, 'FEATURE_TEST', 'FEATURE_SERIES', '1d', 'UTC', 'v1', ?)",
                 FEED, PROVIDER, created);
         jdbc.update("insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -125,6 +125,29 @@ class FeatureMaterializationPinResolverIntegrationTest {
                         plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("feature-series.parquet.v1");
+    }
+
+    @Test
+    void rejectsStaleUnavailableAndHashInconsistentPublicationMetadata() {
+        jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", "c".repeat(64), PIPELINE);
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pipeline result hash");
+        jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", HASH, PIPELINE);
+
+        jdbc.update("update storage.objects set verified_at = null where id = ?", OBJECT);
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("complete versioned");
+        jdbc.update("update storage.objects set verified_at = ? where id = ?", AS_OF.minusDays(1), OBJECT);
+
+        jdbc.update("update market_data.feeds set retired_at = ? where id = ?", AS_OF.minusHours(1), FEED);
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("feature output feed");
     }
 
     private void seedMaterialization(
