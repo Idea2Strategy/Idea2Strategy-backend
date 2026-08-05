@@ -4,8 +4,12 @@ import com.idea2strategy.backend.application.backtest.BacktestRequestEnvelope;
 import com.idea2strategy.backend.application.backtest.BacktestRequestReceipt;
 import com.idea2strategy.backend.application.backtest.CustomBacktestCommand;
 import com.idea2strategy.backend.application.backtest.CustomBacktestCommandPort;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.UUID;
 import org.jooq.DSLContext;
@@ -89,6 +93,15 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
                 context.get("slippage_rate_bps", Integer.class),
                 context.get("buying_power_buffer_policy_id", UUID.class), accountId.toString(),
                 command.idempotencyKey(), occurredAt.atOffset(java.time.ZoneOffset.UTC));
+        BacktestRunInputPinWriter.pin(dsl, new RunInputPin(
+                request.aggregateId(), request.requestHash(), request.eventSchemaVersion(),
+                prefixed(context.get("plan_checksum", String.class)),
+                prefixed(context.get("snapshot_hash", String.class)), command.executionPolicyVersion(),
+                occurredAt.atOffset(ZoneOffset.UTC),
+                List.of(new DatasetPin(
+                        command.datasetManifestId(), "MARKET_BARS",
+                        prefixed(dataset.get("dataset_hash", String.class)))),
+                List.of()));
         return outbox.enqueue(request, occurredAt);
     }
 

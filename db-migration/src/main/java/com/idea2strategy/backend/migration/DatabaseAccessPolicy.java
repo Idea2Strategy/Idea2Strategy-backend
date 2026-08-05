@@ -198,7 +198,12 @@ public final class DatabaseAccessPolicy {
             case TRADING -> allowsTrading(access, schema, table);
             case BACKEND -> access == Access.READ
                     || ownsBackendTable(schema, table)
-                    || (access == Access.INSERT && "backtest".equals(schema) && "runs".equals(table));
+                    || (access == Access.INSERT && "backtest".equals(schema) && Set.of(
+                            "runs",
+                            "input_bundles",
+                            "input_datasets",
+                            "input_feature_materializations",
+                            "run_input_pins").contains(table));
             case BATCH -> access == Access.READ || Set.of("performance", "operations").contains(schema);
         };
     }

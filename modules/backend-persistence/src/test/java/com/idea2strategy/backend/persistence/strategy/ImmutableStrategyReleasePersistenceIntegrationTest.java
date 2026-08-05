@@ -179,6 +179,9 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         String.class, BOT_ID))
                 .isEqualTo(release.contractPlan().planChecksum());
         assertThat(count("backtest.runs")).isEqualTo(1);
+        assertThat(count("backtest.run_input_pins")).isEqualTo(1);
+        assertThat(count("backtest.input_bundles")).isEqualTo(1);
+        assertThat(count("backtest.input_datasets")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
@@ -200,6 +203,22 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_D);
         assertThat(transported.compiledPlanChecksum()).isEqualTo("sha256:" + HASH_C);
         assertThat(transported.datasetManifestId()).isEqualTo(DATASET_ID.toString());
+        assertThat(transported.expectedDatasetHash()).isEqualTo("sha256:" + HASH_D);
+        assertThat(transported.periodStart()).isEqualTo("2025-01-01");
+        assertThat(transported.periodEnd()).isEqualTo("2025-12-31");
+        assertThat(transported.requestHash()).matches("sha256:[0-9a-f]{64}");
+        assertThat(jdbc.queryForMap(
+                        "select p.input_bundle_fingerprint, p.input_contract_version, "
+                                + "p.compiled_plan_checksum, p.strategy_snapshot_hash, p.execution_policy_version, "
+                                + "b.bundle_hash from backtest.run_input_pins p "
+                                + "join backtest.input_bundles b on b.id = p.input_bundle_id where p.run_id = ?",
+                        request.runId()))
+                .containsEntry("input_bundle_fingerprint", transported.requestHash())
+                .containsEntry("input_contract_version", "strategy-bot.v1")
+                .containsEntry("compiled_plan_checksum", "sha256:" + HASH_C)
+                .containsEntry("strategy_snapshot_hash", "sha256:" + HASH_D)
+                .containsEntry("execution_policy_version", "backtest-policy-v1")
+                .containsEntry("bundle_hash", transported.requestHash());
         assertThat(jdbc.queryForObject(
                         "select event_schema_version from operations.outbox_messages where aggregate_id = ?",
                         String.class,

@@ -18,6 +18,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
@@ -456,7 +457,7 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         assertThat(roomName()).isEqualTo("Draft room");
     }
 
-    @Test
+    @RepeatedTest(10)
     void scheduleTransitionAndConfigurationUpdateSerializeToOneCoherentSnapshot() throws Exception {
         commandAdapter.save(userRoom(ROOM_ID, "Draft room", RoomAccessType.PUBLIC));
         var gate = new CountDownLatch(1);

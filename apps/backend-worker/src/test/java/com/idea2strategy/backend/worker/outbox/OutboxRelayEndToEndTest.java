@@ -46,6 +46,7 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
         "idea2strategy.outbox-relay.queues.OFFICIAL_BACKTEST_REQUESTED=${test.queue.url}",
         "idea2strategy.outbox-relay.endpoint-override=${test.sqs.endpoint}",
         "idea2strategy.outbox-relay.poll-delay=PT600S",
+        "idea2strategy.outbox-relay.initial-delay=PT600S",
         "spring.flyway.enabled=true",
         "idea2strategy.outbox-relay.region=${test.sqs.region}",
         "idea2strategy.outbox-relay.access-key-id=${test.sqs.access-key}",

@@ -99,7 +99,9 @@ public class OutboxRelayConfiguration {
             this.relay = relay;
         }
 
-        @Scheduled(fixedDelayString = "${idea2strategy.outbox-relay.poll-delay:PT1S}")
+        @Scheduled(
+                fixedDelayString = "${idea2strategy.outbox-relay.poll-delay:PT1S}",
+                initialDelayString = "${idea2strategy.outbox-relay.initial-delay:PT0S}")
         public void relay() {
             relay.relayOnce();
         }

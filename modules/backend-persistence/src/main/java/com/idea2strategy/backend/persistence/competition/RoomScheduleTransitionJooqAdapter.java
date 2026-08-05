@@ -50,11 +50,25 @@ public class RoomScheduleTransitionJooqAdapter implements RoomScheduleTransition
         int transitions = 0;
         for (var candidate : candidates) {
             UUID roomId = candidate.get("id", UUID.class);
-            String status = candidate.get("status", String.class);
-            OffsetDateTime recruitmentOpensAt = candidate.get("recruitment_opens_at", OffsetDateTime.class);
-            OffsetDateTime evaluationStartsAt = candidate.get("evaluation_starts_at", OffsetDateTime.class);
-            OffsetDateTime participationClosesAt = candidate.get("participation_closes_at", OffsetDateTime.class);
-            OffsetDateTime evaluationEndsAt = candidate.get("evaluation_ends_at", OffsetDateTime.class);
+            // READ COMMITTED rechecks a room row that changed while FOR UPDATE was waiting, but a
+            // joined schedule can still come from the statement's earlier snapshot. Re-read after
+            // the room lock is ours so a concurrent configuration update and this transition
+            // cannot both commit decisions made from different schedule snapshots.
+            var locked = dsl.fetchOne(
+                    "select r.status::text as status, s.recruitment_opens_at, "
+                            + "s.evaluation_starts_at, s.participation_closes_at, s.evaluation_ends_at "
+                            + "from competition.rooms r "
+                            + "join competition.room_schedules s on s.room_id = r.id "
+                            + "where r.id = ? for update of r",
+                    roomId);
+            if (locked == null) {
+                continue;
+            }
+            String status = locked.get("status", String.class);
+            OffsetDateTime recruitmentOpensAt = locked.get("recruitment_opens_at", OffsetDateTime.class);
+            OffsetDateTime evaluationStartsAt = locked.get("evaluation_starts_at", OffsetDateTime.class);
+            OffsetDateTime participationClosesAt = locked.get("participation_closes_at", OffsetDateTime.class);
+            OffsetDateTime evaluationEndsAt = locked.get("evaluation_ends_at", OffsetDateTime.class);
             if ("DRAFT".equals(status) && !observed.isBefore(recruitmentOpensAt)) {
                 transition(roomId, "DRAFT", "RECRUITING", "RECRUITMENT_OPENED", recruitmentOpensAt, observed);
                 status = "RECRUITING";

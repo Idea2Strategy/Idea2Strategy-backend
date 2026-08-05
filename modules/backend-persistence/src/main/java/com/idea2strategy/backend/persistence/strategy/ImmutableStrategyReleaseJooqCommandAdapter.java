@@ -3,14 +3,19 @@ package com.idea2strategy.backend.persistence.strategy;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.idea2strategy.backend.application.backtest.BacktestRequestIdempotencyConflictException;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandPort;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
 import com.idea2strategy.backend.application.strategy.StrategyDocumentJson;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
@@ -203,11 +208,6 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         }
 
         String idempotencyKey = request.metadata().idempotencyKey();
-        boolean alreadyPublished = dsl.fetchOne(
-                "select 1 from operations.outbox_messages where idempotency_key = ?", idempotencyKey) != null;
-        if (alreadyPublished) {
-            return;
-        }
 
         var dataset = dsl.fetchOne(
                 "select dataset_hash, period_start::date as period_start, period_end::date as period_end "
@@ -228,7 +228,11 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                     "Official backtest execution policy must be locked at the release instant");
         }
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
-        String payload = payloadDocument(request);
+        String expectedDatasetHash = prefixed(dataset.get("dataset_hash", String.class));
+        java.time.LocalDate periodStart = dataset.get("period_start", java.time.LocalDate.class);
+        java.time.LocalDate periodEnd = dataset.get("period_end", java.time.LocalDate.class);
+        BasicPayload basicPayload = payloadDocument(request, expectedDatasetHash, periodStart, periodEnd);
+        String payload = basicPayload.document();
         var configuration = release.launchConfiguration();
 
         dsl.execute(
@@ -243,12 +247,32 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                         + "on conflict (lane, idempotency_scope, idempotency_key) do nothing",
                 request.runId(), request.metadata().messageId(), request.botId(), release.ownerAccountId(),
                 configuration.configurationHash(), payload,
-                dataset.get("period_start", java.time.LocalDate.class),
-                dataset.get("period_end", java.time.LocalDate.class), configuration.initialCashAmount(),
+                periodStart, periodEnd, configuration.initialCashAmount(),
                 configuration.brokerRulesVersion(), configuration.accountingRulesVersion(),
                 request.executionPolicyVersion(), configuration.precisionRulesVersion(),
                 configuration.feePolicyId(), configuration.buyingPowerBufferPolicyId(),
                 release.botId().toString(), idempotencyKey, queuedAt);
+
+        BacktestRunInputPinWriter.pin(dsl, new RunInputPin(
+                request.runId(), basicPayload.requestHash(), request.metadata().contractVersion(),
+                request.compiledPlanChecksum(), request.expectedSnapshotHash(), request.executionPolicyVersion(),
+                queuedAt,
+                List.of(new DatasetPin(request.datasetManifestId(), "MARKET_BARS", expectedDatasetHash)),
+                List.of()));
+
+        var existingOutbox = dsl.fetchOne(
+                "select event_type, event_schema_version, payload_document ->> 'requestHash' as request_hash "
+                        + "from operations.outbox_messages where idempotency_key = ? for update",
+                idempotencyKey);
+        if (existingOutbox != null) {
+            if (!request.metadata().messageType().equals(existingOutbox.get("event_type", String.class))
+                    || !request.metadata().contractVersion().equals(
+                            existingOutbox.get("event_schema_version", String.class))
+                    || !basicPayload.requestHash().equals(existingOutbox.get("request_hash", String.class))) {
+                throw new BacktestRequestIdempotencyConflictException();
+            }
+            return;
+        }
 
         dsl.execute(
                 "insert into operations.outbox_messages "
@@ -260,7 +284,11 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 request.metadata().contractVersion(), payload, idempotencyKey, queuedAt);
     }
 
-    private String payloadDocument(OfficialBacktestRequest request) {
+    private BasicPayload payloadDocument(
+            OfficialBacktestRequest request,
+            String expectedDatasetHash,
+            java.time.LocalDate periodStart,
+            java.time.LocalDate periodEnd) {
         ObjectNode root = objectMapper.createObjectNode();
         ObjectNode metadata = root.putObject("metadata");
         metadata.put("contractVersion", request.metadata().contractVersion());
@@ -276,13 +304,48 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         root.put("expectedSnapshotHash", request.expectedSnapshotHash());
         root.put("compiledPlanChecksum", request.compiledPlanChecksum());
         root.put("datasetManifestId", request.datasetManifestId().toString());
+        root.put("expectedDatasetHash", expectedDatasetHash);
+        root.put("periodStart", periodStart.toString());
+        root.put("periodEnd", periodEnd.toString());
         root.put("assumptionsVersion", request.assumptionsVersion());
         root.put("executionPolicyVersion", request.executionPolicyVersion());
         root.put("requestReason", request.requestReason());
         try {
-            return objectMapper.writeValueAsString(root);
+            String requestHash = basicRequestHash(request, expectedDatasetHash, periodStart, periodEnd);
+            root.put("requestHash", requestHash);
+            return new BasicPayload(
+                    requestHash,
+                    StrategyDocumentJson.canonicalize(objectMapper.writeValueAsString(root)));
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Official backtest request could not be serialized", exception);
         }
     }
+
+    static String basicRequestHash(
+            OfficialBacktestRequest request,
+            String expectedDatasetHash,
+            java.time.LocalDate periodStart,
+            java.time.LocalDate periodEnd) {
+        String material = String.join("\n",
+                request.metadata().contractVersion(),
+                request.metadata().messageType(),
+                request.runId().toString(),
+                request.botId().toString(),
+                request.expectedSnapshotHash(),
+                request.compiledPlanChecksum(),
+                request.datasetManifestId().toString(),
+                expectedDatasetHash,
+                periodStart.toString(),
+                periodEnd.toString(),
+                request.assumptionsVersion(),
+                request.executionPolicyVersion(),
+                request.requestReason());
+        return "sha256:" + StrategyDocumentJson.sha256(material);
+    }
+
+    private static String prefixed(String value) {
+        return value.startsWith("sha256:") ? value : "sha256:" + value;
+    }
+
+    private record BasicPayload(String requestHash, String document) {}
 }
