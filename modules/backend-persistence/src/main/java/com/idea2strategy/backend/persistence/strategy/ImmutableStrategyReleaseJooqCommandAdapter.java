@@ -86,15 +86,20 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             var pinnedPlan = dsl.fetchOne(
                     "select 1 from strategy.compiled_flow_plans p "
                             + "join strategy.validation_runs v on v.id = ? "
+                            + "join strategy.element_catalog_versions c on c.id = p.element_catalog_version_id "
                             + "where p.id = ? and p.semantic_hash = v.semantic_hash "
                             + "and p.element_catalog_version_id = v.element_catalog_version_id "
-                            + "and p.element_catalog_version_id = ?",
+                            + "and p.element_catalog_version_id = ? "
+                            + "and c.published_at <= ?::timestamptz "
+                            + "and (c.retired_at is null or c.retired_at > ?::timestamptz)",
                     validationRunId,
                     flow.compiledFlowPlanId(),
-                    flow.elementCatalogVersionId());
+                    flow.elementCatalogVersionId(),
+                    release.releasedAt().atOffset(ZoneOffset.UTC),
+                    release.releasedAt().atOffset(ZoneOffset.UTC));
             if (pinnedPlan == null) {
                 throw new ImmutableStrategyReleaseRejectedException(
-                        "Compiled flow plan does not match the validated strategy");
+                        "Compiled flow plan or catalog does not match the validated strategy");
             }
         }
 

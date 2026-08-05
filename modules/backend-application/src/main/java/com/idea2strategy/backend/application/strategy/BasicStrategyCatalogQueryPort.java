@@ -11,6 +11,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface BasicStrategyCatalogQueryPort {
+    Optional<ElementCatalogVersion> findPublishedCatalog(UUID catalogId, Instant at);
+
     Optional<ElementCatalogVersion> findPublishedCatalog(
             String languageVersion, String schemaVersion, String catalogVersion, Instant at);
 

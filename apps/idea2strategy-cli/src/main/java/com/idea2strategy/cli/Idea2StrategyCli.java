@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -222,8 +223,44 @@ public final class Idea2StrategyCli {
     }
 
     private static JsonNode strategyRelease(Arguments args, ApiClient api, String token) {
-        args.rejectUnknown("--strategy-id", "--validation-run-id");
-        ObjectNode body = JSON.createObjectNode().put("validationRunId", args.required("--validation-run-id"));
+        args.rejectUnknown(
+                "--strategy-id",
+                "--validation-run-id",
+                "--initial-cash-amount",
+                "--budget-cap-bps",
+                "--broker-rules-version",
+                "--accounting-rules-version",
+                "--precision-rules-version",
+                "--fee-policy-id",
+                "--buying-power-buffer-policy-id",
+                "--dataset-manifest-id",
+                "--execution-policy-version",
+                "--candidate-conflict-policy");
+        BigDecimal initialCashAmount;
+        int budgetCapBps;
+        JsonNode candidateConflictPolicy;
+        try {
+            initialCashAmount = new BigDecimal(args.required("--initial-cash-amount"));
+            budgetCapBps = Integer.parseInt(args.required("--budget-cap-bps"));
+            candidateConflictPolicy = JSON.readTree(args.required("--candidate-conflict-policy"));
+        } catch (Exception exception) {
+            throw Arguments.usage("Release amounts, budget, and candidate conflict policy must be valid");
+        }
+        if (!candidateConflictPolicy.isObject()) {
+            throw Arguments.usage("--candidate-conflict-policy must be a JSON object");
+        }
+        ObjectNode body = JSON.createObjectNode()
+                .put("validationRunId", args.required("--validation-run-id"))
+                .put("initialCashAmount", initialCashAmount)
+                .put("budgetCapBps", budgetCapBps)
+                .put("brokerRulesVersion", args.required("--broker-rules-version"))
+                .put("accountingRulesVersion", args.required("--accounting-rules-version"))
+                .put("precisionRulesVersion", args.required("--precision-rules-version"))
+                .put("feePolicyId", args.required("--fee-policy-id"))
+                .put("buyingPowerBufferPolicyId", args.required("--buying-power-buffer-policy-id"))
+                .put("datasetManifestId", args.required("--dataset-manifest-id"))
+                .put("executionPolicyVersion", args.required("--execution-policy-version"));
+        body.set("candidateConflictPolicy", candidateConflictPolicy);
         return api.post("/api/v1/strategies/" + segment(args.required("--strategy-id"))
                 + "/releases", body, token);
     }

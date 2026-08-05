@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.application.strategy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.testing.TestPrincipal;
 import com.idea2strategy.backend.domain.strategy.CompiledFlowPlan;
@@ -136,6 +137,48 @@ class ImmutableStrategyReleaseCommandServiceTest {
         assertThat(release.contractPlan()).isEqualTo(again.contractPlan());
         assertThat(release.contractPlan().planDocument())
                 .contains("\"snapshotHash\":\"sha256:" + release.snapshotHash() + "\"");
+    }
+
+    @Test
+    void releaseEndpointBindsTheOwnedValidationToTheRequestedStrategyAndItsExactCatalog() {
+        StrategyDocument document = document();
+        StrategyValidationRun validation = validation(document);
+        Strategy strategy = Strategy.createBasic(
+                STRATEGY_ID, OWNER_ID, "Momentum", "Long momentum", NOW.minusSeconds(60));
+        StrategyQueryPort strategies = (id, owner) -> Optional.of(strategy)
+                .filter(value -> id.equals(STRATEGY_ID) && owner.equals(OWNER_ID));
+        StrategyDocumentQueryPort documents = (id, owner) -> Optional.of(document)
+                .filter(value -> id.equals(STRATEGY_ID) && owner.equals(OWNER_ID));
+        StrategyValidationRunQueryPort validations = (id, owner) -> Optional.of(validation)
+                .filter(value -> id.equals(RUN_ID) && owner.equals(OWNER_ID));
+        var planService = new BasicExecutionPlanCommandService(
+                new InMemoryPlanPort(), validations, strategies, documents, new TestPrincipal(OWNER_ID),
+                () -> PLAN_ID, Clock.fixed(NOW, ZoneOffset.UTC));
+        var releasePort = new CapturingReleasePort();
+        var service = new ImmutableStrategyReleaseCommandService(
+                releasePort, planService, validations, strategies, documents,
+                new TestPrincipal(OWNER_ID), Clock.fixed(NOW, ZoneOffset.UTC));
+        var catalogPort = new ExactCatalogPort(catalog());
+        var catalogService = new BasicStrategyCatalogQueryService(
+                catalogPort, Clock.fixed(NOW, ZoneOffset.UTC), ZoneOffset.UTC);
+
+        var release = service.release(STRATEGY_ID, RUN_ID, catalogService, command());
+
+        assertThat(release.botId()).isEqualTo(RELEASE_ID);
+        assertThat(catalogPort.requestedCatalogId).isEqualTo(CATALOG_ID);
+        assertThat(releasePort.backtestRequest).isNotNull();
+    }
+
+    @Test
+    void releaseEndpointDoesNotSubstituteAValidationFromAnotherStrategy() {
+        var service = releaseService();
+        var otherStrategyId = UUID.fromString("20000000-0000-4000-8000-000000000099");
+        var catalogService = new BasicStrategyCatalogQueryService(
+                new ExactCatalogPort(catalog()), Clock.fixed(NOW, ZoneOffset.UTC), ZoneOffset.UTC);
+
+        assertThatThrownBy(() -> service.release(otherStrategyId, RUN_ID, catalogService, command()))
+                .isInstanceOf(java.util.NoSuchElementException.class)
+                .hasMessage("Strategy validation not found");
     }
 
     private ImmutableStrategyReleaseCommandService releaseService() {
@@ -284,6 +327,48 @@ class ImmutableStrategyReleaseCommandServiceTest {
             this.validatedSemanticHash = validatedSemanticHash;
             this.backtestRequest = backtestRequest;
             return release;
+        }
+    }
+
+    private static final class ExactCatalogPort implements BasicStrategyCatalogQueryPort {
+        private final BasicStrategyCatalog catalog;
+        private UUID requestedCatalogId;
+
+        private ExactCatalogPort(BasicStrategyCatalog catalog) {
+            this.catalog = catalog;
+        }
+
+        @Override
+        public Optional<ElementCatalogVersion> findPublishedCatalog(UUID catalogId, Instant at) {
+            requestedCatalogId = catalogId;
+            return Optional.of(catalog.version()).filter(version -> version.id().equals(catalogId));
+        }
+
+        @Override
+        public Optional<ElementCatalogVersion> findPublishedCatalog(
+                String languageVersion, String schemaVersion, String catalogVersion, Instant at) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<StrategyElementDefinition> findElements(UUID catalogId) {
+            return catalog.elements();
+        }
+
+        @Override
+        public Optional<StrategyElementDefinition> findPublishedElement(
+                UUID catalogId, String elementCode, Instant at) {
+            return catalog.elements().stream().filter(element -> element.elementCode().equals(elementCode)).findFirst();
+        }
+
+        @Override
+        public List<StrategyFeatureDefinition> findFeatures(UUID catalogId) {
+            return catalog.features();
+        }
+
+        @Override
+        public List<SupportedInstrument> findSupportedInstruments(Instant at, java.time.LocalDate marketDate) {
+            return catalog.instruments();
         }
     }
 

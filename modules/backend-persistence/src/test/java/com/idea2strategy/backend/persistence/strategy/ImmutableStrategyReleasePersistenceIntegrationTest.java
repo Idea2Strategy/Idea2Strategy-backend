@@ -198,6 +198,16 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
                 release, HASH_C, DATASET_ID, "backtest-policy-v1");
 
+        jdbc.update("update strategy.element_catalog_versions set retired_at = ? where id = ?",
+                NOW.atOffset(ZoneOffset.UTC), CATALOG_ID);
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessage("Compiled flow plan or catalog does not match the validated strategy");
+        assertThat(count("bot.bots")).isZero();
+        assertThat(count("backtest.runs")).isZero();
+        assertThat(count("operations.outbox_messages")).isZero();
+        jdbc.update("update strategy.element_catalog_versions set retired_at = null where id = ?", CATALOG_ID);
+
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
 

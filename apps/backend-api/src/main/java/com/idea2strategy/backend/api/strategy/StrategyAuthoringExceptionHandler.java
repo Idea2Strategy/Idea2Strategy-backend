@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.strategy;
 import com.idea2strategy.backend.application.strategy.StrategyDraftConflictException;
 import com.idea2strategy.backend.application.strategy.StrategyEditLeaseInvalidException;
 import com.idea2strategy.backend.application.strategy.StrategyEditLeaseUnavailableException;
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import java.util.NoSuchElementException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -11,7 +12,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice(assignableTypes = {
     StrategyDraftController.class,
-    StrategyDocumentController.class
+    StrategyDocumentController.class,
+    StrategyReleaseController.class
 })
 public class StrategyAuthoringExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
@@ -36,6 +38,13 @@ public class StrategyAuthoringExceptionHandler {
     ProblemDetail editConflict(RuntimeException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
         problem.setTitle("Strategy edit conflict");
+        return problem;
+    }
+
+    @ExceptionHandler({ImmutableStrategyReleaseRejectedException.class, IllegalStateException.class})
+    ProblemDetail releaseConflict(RuntimeException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
+        problem.setTitle("Strategy release rejected");
         return problem;
     }
 }

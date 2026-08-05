@@ -168,8 +168,37 @@ class Idea2StrategyCliTest {
                 "/api/v1/strategies/s1/copies");
         assertRoute("strategy", "validate", "--strategy-id", "s1", "POST",
                 "/api/v1/strategies/s1/validations");
-        assertRoute("strategy", "release", "--strategy-id", "s1", "--validation-run-id", "v1", "POST",
+        assertRoute("strategy", "release", "--strategy-id", "s1", "--validation-run-id", "v1",
+                "--initial-cash-amount", "100000.00", "--budget-cap-bps", "10000",
+                "--broker-rules-version", "broker/v1", "--accounting-rules-version", "accounting/v1",
+                "--precision-rules-version", "precision/v1", "--fee-policy-id", "fee1",
+                "--buying-power-buffer-policy-id", "buffer1", "--dataset-manifest-id", "dataset1",
+                "--execution-policy-version", "backtest-policy-v1",
+                "--candidate-conflict-policy", "{\"policy\":\"FIRST_WINS\"}", "POST",
                 "/api/v1/strategies/s1/releases");
+    }
+
+    @Test
+    void strategyReleaseSendsEveryLockedLaunchAndBacktestInput() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "strategy", "release", "--strategy-id", "s1", "--validation-run-id", "v1",
+                "--initial-cash-amount", "100000.00", "--budget-cap-bps", "10000",
+                "--broker-rules-version", "broker/v1", "--accounting-rules-version", "accounting/v1",
+                "--precision-rules-version", "precision/v1", "--fee-policy-id", "fee1",
+                "--buying-power-buffer-policy-id", "buffer1", "--dataset-manifest-id", "dataset1",
+                "--execution-policy-version", "backtest-policy-v1",
+                "--candidate-conflict-policy", "{\"policy\":\"FIRST_WINS\"}");
+
+        assertThat(result.exitCode()).isZero();
+        JsonNode body = JSON.readTree(requestBody.get());
+        assertThat(body.path("validationRunId").asText()).isEqualTo("v1");
+        assertThat(body.path("initialCashAmount").decimalValue()).isEqualByComparingTo("100000.00");
+        assertThat(body.path("budgetCapBps").asInt()).isEqualTo(10000);
+        assertThat(body.path("feePolicyId").asText()).isEqualTo("fee1");
+        assertThat(body.path("datasetManifestId").asText()).isEqualTo("dataset1");
+        assertThat(body.path("candidateConflictPolicy").path("policy").asText()).isEqualTo("FIRST_WINS");
     }
 
     private void assertRoute(String... commandAndExpectation) throws Exception {

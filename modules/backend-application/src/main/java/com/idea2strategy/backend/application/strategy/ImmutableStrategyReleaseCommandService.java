@@ -82,6 +82,22 @@ public final class ImmutableStrategyReleaseCommandService {
                 validation.requestedEditSequence(), validation.semanticHash());
     }
 
+    public ImmutableStrategyRelease release(
+            UUID strategyId,
+            UUID validationRunId,
+            BasicStrategyCatalogQueryService catalogService,
+            ImmutableStrategyReleaseCommand command) {
+        Objects.requireNonNull(strategyId, "strategyId");
+        Objects.requireNonNull(validationRunId, "validationRunId");
+        Objects.requireNonNull(catalogService, "catalogService");
+        var validation = validationPort.findOwnedById(validationRunId, principal.accountId())
+                .orElseThrow(() -> new NoSuchElementException("Strategy validation not found"));
+        if (!strategyId.equals(validation.strategyId())) {
+            throw new NoSuchElementException("Strategy validation not found");
+        }
+        return release(validationRunId, catalogService.getPublished(validation.elementCatalogVersionId()), command);
+    }
+
     public ImmutableStrategyRelease prepare(
             UUID validationRunId,
             BasicStrategyCatalog catalog,
