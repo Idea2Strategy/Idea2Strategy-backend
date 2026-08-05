@@ -37,6 +37,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/operations/cases")
 @ConditionalOnProperty(
+        prefix = "idea2strategy.operator-auth", name = "enabled", havingValue = "true")
+@ConditionalOnProperty(
         prefix = "idea2strategy.operator-case.guard",
         name = {"queue-permission-id", "detail-permission-id"})
 public class OperatorCaseController {

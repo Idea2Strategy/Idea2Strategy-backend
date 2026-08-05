@@ -27,6 +27,10 @@ public class AccountSanctionConfiguration {
 
     @Bean
     @ConditionalOnBean(AccountSanctionAuthorizationPort.class)
+    @ConditionalOnProperty(
+            prefix = "idea2strategy.operator-auth",
+            name = "enabled",
+            havingValue = "true")
     AccountSanctionCommandService accountSanctionCommandService(
             AccountSanctionJdbcAdapter adapter,
             AccountSanctionAuthorizationPort authorization,
