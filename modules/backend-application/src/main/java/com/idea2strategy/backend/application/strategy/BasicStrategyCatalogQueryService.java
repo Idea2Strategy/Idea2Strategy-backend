@@ -31,6 +31,19 @@ public final class BasicStrategyCatalogQueryService {
         ElementCatalogVersion version = queryPort
                 .findPublishedCatalog(languageVersion, schemaVersion, catalogVersion, now)
                 .orElseThrow(StrategyCatalogNotFoundException::new);
+        return catalog(version, now);
+    }
+
+    public BasicStrategyCatalog getPublished(UUID catalogId) {
+        Objects.requireNonNull(catalogId, "catalogId");
+        Instant now = clock.instant();
+        ElementCatalogVersion version = queryPort
+                .findPublishedCatalog(catalogId, now)
+                .orElseThrow(StrategyCatalogNotFoundException::new);
+        return catalog(version, now);
+    }
+
+    private BasicStrategyCatalog catalog(ElementCatalogVersion version, Instant now) {
         List<StrategyElementDefinition> elements = queryPort.findElements(version.id()).stream()
                 .sorted(Comparator.comparing(StrategyElementDefinition::elementCode))
                 .toList();

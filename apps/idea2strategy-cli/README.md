@@ -31,7 +31,10 @@ strategy copy --strategy-id ID --name NAME
 strategy edit preview --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE
 strategy edit apply --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE --preview-hash HASH
 strategy validate --strategy-id ID
-strategy release --strategy-id ID --validation-run-id ID
+strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount AMOUNT --budget-cap-bps BPS
+  --broker-rules-version VERSION --accounting-rules-version VERSION --precision-rules-version VERSION
+  --fee-policy-id ID --buying-power-buffer-policy-id ID --dataset-manifest-id ID
+  --execution-policy-version VERSION --candidate-conflict-policy JSON_OBJECT
 operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
 

@@ -85,6 +85,11 @@ class BasicStrategyCatalogControllerTest {
                 NOW.minusSeconds(60), null));
 
         @Override
+        public Optional<ElementCatalogVersion> findPublishedCatalog(UUID catalogId, Instant at) {
+            return catalog.filter(version -> version.id().equals(catalogId));
+        }
+
+        @Override
         public Optional<ElementCatalogVersion> findPublishedCatalog(
                 String languageVersion, String schemaVersion, String catalogVersion, Instant at) {
             return catalog;

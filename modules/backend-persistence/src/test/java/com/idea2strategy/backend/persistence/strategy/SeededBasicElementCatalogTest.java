@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.Map;
+import java.time.Instant;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -42,6 +45,9 @@ class SeededBasicElementCatalogTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private BasicStrategyCatalogJooqQueryAdapter catalogAdapter;
+
     @Test
     void publishesExactlyOneCatalogVersion() {
         List<Map<String, Object>> versions = jdbc.queryForList(
@@ -54,6 +60,18 @@ class SeededBasicElementCatalogTest {
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
             assertThat(version.get("retired_at")).isNull();
         });
+    }
+
+    @Test
+    void resolvesTheExactPublishedCatalogPinnedByAValidationRun() {
+        UUID catalogId = jdbc.queryForObject(
+                "select id from strategy.element_catalog_versions where retired_at is null",
+                UUID.class);
+
+        assertThat(catalogAdapter.findPublishedCatalog(catalogId, Instant.now()))
+                .get()
+                .extracting(version -> version.id())
+                .isEqualTo(catalogId);
     }
 
     /** Exactly the three operations both runtimes implement, and nothing a runtime would refuse. */
@@ -164,5 +182,6 @@ class SeededBasicElementCatalogTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
+    @Import(BasicStrategyCatalogJooqQueryAdapter.class)
     static class TestApplication {}
 }
