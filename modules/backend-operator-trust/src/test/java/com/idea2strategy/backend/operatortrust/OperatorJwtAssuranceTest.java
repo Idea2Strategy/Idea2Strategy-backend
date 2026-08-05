@@ -38,6 +38,22 @@ class OperatorJwtAssuranceTest {
                 "amr", List.of("pwd"), "auth_time", NOW.minusSeconds(1).getEpochSecond()))).currentMfa()).isFalse();
     }
 
+    @Test
+    void acceptsOnlyTheConfiguredNamespacedClaimForAForcedMfaProvider() {
+        var cognito = new OperatorJwtAssurance(
+                OperatorTrustTestFixtures.cognitoConfiguration(), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "https://ideatostrategy.com/claims/mfa", "cognito:mfa-required",
+                "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isTrue();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "https://ideatostrategy.com/claims/mfa", "unapproved",
+                "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isFalse();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "mfa", "cognito:mfa-required",
+                "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isFalse();
+    }
+
     static Jwt jwt(Map<String, Object> extraClaims) {
         var builder = Jwt.withTokenValue("verified-token")
                 .header("alg", "RS256")

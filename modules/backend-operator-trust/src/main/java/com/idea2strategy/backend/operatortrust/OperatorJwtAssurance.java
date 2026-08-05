@@ -25,7 +25,9 @@ public final class OperatorJwtAssurance {
         }
         Instant authenticatedAt = instant(jwt.getClaim("auth_time"));
         Instant issuedAt = jwt.getIssuedAt();
-        boolean approvedAssurance = approvedAcr(jwt.getClaim("acr")) || approvedAmr(jwt.getClaim("amr"));
+        boolean approvedAssurance = approvedAcr(jwt.getClaim("acr"))
+                || approvedAmr(jwt.getClaim("amr"))
+                || approvedNamespacedMfa(jwt);
         Instant now = clock.instant();
         boolean fresh = authenticatedAt != null
                 && issuedAt != null
@@ -44,6 +46,18 @@ public final class OperatorJwtAssurance {
         if (!(claim instanceof Collection<?> values)) return false;
         return values.stream().filter(String.class::isInstance).map(String.class::cast)
                 .anyMatch(configuration.allowedAmrValues()::contains);
+    }
+
+    private boolean approvedNamespacedMfa(Jwt jwt) {
+        String claimName = configuration.mfaClaimName();
+        if (claimName == null) return false;
+        Object claim = jwt.getClaim(claimName);
+        if (claim instanceof String value) {
+            return configuration.allowedMfaClaimValues().contains(value);
+        }
+        if (!(claim instanceof Collection<?> values)) return false;
+        return values.stream().filter(String.class::isInstance).map(String.class::cast)
+                .anyMatch(configuration.allowedMfaClaimValues()::contains);
     }
 
     private static Instant instant(Object value) {

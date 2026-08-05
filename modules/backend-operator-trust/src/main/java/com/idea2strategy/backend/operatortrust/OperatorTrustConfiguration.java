@@ -18,6 +18,8 @@ public record OperatorTrustConfiguration(
         Duration clockSkew,
         Set<String> allowedAcrValues,
         Set<String> allowedAmrValues,
+        String mfaClaimName,
+        Set<String> allowedMfaClaimValues,
         Map<Integer, byte[]> subjectHmacKeys,
         int currentSubjectHmacKeyVersion) {
 
@@ -30,9 +32,15 @@ public record OperatorTrustConfiguration(
         clockSkew = Objects.requireNonNull(clockSkew, "clockSkew");
         allowedAcrValues = clean(allowedAcrValues);
         allowedAmrValues = clean(allowedAmrValues);
+        allowedMfaClaimValues = clean(allowedMfaClaimValues);
+        mfaClaimName = optional(mfaClaimName);
+        boolean customClaimConfigured = mfaClaimName != null || !allowedMfaClaimValues.isEmpty();
         if (!https(issuer) || !https(jwkSetUri.toString()) || clockSkew.isNegative()
                 || clockSkew.compareTo(Duration.ofMinutes(1)) > 0
-                || (allowedAcrValues.isEmpty() && allowedAmrValues.isEmpty())) {
+                || (allowedAcrValues.isEmpty() && allowedAmrValues.isEmpty()
+                        && allowedMfaClaimValues.isEmpty())
+                || (customClaimConfigured
+                        && (!namespacedClaim(mfaClaimName) || allowedMfaClaimValues.isEmpty()))) {
             throw invalid();
         }
         var copiedKeys = new LinkedHashMap<Integer, byte[]>();
@@ -73,6 +81,24 @@ public record OperatorTrustConfiguration(
         var result = new java.util.LinkedHashSet<String>();
         for (String value : values) result.add(required(value, "assuranceValue"));
         return Set.copyOf(result);
+    }
+
+    private static String optional(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static boolean namespacedClaim(String value) {
+        if (value == null || "acr".equals(value) || "amr".equals(value)) return false;
+        try {
+            URI uri = URI.create(value);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && uri.getRawUserInfo() == null
+                    && uri.getRawQuery() == null
+                    && uri.getRawFragment() == null;
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
     }
 
     private static Duration positive(Duration value, String name) {

@@ -11,7 +11,17 @@ final class OperatorTrustTestFixtures {
                 "https://operator.example", URI.create("https://operator.example/jwks"),
                 "operator-api", Duration.ofMinutes(5), Duration.ofMinutes(10),
                 Duration.ofSeconds(30), Set.of("urn:mfa"), Set.of("mfa", "otp"),
+                null, Set.of(),
                 Map.of(2, key(2), 1, key(1)), 2);
+    }
+
+    static OperatorTrustConfiguration cognitoConfiguration() {
+        return new OperatorTrustConfiguration(
+                "https://operator.example", URI.create("https://operator.example/jwks"),
+                "operator-api", Duration.ofMinutes(5), Duration.ofMinutes(10),
+                Duration.ofSeconds(30), Set.of(), Set.of(),
+                "https://ideatostrategy.com/claims/mfa", Set.of("cognito:mfa-required"),
+                Map.of(2, key(2)), 2);
     }
 
     static byte[] key(int marker) {
