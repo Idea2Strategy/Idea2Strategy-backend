@@ -62,9 +62,11 @@ public final class DatabaseAccessPolicy {
             while (matcher.find()) {
                 var table = new QualifiedTable(matcher.group("schema"), matcher.group("table"));
                 var owner = ownerFor(table);
-                if (ownership.putIfAbsent(table, owner) != null) {
-                    throw new IllegalArgumentException("Table is declared more than once: " + table);
-                }
+                // A guarded legacy-schema upgrade may redeclare a table that already exists in
+                // the immutable fresh-install baseline. Ownership is derived from the qualified
+                // table name, so repeated declarations cannot change owners and the ACL manifest
+                // must retain exactly one entry.
+                ownership.putIfAbsent(table, owner);
             }
         }
         if (ownership.isEmpty()) {
