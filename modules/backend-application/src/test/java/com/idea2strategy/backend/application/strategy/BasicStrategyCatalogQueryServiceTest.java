@@ -39,6 +39,19 @@ class BasicStrategyCatalogQueryServiceTest {
     }
 
     @Test
+    void returnsSupportedInstrumentsWithoutLoadingAPublishedCatalog() {
+        var port = new StubCatalogPort();
+        port.catalog = Optional.empty();
+        var service = new BasicStrategyCatalogQueryService(
+                port, Clock.fixed(NOW, ZoneId.of("UTC")), ZoneId.of("America/New_York"));
+
+        assertThat(service.getSupportedInstruments())
+                .extracting(SupportedInstrument::symbol)
+                .containsExactly("AAPL", "SPY");
+        assertThat(port.marketDate).isEqualTo(java.time.LocalDate.of(2026, 8, 1));
+    }
+
+    @Test
     void rejectsUnknownOrCrossCatalogElements() {
         var service = new BasicStrategyCatalogQueryService(
                 new StubCatalogPort(), Clock.fixed(NOW, ZoneId.of("UTC")), ZoneId.of("America/New_York"));
