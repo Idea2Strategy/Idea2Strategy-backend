@@ -23,6 +23,9 @@ public record OperatorTrustConfiguration(
         Map<Integer, byte[]> subjectHmacKeys,
         int currentSubjectHmacKeyVersion) {
 
+    static final String COGNITO_MFA_CLAIM = "https://ideatostrategy.com/claims/mfa";
+    static final String COGNITO_MFA_VALUE = "cognito:mfa-required";
+
     public OperatorTrustConfiguration {
         issuer = required(issuer, "issuer");
         jwkSetUri = Objects.requireNonNull(jwkSetUri, "jwkSetUri");
@@ -40,7 +43,8 @@ public record OperatorTrustConfiguration(
                 || (allowedAcrValues.isEmpty() && allowedAmrValues.isEmpty()
                         && allowedMfaClaimValues.isEmpty())
                 || (customClaimConfigured
-                        && (!namespacedClaim(mfaClaimName) || allowedMfaClaimValues.isEmpty()))) {
+                        && (!COGNITO_MFA_CLAIM.equals(mfaClaimName)
+                                || !Set.of(COGNITO_MFA_VALUE).equals(allowedMfaClaimValues)))) {
             throw invalid();
         }
         var copiedKeys = new LinkedHashMap<Integer, byte[]>();
@@ -85,20 +89,6 @@ public record OperatorTrustConfiguration(
 
     private static String optional(String value) {
         return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    private static boolean namespacedClaim(String value) {
-        if (value == null || "acr".equals(value) || "amr".equals(value)) return false;
-        try {
-            URI uri = URI.create(value);
-            return "https".equalsIgnoreCase(uri.getScheme())
-                    && uri.getHost() != null
-                    && uri.getRawUserInfo() == null
-                    && uri.getRawQuery() == null
-                    && uri.getRawFragment() == null;
-        } catch (IllegalArgumentException exception) {
-            return false;
-        }
     }
 
     private static Duration positive(Duration value, String name) {
