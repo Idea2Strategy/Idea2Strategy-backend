@@ -49,6 +49,17 @@ class OperatorTrustConfigurationTest {
         properties = validProperties();
         properties.setAllowedAmrValues(java.util.Set.of());
         properties.setMfaClaimName("https://ideatostrategy.com/claims/mfa");
+        properties.setAllowedMfaClaimValues(java.util.Set.of());
+        assertThatThrownBy(properties::validated).hasMessage("OPERATOR_TRUST_CONFIGURATION_INVALID");
+
+        properties = validProperties();
+        properties.setMfaClaimName("https://example.com/claims/mfa");
+        properties.setAllowedMfaClaimValues(java.util.Set.of("cognito:mfa-required"));
+        assertThatThrownBy(properties::validated).hasMessage("OPERATOR_TRUST_CONFIGURATION_INVALID");
+
+        properties = validProperties();
+        properties.setMfaClaimName("https://ideatostrategy.com/claims/mfa");
+        properties.setAllowedMfaClaimValues(java.util.Set.of("cognito:mfa-required", "other"));
         assertThatThrownBy(properties::validated).hasMessage("OPERATOR_TRUST_CONFIGURATION_INVALID");
     }
 

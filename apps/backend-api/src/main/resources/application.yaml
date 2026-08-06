@@ -33,8 +33,8 @@ idea2strategy:
     clock-skew: ${OPERATOR_AUTH_CLOCK_SKEW:PT30S}
     allowed-acr-values: ${OPERATOR_AUTH_ALLOWED_ACR_VALUES:}
     allowed-amr-values: ${OPERATOR_AUTH_ALLOWED_AMR_VALUES:mfa}
-    mfa-claim-name: ${OPERATOR_AUTH_MFA_CLAIM_NAME:}
-    allowed-mfa-claim-values: ${OPERATOR_AUTH_ALLOWED_MFA_CLAIM_VALUES:}
+    mfa-claim-name: ${OPERATOR_AUTH_MFA_CLAIM_NAME:https://ideatostrategy.com/claims/mfa}
+    allowed-mfa-claim-values: ${OPERATOR_AUTH_ALLOWED_MFA_CLAIM_VALUES:cognito:mfa-required}
     current-subject-hmac-key-version: ${OPERATOR_AUTH_CURRENT_HMAC_KEY_VERSION:0}
     current-subject-hmac-key: ${OPERATOR_AUTH_CURRENT_HMAC_KEY:}
     # Optional rotation uses Spring's direct relaxed-binding names:

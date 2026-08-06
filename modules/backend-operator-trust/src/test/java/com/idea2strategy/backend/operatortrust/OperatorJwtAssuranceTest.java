@@ -52,6 +52,20 @@ class OperatorJwtAssuranceTest {
         assertThat(cognito.verifyAssurance(jwt(Map.of(
                 "mfa", "cognito:mfa-required",
                 "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isFalse();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "https://ideatostrategy.com/claims/mfa", List.of("cognito:mfa-required"),
+                "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isFalse();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "https://ideatostrategy.com/claims/mfa", List.of("cognito:mfa-required", "other"),
+                "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isFalse();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "https://ideatostrategy.com/claims/mfa", "cognito:mfa-required",
+                "auth_time", NOW.minusSeconds(601).getEpochSecond()))).currentMfa()).isFalse();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "https://ideatostrategy.com/claims/mfa", "cognito:mfa-required",
+                "auth_time", NOW.plusSeconds(1).getEpochSecond()))).currentMfa()).isFalse();
+        assertThat(cognito.verifyAssurance(jwt(Map.of(
+                "auth_time", NOW.minusSeconds(60).getEpochSecond()))).currentMfa()).isFalse();
     }
 
     static Jwt jwt(Map<String, Object> extraClaims) {
