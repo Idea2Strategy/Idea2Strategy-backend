@@ -52,12 +52,8 @@ public final class OperatorJwtAssurance {
         String claimName = configuration.mfaClaimName();
         if (claimName == null) return false;
         Object claim = jwt.getClaim(claimName);
-        if (claim instanceof String value) {
-            return configuration.allowedMfaClaimValues().contains(value);
-        }
-        if (!(claim instanceof Collection<?> values)) return false;
-        return values.stream().filter(String.class::isInstance).map(String.class::cast)
-                .anyMatch(configuration.allowedMfaClaimValues()::contains);
+        return claim instanceof String value
+                && configuration.allowedMfaClaimValues().contains(value);
     }
 
     private static Instant instant(Object value) {
