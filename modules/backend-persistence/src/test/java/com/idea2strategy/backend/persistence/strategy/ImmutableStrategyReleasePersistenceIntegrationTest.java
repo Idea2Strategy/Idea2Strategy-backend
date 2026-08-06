@@ -49,7 +49,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
-    private static final UUID FEATURE_FEED_ID = UUID.fromString("2c4ff221-e499-5f43-8241-71f727d144bf");
+    private static final UUID FEATURE_FEED_ID = UUID.fromString("39e0e076-89e0-5159-b113-a8f6778b7c9e");
     private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_OBJECT_ID = UUID.fromString("e3000000-0000-4000-8000-000000000011");
@@ -137,7 +137,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
                         + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1m', '{}'::jsonb, 'NUMBER', 14, ?)",
-                FEATURE_ID, CATALOG_ID, HASH_B);
+                FEATURE_ID, CATALOG_ID, "sha256:" + HASH_B);
         jdbc.update("insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
                         + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "

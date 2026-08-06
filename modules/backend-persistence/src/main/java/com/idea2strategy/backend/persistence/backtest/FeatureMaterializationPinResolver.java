@@ -34,6 +34,7 @@ public final class FeatureMaterializationPinResolver {
     private static final String FEATURE_PIPELINE_CODE = "MATERIALIZE_FEATURE_OUTPUT";
     private static final Pattern SHORTHAND = Pattern.compile("(?<amount>[1-9][0-9]*)(?<unit>[smhd])");
     private static final Pattern SHA_256 = Pattern.compile("(?:sha256:)?[0-9a-f]{64}");
+    private static final Pattern CANONICAL_SHA_256 = Pattern.compile("sha256:[0-9a-f]{64}");
 
     private final DSLContext dsl;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -164,6 +165,9 @@ public final class FeatureMaterializationPinResolver {
         String calculatorVersion = candidate.get("calculator_version", String.class);
         String definitionResolution = candidate.get("definition_resolution", String.class);
         String featureCode = candidate.get("feature_code", String.class);
+        if (definitionHash == null || !CANONICAL_SHA_256.matcher(definitionHash).matches()) {
+            throw mismatch("feature definition hash");
+        }
         UUID expectedFeedId = deterministicUuid(
                 "feature-output-feed", definitionHash, calculatorVersion, definitionResolution, OUTPUT_SCHEMA);
         if (!INTERNAL_PROVIDER_CODE.equals(candidate.get("provider_code", String.class))

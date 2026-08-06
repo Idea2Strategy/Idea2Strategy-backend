@@ -27,10 +27,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class FeatureMaterializationPinResolverIntegrationTest {
     private static final UUID CATALOG = id(1);
     private static final String HASH = "a".repeat(64);
+    private static final String DEFINITION_HASH = "sha256:" + HASH;
     private static final UUID PROVIDER = FeatureMaterializationPinResolver.deterministicUuid(
             "provider", "IDEA2STRATEGY_INTERNAL");
     private static final UUID FEED = FeatureMaterializationPinResolver.deterministicUuid(
-            "feature-output-feed", HASH, "rsi:1.0.0", "1d", FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
+            "feature-output-feed", DEFINITION_HASH, "rsi:1.0.0", "1d",
+            FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
     private static final UUID INSTRUMENT = id(4);
     private static final UUID FEATURE = id(5);
     private static final UUID PIPELINE = id(6);
@@ -92,7 +94,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
                         + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
-                FEATURE, CATALOG, HASH);
+                FEATURE, CATALOG, DEFINITION_HASH);
         seedMaterialization(MATERIALIZATION, PIPELINE, MANIFEST, OBJECT, DATASET_OBJECT, "b".repeat(64));
     }
 

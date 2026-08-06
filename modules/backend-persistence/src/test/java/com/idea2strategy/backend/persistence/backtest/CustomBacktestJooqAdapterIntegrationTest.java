@@ -42,7 +42,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
     private static final UUID FEATURE_OBJECT = id(13);
     private static final UUID FEATURE_DATASET_OBJECT = id(14);
     private static final UUID MATERIALIZATION = id(15);
-    private static final UUID FEATURE_FEED = UUID.fromString("e436aeea-814e-5be5-ab29-e93e628a9aa5");
+    private static final UUID FEATURE_FEED = UUID.fromString("084734d5-f52e-5541-bec6-11a85ed3d84b");
     private static final String POLICY = "backtest-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
 
@@ -133,7 +133,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
                         + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
-                FEATURE, CATALOG, "c".repeat(64));
+                FEATURE, CATALOG, "sha256:" + "c".repeat(64));
         jdbc.update("insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
                         + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "
