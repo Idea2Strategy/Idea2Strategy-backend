@@ -3,7 +3,6 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.CurrentPolicyDecision;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
 import com.idea2strategy.backend.application.identity.RecordConsentDecision;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
 import com.idea2strategy.backend.domain.identity.AccountConsent;
 import java.util.List;
 import java.util.UUID;
@@ -19,21 +18,16 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/policies")
-@ConditionalOnBean({PolicyConsentService.class, SessionManagementService.class, HmacSessionTokens.class})
+@ConditionalOnBean({PolicyConsentService.class, CustomerAccessPrincipal.class})
 public class IdentityPolicyController {
-    private static final String BEARER_PREFIX = "Bearer ";
-
     private final PolicyConsentService policies;
-    private final SessionManagementService sessions;
-    private final HmacSessionTokens tokens;
+    private final CustomerAccessPrincipal principal;
 
     public IdentityPolicyController(
             PolicyConsentService policies,
-            SessionManagementService sessions,
-            HmacSessionTokens tokens) {
+            CustomerAccessPrincipal principal) {
         this.policies = policies;
-        this.sessions = sessions;
-        this.tokens = tokens;
+        this.principal = principal;
     }
 
     @GetMapping("/current")
@@ -41,8 +35,6 @@ public class IdentityPolicyController {
             @RequestParam String language,
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        UUID correlation = correlation(correlationId);
-        var principal = sessions.authenticate(digest(authorization), correlation);
         return policies.currentPolicies(principal.accountId(), language);
     }
 
@@ -51,8 +43,6 @@ public class IdentityPolicyController {
             @PathVariable UUID policyDocumentId,
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        UUID correlation = correlation(correlationId);
-        var principal = sessions.authenticate(digest(authorization), correlation);
         return policies.history(principal.accountId(), policyDocumentId);
     }
 
@@ -63,21 +53,9 @@ public class IdentityPolicyController {
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         UUID correlation = correlation(correlationId);
-        var principal = sessions.authenticate(digest(authorization), correlation);
         return policies.decide(
                 principal.accountId(),
                 new RecordConsentDecision(policyDocumentId, request.decision(), correlation));
-    }
-
-    private String digest(String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            throw new IllegalArgumentException("Authorization must use a Bearer session token");
-        }
-        String rawToken = authorization.substring(BEARER_PREFIX.length()).trim();
-        if (rawToken.isEmpty()) {
-            throw new IllegalArgumentException("Bearer session token is required");
-        }
-        return tokens.digest(rawToken);
     }
 
     private static UUID correlation(String value) {

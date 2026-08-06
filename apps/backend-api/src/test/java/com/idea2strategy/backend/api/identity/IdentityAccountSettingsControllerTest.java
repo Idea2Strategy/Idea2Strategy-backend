@@ -8,9 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.idea2strategy.backend.application.identity.AccountPreferencesService;
-import com.idea2strategy.backend.application.identity.AuthenticatedSession;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
 import com.idea2strategy.backend.application.identity.UpdateAccountPreferences;
 import com.idea2strategy.backend.domain.identity.AccountConsent;
 import com.idea2strategy.backend.domain.identity.ConsentDecision;
@@ -25,12 +23,10 @@ class IdentityAccountSettingsControllerTest {
     @Test
     void preferenceUpdateUsesOnlyTheAuthenticatedAccountId() {
         var preferences = mock(AccountPreferencesService.class);
-        var sessions = mock(SessionManagementService.class);
-        var tokens = new HmacSessionTokens(new byte[32]);
+        var principal = mock(CustomerAccessPrincipal.class);
         UUID correlationId = UUID.randomUUID();
-        when(sessions.authenticate(any(), eq(correlationId)))
-                .thenReturn(new AuthenticatedSession(ACCOUNT_ID, SESSION_ID));
-        var controller = new IdentityPreferencesController(preferences, sessions, tokens);
+        when(principal.accountId()).thenReturn(ACCOUNT_ID);
+        var controller = new IdentityPreferencesController(preferences, principal);
 
         controller.update(
                 new IdentityPreferencesController.UpdatePreferencesRequest("en", "America/Chicago", "DARK"),
@@ -45,16 +41,14 @@ class IdentityAccountSettingsControllerTest {
     @Test
     void consentDecisionUsesTheExactDocumentAndAuthenticatedAccount() {
         var policies = mock(PolicyConsentService.class);
-        var sessions = mock(SessionManagementService.class);
-        var tokens = new HmacSessionTokens(new byte[32]);
+        var principal = mock(CustomerAccessPrincipal.class);
         UUID documentId = UUID.randomUUID();
         UUID correlationId = UUID.randomUUID();
         var consent = new AccountConsent(
                 UUID.randomUUID(), ACCOUNT_ID, documentId, ConsentDecision.ACCEPTED, null, Instant.now());
-        when(sessions.authenticate(any(), eq(correlationId)))
-                .thenReturn(new AuthenticatedSession(ACCOUNT_ID, SESSION_ID));
+        when(principal.accountId()).thenReturn(ACCOUNT_ID);
         when(policies.decide(eq(ACCOUNT_ID), any())).thenReturn(consent);
-        var controller = new IdentityPolicyController(policies, sessions, tokens);
+        var controller = new IdentityPolicyController(policies, principal);
 
         var response = controller.decide(
                 documentId,

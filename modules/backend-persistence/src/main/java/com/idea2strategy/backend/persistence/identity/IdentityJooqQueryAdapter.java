@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 
@@ -198,6 +199,15 @@ public class IdentityJooqQueryAdapter
 
     @Override
     public Optional<StoredSession> findByTokenDigest(String tokenDigest) {
+        return findSession(field(name("session", "token_digest"), String.class).eq(tokenDigest));
+    }
+
+    @Override
+    public Optional<StoredSession> findById(UUID sessionId) {
+        return findSession(field(name("session", "id"), UUID.class).eq(sessionId));
+    }
+
+    private Optional<StoredSession> findSession(Condition condition) {
         var sessions = table(name("identity", "sessions")).as("session");
         var accounts = table(name("identity", "accounts")).as("account");
         var logins = table(name("identity", "login_identities")).as("login");
@@ -236,7 +246,7 @@ public class IdentityJooqQueryAdapter
                         .eq(field(name("session", "account_id"), UUID.class)))
                 .leftJoin(credentials).on(field(name("credential", "login_identity_id"), UUID.class)
                         .eq(field(name("login", "id"), UUID.class)))
-                .where(field(name("session", "token_digest"), String.class).eq(tokenDigest))
+                .where(condition)
                 .fetchOptional(record -> new StoredSession(
                         record.value1(),
                         record.value2(),

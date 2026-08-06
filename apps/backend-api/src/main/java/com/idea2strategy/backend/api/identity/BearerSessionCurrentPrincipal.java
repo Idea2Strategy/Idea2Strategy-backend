@@ -1,8 +1,11 @@
 package com.idea2strategy.backend.api.identity;
 
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
+import com.idea2strategy.backend.application.identity.AuthenticatedSession;
 import com.idea2strategy.backend.application.identity.CustomerAccessScope;
+import com.idea2strategy.backend.application.identity.SessionManagementService;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.EnumMap;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -12,13 +15,18 @@ public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
 
     private final HttpServletRequest request;
     private final CustomerJwtCodec jwt;
-    private CustomerJwtCodec.AccessClaims resolved;
+    private final SessionManagementService sessions;
+    private final EnumMap<CustomerAccessScope, AuthenticatedSession> authenticated =
+            new EnumMap<>(CustomerAccessScope.class);
+    private CustomerJwtCodec.AccessClaims claims;
 
     public BearerSessionCurrentPrincipal(
             HttpServletRequest request,
-            CustomerJwtCodec jwt) {
+            CustomerJwtCodec jwt,
+            SessionManagementService sessions) {
         this.request = Objects.requireNonNull(request, "request");
         this.jwt = Objects.requireNonNull(jwt, "jwt");
+        this.sessions = Objects.requireNonNull(sessions, "sessions");
     }
 
     @Override
@@ -29,21 +37,30 @@ public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
     @Override
     public UUID accountId(CustomerAccessScope accessScope) {
         Objects.requireNonNull(accessScope, "accessScope");
-        return resolve().accountId();
+        return authenticate(accessScope).accountId();
     }
 
     @Override
     public UUID sessionId() {
-        return resolve().sessionId();
+        return authenticate(CustomerAccessScope.STANDARD).sessionId();
     }
 
     @Override
     public boolean activeSanction() {
-        return false;
+        return authenticate(CustomerAccessScope.APPEAL).activeSanction();
     }
 
-    private CustomerJwtCodec.AccessClaims resolve() {
-        if (resolved != null) return resolved;
+    private AuthenticatedSession authenticate(CustomerAccessScope accessScope) {
+        Objects.requireNonNull(accessScope, "accessScope");
+        return authenticated.computeIfAbsent(accessScope, ignored -> {
+            var resolved = resolveClaims();
+            return sessions.authenticateAccess(
+                    resolved.accountId(), resolved.sessionId(), correlationId(), accessScope);
+        });
+    }
+
+    private CustomerJwtCodec.AccessClaims resolveClaims() {
+        if (claims != null) return claims;
         String authorization = request.getHeader("Authorization");
         if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
             throw new AuthenticationRejectedException("A bearer access JWT is required");
@@ -52,7 +69,12 @@ public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
         if (raw.isEmpty()) {
             throw new AuthenticationRejectedException("A bearer access JWT is required");
         }
-        resolved = jwt.verifyAccess(raw);
-        return resolved;
+        claims = jwt.verifyAccess(raw);
+        return claims;
+    }
+
+    private UUID correlationId() {
+        String value = request.getHeader("X-Correlation-Id");
+        return value == null || value.isBlank() ? UUID.randomUUID() : UUID.fromString(value);
     }
 }

@@ -5,7 +5,6 @@ import com.idea2strategy.backend.application.identity.RequestPasswordResetComman
 import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
 import com.idea2strategy.backend.application.identity.ResetPasswordCommand;
 import com.idea2strategy.backend.application.identity.IssuedRecoveryCodes;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -18,23 +17,19 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/auth")
-@ConditionalOnBean({PasswordRecoveryService.class, PasswordResetDeliveryPort.class, SessionManagementService.class, HmacSessionTokens.class})
+@ConditionalOnBean({PasswordRecoveryService.class, PasswordResetDeliveryPort.class, CustomerAccessPrincipal.class})
 public class IdentityRecoveryController {
-    private static final String BEARER_PREFIX = "Bearer ";
     private final PasswordRecoveryService recovery;
     private final PasswordResetDeliveryPort delivery;
-    private final SessionManagementService sessions;
-    private final HmacSessionTokens sessionTokens;
+    private final CustomerAccessPrincipal principal;
 
     public IdentityRecoveryController(
             PasswordRecoveryService recovery,
             PasswordResetDeliveryPort delivery,
-            SessionManagementService sessions,
-            HmacSessionTokens sessionTokens) {
+            CustomerAccessPrincipal principal) {
         this.recovery = recovery;
         this.delivery = delivery;
-        this.sessions = sessions;
-        this.sessionTokens = sessionTokens;
+        this.principal = principal;
     }
 
     @PostMapping("/password-reset-requests")
@@ -62,7 +57,6 @@ public class IdentityRecoveryController {
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         UUID correlation = correlation(correlationId);
-        var principal = sessions.authenticate(sessionDigest(authorization), correlation);
         return recovery.issueRecoveryCodes(principal.accountId(), correlation);
     }
 
@@ -73,17 +67,6 @@ public class IdentityRecoveryController {
         recovery.recoverWithCode(new RecoverWithCodeCommand(
                 request.email(), request.recoveryCode(), request.newPassword(), correlation(correlationId)));
         return ResponseEntity.noContent().build();
-    }
-
-    private String sessionDigest(String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            throw new IllegalArgumentException("Authorization must use a Bearer session token");
-        }
-        String rawToken = authorization.substring(BEARER_PREFIX.length()).trim();
-        if (rawToken.isEmpty()) {
-            throw new IllegalArgumentException("Bearer session token is required");
-        }
-        return sessionTokens.digest(rawToken);
     }
 
     private static UUID correlation(String value) {

@@ -44,6 +44,20 @@ public final class SessionManagementService {
         return new AuthenticatedSession(session.accountId(), session.id(), session.activeSanction());
     }
 
+    public AuthenticatedSession authenticateAccess(
+            UUID accountId,
+            UUID sessionId,
+            UUID correlationId,
+            CustomerAccessScope accessScope) {
+        Objects.requireNonNull(accountId, "accountId");
+        Objects.requireNonNull(sessionId, "sessionId");
+        var session = queries.findById(sessionId)
+                .filter(stored -> stored.accountId().equals(accountId))
+                .orElseThrow(() -> new AuthenticationRejectedException("Session is not valid"));
+        session = validate(session, correlationId, accessScope);
+        return new AuthenticatedSession(session.accountId(), session.id(), session.activeSanction());
+    }
+
     public List<SessionView> list(String tokenDigest) {
         return list(tokenDigest, UUID.randomUUID());
     }
@@ -134,9 +148,14 @@ public final class SessionManagementService {
         if (tokenDigest == null || tokenDigest.isBlank()) {
             throw new AuthenticationRejectedException("A session token is required");
         }
-        var now = clock.instant();
         var session = queries.findByTokenDigest(tokenDigest)
                 .orElseThrow(() -> new AuthenticationRejectedException("Session is not valid"));
+        return validate(session, correlationId, accessScope);
+    }
+
+    private StoredSession validate(
+            StoredSession session, UUID correlationId, CustomerAccessScope accessScope) {
+        var now = clock.instant();
         String rejectionReason = rejectionReason(session, now);
         if (rejectionReason != null) {
             commands.recordEvent(

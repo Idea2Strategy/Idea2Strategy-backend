@@ -9,7 +9,6 @@ import static org.mockito.Mockito.when;
 
 import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.PasswordResetDelivery;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,9 +19,8 @@ class IdentityRecoveryControllerTest {
     void resetRequestReturnsTheSameBodyForExistingAndUnknownAccountsWithoutExposingTheToken() {
         var recovery = mock(PasswordRecoveryService.class);
         var delivery = mock(PasswordResetDeliveryPort.class);
-        var sessions = mock(SessionManagementService.class);
-        var sessionTokens = new HmacSessionTokens(new byte[32]);
-        var controller = new IdentityRecoveryController(recovery, delivery, sessions, sessionTokens);
+        var controller = new IdentityRecoveryController(
+                recovery, delivery, mock(CustomerAccessPrincipal.class));
         UUID accountId = UUID.randomUUID();
         Instant expiresAt = Instant.parse("2026-08-02T00:30:00Z");
         when(recovery.requestPasswordReset(any()))
@@ -53,8 +51,7 @@ class IdentityRecoveryControllerTest {
         var controller = new IdentityRecoveryController(
                 recovery,
                 delivery,
-                mock(SessionManagementService.class),
-                new HmacSessionTokens(new byte[32]));
+                mock(CustomerAccessPrincipal.class));
 
         controller.requestPasswordReset(
                 new IdentityRecoveryController.PasswordResetRequestRequest("unknown@example.com"),

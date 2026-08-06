@@ -55,6 +55,19 @@ class SessionManagementServiceTest {
     }
 
     @Test
+    void authenticatesAnAccessJwtSessionByItsSignedAccountAndSessionIds() {
+        var repository = new Repository(session(CURRENT_ID, null));
+        var service = service(repository);
+
+        assertThat(service.authenticateAccess(
+                        ACCOUNT_ID, CURRENT_ID, UUID.randomUUID(), CustomerAccessScope.STANDARD))
+                .isEqualTo(new AuthenticatedSession(ACCOUNT_ID, CURRENT_ID, false));
+        assertThatThrownBy(() -> service.authenticateAccess(
+                        UUID.randomUUID(), CURRENT_ID, UUID.randomUUID(), CustomerAccessScope.STANDARD))
+                .isInstanceOf(AuthenticationRejectedException.class);
+    }
+
+    @Test
     void listsOnlySafeActiveSessionMetadataAndMarksTheCurrentSession() {
         var repository = new Repository(session(CURRENT_ID, null));
         repository.active.add(new ActiveSession(
@@ -129,6 +142,11 @@ class SessionManagementServiceTest {
         @Override
         public Optional<StoredSession> findByTokenDigest(String tokenDigest) {
             return "current-digest".equals(tokenDigest) ? Optional.of(current) : Optional.empty();
+        }
+
+        @Override
+        public Optional<StoredSession> findById(UUID sessionId) {
+            return current.id().equals(sessionId) ? Optional.of(current) : Optional.empty();
         }
 
         @Override

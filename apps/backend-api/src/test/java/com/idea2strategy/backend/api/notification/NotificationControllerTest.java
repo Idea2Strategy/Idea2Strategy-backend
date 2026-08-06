@@ -7,9 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.idea2strategy.backend.api.identity.HmacSessionTokens;
-import com.idea2strategy.backend.application.identity.AuthenticatedSession;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
 import com.idea2strategy.backend.application.notification.NotificationChannel;
 import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
 import com.idea2strategy.backend.application.notification.NotificationQueryPort.NotificationPage;
@@ -30,14 +28,12 @@ class NotificationControllerTest {
         var queries = mock(NotificationQueryService.class);
         var notifications = mock(NotificationService.class);
         var preferences = mock(NotificationPreferenceService.class);
-        var sessions = mock(SessionManagementService.class);
-        var tokens = new HmacSessionTokens(new byte[32]);
+        var principal = mock(CustomerAccessPrincipal.class);
         UUID correlation = UUID.randomUUID();
-        when(sessions.authenticate(any(), eq(correlation)))
-                .thenReturn(new AuthenticatedSession(ACCOUNT, SESSION));
+        when(principal.accountId()).thenReturn(ACCOUNT);
         when(queries.list(ACCOUNT, null, null, 20))
                 .thenReturn(new NotificationPage(List.of(), null, null));
-        var controller = new NotificationController(queries, notifications, preferences, sessions, tokens);
+        var controller = new NotificationController(queries, notifications, preferences, principal);
 
         assertThat(controller.list("Bearer token", correlation.toString(), null, null, 20).items())
                 .isEmpty();
@@ -53,12 +49,10 @@ class NotificationControllerTest {
         var queries = mock(NotificationQueryService.class);
         var notifications = mock(NotificationService.class);
         var preferences = mock(NotificationPreferenceService.class);
-        var sessions = mock(SessionManagementService.class);
-        var tokens = new HmacSessionTokens(new byte[32]);
+        var principal = mock(CustomerAccessPrincipal.class);
         UUID correlation = UUID.randomUUID();
-        when(sessions.authenticate(any(), eq(correlation)))
-                .thenReturn(new AuthenticatedSession(ACCOUNT, SESSION));
-        var controller = new NotificationController(queries, notifications, preferences, sessions, tokens);
+        when(principal.accountId()).thenReturn(ACCOUNT);
+        var controller = new NotificationController(queries, notifications, preferences, principal);
 
         controller.replacePreference(
                 "BOT_SUMMARY",

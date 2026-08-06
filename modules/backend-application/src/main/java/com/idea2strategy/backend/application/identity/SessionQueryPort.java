@@ -8,5 +8,7 @@ import java.util.UUID;
 public interface SessionQueryPort {
     Optional<StoredSession> findByTokenDigest(String tokenDigest);
 
+    Optional<StoredSession> findById(UUID sessionId);
+
     List<ActiveSession> findActiveByAccountId(UUID accountId, Instant now);
 }

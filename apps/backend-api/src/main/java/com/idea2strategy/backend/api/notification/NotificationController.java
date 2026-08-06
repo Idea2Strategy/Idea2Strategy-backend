@@ -1,7 +1,6 @@
 package com.idea2strategy.backend.api.notification;
 
-import com.idea2strategy.backend.api.identity.HmacSessionTokens;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
 import com.idea2strategy.backend.application.notification.NotificationChannel;
 import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
 import com.idea2strategy.backend.application.notification.NotificationPreferenceView;
@@ -29,25 +28,20 @@ import org.springframework.web.bind.annotation.RestController;
 @ConditionalOnProperty(prefix = "identity.crypto", name = {
         "email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key"})
 public class NotificationController {
-    private static final String BEARER_PREFIX = "Bearer ";
-
     private final NotificationQueryService queries;
     private final NotificationService notifications;
     private final NotificationPreferenceService preferences;
-    private final SessionManagementService sessions;
-    private final HmacSessionTokens tokens;
+    private final CustomerAccessPrincipal principal;
 
     public NotificationController(
             NotificationQueryService queries,
             NotificationService notifications,
             NotificationPreferenceService preferences,
-            SessionManagementService sessions,
-            HmacSessionTokens tokens) {
+            CustomerAccessPrincipal principal) {
         this.queries = queries;
         this.notifications = notifications;
         this.preferences = preferences;
-        this.sessions = sessions;
-        this.tokens = tokens;
+        this.principal = principal;
     }
 
     @GetMapping
@@ -88,19 +82,7 @@ public class NotificationController {
     }
 
     private UUID accountId(String authorization, String correlationId) {
-        UUID correlation = correlationId == null || correlationId.isBlank()
-                ? UUID.randomUUID()
-                : UUID.fromString(correlationId);
-        return sessions.authenticate(digest(authorization), correlation).accountId();
-    }
-
-    private String digest(String authorization) {
-        if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            throw new IllegalArgumentException("Authorization must use a Bearer session token");
-        }
-        String rawToken = authorization.substring(BEARER_PREFIX.length()).trim();
-        if (rawToken.isEmpty()) throw new IllegalArgumentException("Bearer session token is required");
-        return tokens.digest(rawToken);
+        return principal.accountId();
     }
 
     public record ReplacePreferenceRequest(Set<NotificationChannel> enabledChannels) {}
