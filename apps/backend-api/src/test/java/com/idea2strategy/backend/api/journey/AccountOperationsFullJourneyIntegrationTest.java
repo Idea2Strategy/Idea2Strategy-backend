@@ -275,7 +275,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(jsonPath("$.appeal_available").value(true));
         mvc.perform(post("/api/v1/cases")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + appealSession)
+                        .header("Authorization", "Bearer " + appealSession.accessToken())
                         .header("Idempotency-Key", "a22f-non-appeal")
                         .content("""
                                 {"type":"INQUIRY","subject":"Unrelated access",
@@ -294,7 +294,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 """;
         String appeal = mvc.perform(post("/api/v1/cases")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + appealSession)
+                        .header("Authorization", "Bearer " + appealSession.accessToken())
                         .header("X-Correlation-Id", CORRELATION)
                         .header("Idempotency-Key", "a22f-appeal")
                         .content(appealBody))
@@ -302,7 +302,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         UUID caseId = UUID.fromString(json.readTree(appeal).get("id").asText());
         mvc.perform(get("/api/v1/cases/{caseId}", caseId)
-                        .header("Authorization", "Bearer " + appealSession))
+                        .header("Authorization", "Bearer " + appealSession.accessToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.type").value("APPEAL"));
 
@@ -359,7 +359,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .isEqualTo(NotificationEmailWorker.DeliveryDisposition.COMPLETED);
 
         mvc.perform(get("/api/v1/account/notifications")
-                        .header("Authorization", "Bearer " + appealSession)
+                        .header("Authorization", "Bearer " + appealSession.accessToken())
                         .header("X-Correlation-Id", CORRELATION))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].typeCode").value("CASE_UPDATE"));
