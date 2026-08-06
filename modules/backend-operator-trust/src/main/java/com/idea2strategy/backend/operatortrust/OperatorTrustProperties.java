@@ -19,8 +19,8 @@ public class OperatorTrustProperties {
     private Duration clockSkew = Duration.ofSeconds(30);
     private Set<String> allowedAcrValues = Set.of();
     private Set<String> allowedAmrValues = Set.of("mfa");
-    private String mfaClaimName = OperatorTrustConfiguration.COGNITO_MFA_CLAIM;
-    private Set<String> allowedMfaClaimValues = Set.of(OperatorTrustConfiguration.COGNITO_MFA_VALUE);
+    private String mfaClaimName;
+    private Set<String> allowedMfaClaimValues = Set.of();
     private int currentSubjectHmacKeyVersion;
     private String currentSubjectHmacKey;
     private Integer previousSubjectHmacKeyVersion;
