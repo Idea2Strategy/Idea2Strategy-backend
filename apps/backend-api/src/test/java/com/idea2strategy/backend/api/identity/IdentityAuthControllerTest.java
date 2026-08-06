@@ -11,6 +11,9 @@ import com.idea2strategy.backend.application.identity.LoginResult;
 import com.idea2strategy.backend.application.identity.SignupResult;
 import com.idea2strategy.backend.application.identity.VerificationDelivery;
 import java.time.Instant;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -24,7 +27,7 @@ class IdentityAuthControllerTest {
         Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(registration.signup(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new SignupResult(accountId, "raw-verification-secret", expiresAt));
-        var controller = new IdentityAuthController(registration, authentication, delivery);
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt());
 
         var response = controller.signup(
                 new IdentityAuthController.SignupRequest("person@example.com", "a sufficiently long passphrase"),
@@ -37,16 +40,16 @@ class IdentityAuthControllerTest {
     }
 
     @Test
-    void loginReturnsOnlyTheNewOpaqueSessionToken() {
+    void loginReturnsSignedAccessAndRefreshJwtsWithoutExposingTheOpaqueSessionToken() {
         var registration = mock(EmailRegistrationService.class);
         var authentication = mock(EmailAuthenticationService.class);
         var delivery = mock(VerificationDeliveryPort.class);
         UUID accountId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
-        Instant expiresAt = Instant.parse("2026-08-02T00:00:00Z");
+        Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(authentication.login(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new LoginResult(accountId, sessionId, "opaque-session-token", expiresAt));
-        var controller = new IdentityAuthController(registration, authentication, delivery);
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt());
 
         var response = controller.login(
                 new IdentityAuthController.LoginRequest("person@example.com", "a sufficiently long passphrase", "Chrome"),
@@ -54,8 +57,15 @@ class IdentityAuthControllerTest {
 
         assertThat(response.accountId()).isEqualTo(accountId);
         assertThat(response.sessionId()).isEqualTo(sessionId);
-        assertThat(response.sessionToken()).isEqualTo("opaque-session-token");
+        assertThat(response.tokenType()).isEqualTo("Bearer");
+        assertThat(response.accessToken()).hasSizeGreaterThan(100).contains(".");
+        assertThat(response.refreshToken()).hasSizeGreaterThan(100).contains(".");
+        assertThat(response.accessToken()).doesNotContain("opaque-session-token");
+        assertThat(response.refreshToken()).doesNotContain("opaque-session-token");
+        assertThat(jwt().verifyAccess(response.accessToken()).accountId()).isEqualTo(accountId);
+        assertThat(jwt().verifyRefresh(response.refreshToken()).sessionSecret()).isEqualTo("opaque-session-token");
         assertThat(response.toString()).doesNotContain("a sufficiently long passphrase");
+        assertThat(response.toString()).doesNotContain("opaque-session-token");
     }
 
     @Test
@@ -67,7 +77,7 @@ class IdentityAuthControllerTest {
         Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(registration.resendVerification(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new VerificationDelivery("replacement-secret", expiresAt));
-        var controller = new IdentityAuthController(registration, authentication, delivery);
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt());
 
         var response = controller.resendVerification(
                 new IdentityAuthController.ResendVerificationRequest(accountId),
@@ -77,5 +87,15 @@ class IdentityAuthControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(202);
         assertThat(response.getBody().toString()).doesNotContain("replacement-secret");
         verify(delivery).send(accountId, "replacement-secret", expiresAt);
+    }
+
+    private static CustomerJwtCodec jwt() {
+        return new CustomerJwtCodec(
+                "0123456789abcdef0123456789abcdef".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                Clock.fixed(Instant.parse("2026-08-02T00:00:00Z"), ZoneOffset.UTC),
+                "https://ideatostrategy.com",
+                "idea2strategy-api",
+                "idea2strategy-refresh",
+                Duration.ofMinutes(5));
     }
 }

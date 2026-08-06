@@ -13,6 +13,7 @@ import com.idea2strategy.backend.application.identity.LoginFailure;
 import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
 import com.idea2strategy.backend.application.identity.PendingOidcLink;
+import com.idea2strategy.backend.application.identity.PendingOidcRegistration;
 import com.idea2strategy.backend.application.identity.PendingPasswordReset;
 import com.idea2strategy.backend.application.identity.PasswordResetConsumption;
 import com.idea2strategy.backend.application.identity.PasswordResetOutcome;
@@ -44,6 +45,81 @@ public class IdentityJpaCommandAdapter
 
     public IdentityJpaCommandAdapter(EntityManager entityManager) {
         this.entityManager = entityManager;
+    }
+
+    @Override
+    @Transactional
+    public void createActiveRegistration(PendingOidcRegistration registration) {
+        String providerCode = (String) entityManager.createNativeQuery(
+                        "select code from identity.auth_providers where id = :providerId and is_active = true")
+                .setParameter("providerId", registration.providerId())
+                .getSingleResult();
+        guardIdentifierReuse("EMAIL", "PASSWORD", registration.email().comparisonFingerprints(), null);
+        guardIdentifierReuse("OIDC_SUBJECT", providerCode, registration.subject().comparisonFingerprints(), null);
+        OffsetDateTime now = utc(registration.registeredAt());
+        entityManager.createNativeQuery("""
+                        insert into identity.accounts (id, lifecycle_status, status_changed_at, created_at)
+                        values (:id, cast('ACTIVE' as identity.account_lifecycle_status), :now, :now)
+                        """)
+                .setParameter("id", registration.accountId())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_preferences
+                            (account_id, language_code, timezone_name, theme_preference, created_at, updated_at)
+                        values (:accountId, :languageCode, :timezoneName,
+                                cast(:themePreference as identity.theme_preference), :now, :now)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("languageCode", registration.preferences().languageCode())
+                .setParameter("timezoneName", registration.preferences().timezoneName())
+                .setParameter("themePreference", registration.preferences().themePreference().name())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_security_states (account_id, auth_epoch, updated_at)
+                        values (:accountId, 1, :now)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_emails
+                            (account_id, email_ciphertext, email_lookup_hmac, email_lookup_key_version,
+                             encryption_key_version, status, verified_at, created_at)
+                        values (:accountId, :ciphertext, :lookupHmac, :lookupVersion, :encryptionVersion,
+                                cast('VERIFIED' as identity.email_status), :now, :now)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("ciphertext", registration.email().ciphertext())
+                .setParameter("lookupHmac", registration.email().lookupHmac())
+                .setParameter("lookupVersion", registration.email().lookupKeyVersion())
+                .setParameter("encryptionVersion", registration.email().encryptionKeyVersion())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.login_identities
+                            (id, account_id, provider_id, provider_subject_hmac, subject_key_version,
+                             status, created_at, linked_at, activated_at)
+                        values (:id, :accountId, :providerId, :subjectHmac, :keyVersion,
+                                cast('ACTIVE' as identity.login_identity_status), :now, :now, :now)
+                        """)
+                .setParameter("id", registration.loginIdentityId())
+                .setParameter("accountId", registration.accountId())
+                .setParameter("providerId", registration.providerId())
+                .setParameter("subjectHmac", registration.subject().hmac())
+                .setParameter("keyVersion", registration.subject().keyVersion())
+                .setParameter("now", now)
+                .executeUpdate();
+        insertAuthenticationEvent(
+                registration.accountId(),
+                "OIDC_SIGNUP_COMPLETED",
+                registration.loginIdentityId(),
+                "USER",
+                null,
+                registration.correlationId(),
+                "oidc-signup:" + registration.correlationId(),
+                now);
     }
 
     @Override

@@ -101,11 +101,16 @@ public final class TrustedOidcIdTokenVerifier implements OidcIdTokenVerifier {
             Set<String> audience = audienceClaim.values();
             String nonce = requiredText(claims, "nonce");
             Instant expiresAt = requiredEpochSecond(claims, "exp");
-            Instant authenticatedAt = requiredEpochSecond(claims, "auth_time");
             Instant issuedAt = optionalEpochSecond(claims, "iat");
+            Instant authenticatedAt = optionalEpochSecond(claims, "auth_time");
+            if (authenticatedAt == null) {
+                authenticatedAt = issuedAt;
+            }
 
             if (!provider.issuer().equals(issuer)
                     || !validAudience(claims, audienceClaim, provider.audiences())
+                    || authenticatedAt == null
+                    || (request.expectedNonce() != null && !request.expectedNonce().equals(nonce))
                     || !expiresAt.isAfter(verifiedAt)
                     || (issuedAt != null && issuedAt.isAfter(verifiedAt))
                     || authenticatedAt.isAfter(verifiedAt)
@@ -117,6 +122,10 @@ public final class TrustedOidcIdTokenVerifier implements OidcIdTokenVerifier {
             String email = emailClaim != null && emailClaim.isTextual() && !emailClaim.textValue().isBlank()
                     ? emailClaim.textValue()
                     : null;
+            if ("GOOGLE".equals(provider.providerCode())
+                    && (email == null || !claims.path("email_verified").asBoolean(false))) {
+                throw rejected();
+            }
             return new VerifiedOidcIdToken(
                     provider.providerCode(),
                     issuer,

@@ -10,6 +10,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Duration;
+import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
+import com.idea2strategy.backend.domain.identity.ThemePreference;
 import org.junit.jupiter.api.Test;
 
 class OidcAuthenticationServiceTest {
@@ -93,6 +96,53 @@ class OidcAuthenticationServiceTest {
         assertThat(commands.sessions.toString()).doesNotContain("raw-provider-subject");
     }
 
+    @Test
+    void verifiedUnboundEmailCreatesANewOidcAccountButNeverAutoLinksAnExistingEmail() {
+        var queries = new StubQueries(PROVIDER, null);
+        var sessions = new RecordingCommands();
+        var registrations = new RecordingOidcCommands();
+        var protectedEmail = new ProtectedEmail(
+                "person@example.com", "ciphertext", "email-hmac", (short) 1, (short) 1);
+        var service = new OidcAuthenticationService(
+                queries,
+                sessions,
+                principal -> new ProtectedOidcSubject("subject-hmac", (short) 1),
+                () -> new SessionToken("session-token", "session-digest"),
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                Duration.ofHours(12),
+                5,
+                lookup -> false,
+                registrations,
+                raw -> protectedEmail,
+                new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
+
+        LoginResult result = service.login(new OidcLoginCommand(
+                "EXAMPLE", "https://issuer.example", "new-subject", "person@example.com",
+                "Chrome", UUID.randomUUID()));
+
+        assertThat(registrations.registration).isNotNull();
+        assertThat(registrations.registration.accountId()).isEqualTo(result.accountId());
+        assertThat(sessions.sessions).hasSize(1);
+
+        var existingEmailService = new OidcAuthenticationService(
+                queries,
+                sessions,
+                principal -> new ProtectedOidcSubject("another-subject", (short) 1),
+                () -> new SessionToken("session-token-2", "session-digest-2"),
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                Duration.ofHours(12),
+                5,
+                lookup -> true,
+                new RecordingOidcCommands(),
+                raw -> protectedEmail,
+                new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
+        assertThatThrownBy(() -> existingEmailService.login(new OidcLoginCommand(
+                        "EXAMPLE", "https://issuer.example", "other-subject", "person@example.com",
+                        "Chrome", UUID.randomUUID())))
+                .isInstanceOf(AuthenticationRejectedException.class)
+                .hasMessageContaining("explicit linking is required");
+    }
+
     private static OidcAuthenticationService service(
             OidcIdentityQueryPort queries,
             IdentityCommandPort commands,
@@ -137,5 +187,22 @@ class OidcAuthenticationServiceTest {
 
         @Override
         public void recordLoginFailure(LoginFailure failure) {}
+    }
+
+    private static final class RecordingOidcCommands implements OidcIdentityCommandPort {
+        private PendingOidcRegistration registration;
+
+        @Override
+        public void createActiveRegistration(PendingOidcRegistration registration) {
+            this.registration = registration;
+        }
+
+        @Override
+        public void createPendingLink(PendingOidcLink link) {}
+
+        @Override
+        public long activatePendingLink(ActivateOidcLink command) {
+            return 1;
+        }
     }
 }

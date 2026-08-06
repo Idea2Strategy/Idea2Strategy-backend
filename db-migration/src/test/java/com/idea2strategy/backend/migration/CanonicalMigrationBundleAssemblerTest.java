@@ -77,6 +77,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260804160020__pipeline_dataset_manifest_empty_hash.sql",
                         "V20260804160100__backtest_runtime_ownership_constrain.sql",
                         "V20260805130000__backtest_run_input_pins.sql",
+                        "V20260806100000__backend_google_oidc_provider.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))

@@ -10,6 +10,7 @@ import com.idea2strategy.backend.application.identity.LifecyclePasswordStepUpSer
 import com.idea2strategy.backend.application.identity.LifecycleOidcStepUpService;
 import com.idea2strategy.backend.application.identity.HmacOidcSubjectProtector;
 import com.idea2strategy.backend.application.identity.OidcStepUpChallengeService;
+import com.idea2strategy.backend.application.identity.OidcAuthenticationService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
 import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
@@ -86,6 +87,18 @@ public class IdentityAuthConfiguration {
     @Bean
     HmacSessionTokens sessionTokens(@Value("${identity.crypto.session-hmac-key}") String key) {
         return new HmacSessionTokens(decode(key));
+    }
+
+    @Bean
+    CustomerJwtCodec customerJwtCodec(
+            @Value("${identity.crypto.session-hmac-key}") String key,
+            Clock identityClock,
+            @Value("${identity.jwt.issuer:https://ideatostrategy.com}") String issuer,
+            @Value("${identity.jwt.access-audience:idea2strategy-api}") String accessAudience,
+            @Value("${identity.jwt.refresh-audience:idea2strategy-refresh}") String refreshAudience,
+            @Value("${identity.jwt.access-lifetime:PT5M}") Duration accessLifetime) {
+        return new CustomerJwtCodec(
+                decode(key), identityClock, issuer, accessAudience, refreshAudience, accessLifetime);
     }
 
     @Bean
@@ -246,6 +259,33 @@ public class IdentityAuthConfiguration {
                 identityClock,
                 maximumAuthenticationAge,
                 properties.trustedProviders());
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "identity.oidc", name = "enabled", havingValue = "true")
+    OidcAuthenticationService oidcAuthenticationService(
+            IdentityJooqQueryAdapter queries,
+            IdentityJpaCommandAdapter commands,
+            HmacOidcSubjectProtector subjectProtector,
+            HmacSessionTokens sessionTokens,
+            Clock identityClock,
+            @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime,
+            @Value("${identity.session.max-active-sessions:5}") int maxActiveSessions,
+            AesGcmEmailProtector emailProtector,
+            @Value("${identity.preferences.default-language:ko}") String defaultLanguage,
+            @Value("${identity.preferences.default-timezone:America/New_York}") String defaultTimezone) {
+        return new OidcAuthenticationService(
+                queries,
+                commands,
+                subjectProtector,
+                sessionTokens,
+                identityClock,
+                sessionLifetime,
+                maxActiveSessions,
+                queries,
+                commands,
+                emailProtector,
+                new AccountPreferenceDefaults(defaultLanguage, defaultTimezone, ThemePreference.SYSTEM));
     }
 
     @Bean

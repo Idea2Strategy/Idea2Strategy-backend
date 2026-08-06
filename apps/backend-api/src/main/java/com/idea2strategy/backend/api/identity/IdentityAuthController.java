@@ -24,14 +24,17 @@ public class IdentityAuthController {
     private final EmailRegistrationService registrationService;
     private final EmailAuthenticationService authenticationService;
     private final VerificationDeliveryPort verificationDelivery;
+    private final CustomerJwtCodec jwt;
 
     public IdentityAuthController(
             EmailRegistrationService registrationService,
             EmailAuthenticationService authenticationService,
-            VerificationDeliveryPort verificationDelivery) {
+            VerificationDeliveryPort verificationDelivery,
+            CustomerJwtCodec jwt) {
         this.registrationService = registrationService;
         this.authenticationService = authenticationService;
         this.verificationDelivery = verificationDelivery;
+        this.jwt = jwt;
     }
 
     @PostMapping("/signup")
@@ -71,8 +74,18 @@ public class IdentityAuthController {
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         var result = authenticationService.login(new LoginCommand(
                 request.email(), request.password(), request.deviceLabel(), correlation(correlationId)));
+        return tokenResponse(result.accountId(), result.sessionId(), result.sessionToken(), result.expiresAt());
+    }
+
+    private LoginResponse tokenResponse(UUID accountId, UUID sessionId, String sessionSecret, Instant refreshExpiresAt) {
         return new LoginResponse(
-                result.accountId(), result.sessionId(), result.sessionToken(), result.expiresAt());
+                accountId,
+                sessionId,
+                "Bearer",
+                jwt.issueAccess(accountId, sessionId),
+                jwt.issueRefresh(accountId, sessionId, sessionSecret, refreshExpiresAt),
+                jwt.accessExpiresAt(),
+                refreshExpiresAt);
     }
 
     private static UUID correlation(String value) {
@@ -120,5 +133,19 @@ public class IdentityAuthController {
         }
     }
 
-    public record LoginResponse(UUID accountId, UUID sessionId, String sessionToken, Instant expiresAt) {}
+    public record LoginResponse(
+            UUID accountId,
+            UUID sessionId,
+            String tokenType,
+            String accessToken,
+            String refreshToken,
+            Instant accessExpiresAt,
+            Instant refreshExpiresAt) {
+        @Override
+        public String toString() {
+            return "LoginResponse[accountId=" + accountId + ",sessionId=" + sessionId
+                    + ",tokenType=" + tokenType + ",accessToken=REDACTED,refreshToken=REDACTED"
+                    + ",accessExpiresAt=" + accessExpiresAt + ",refreshExpiresAt=" + refreshExpiresAt + "]";
+        }
+    }
 }

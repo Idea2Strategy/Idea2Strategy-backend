@@ -64,6 +64,19 @@ class TrustedOidcIdTokenVerifierTest {
     }
 
     @Test
+    void verifiesTheBrowserNonceAndAcceptsGoogleStyleIssuedAtWhenAuthTimeIsAbsent() throws Exception {
+        ObjectNode claims = validClaims();
+        claims.remove("auth_time");
+
+        var verified = verifier.verify(new OidcIdTokenVerificationRequest(
+                "EXAMPLE", token(validHeader(), claims, signingKey), "nonce-1"));
+
+        assertThat(verified.authenticatedAt()).isEqualTo(NOW.minusSeconds(65));
+        assertRejected(new OidcIdTokenVerificationRequest(
+                "EXAMPLE", token(validHeader(), claims, signingKey), "different-nonce"));
+    }
+
+    @Test
     void acceptsMultipleAudiencesWhenAuthorizedPartyIsTheTrustedClient() throws Exception {
         ObjectNode claims = validClaims();
         claims.putArray("aud").add("another-client").add("idea2strategy-api");
@@ -150,7 +163,7 @@ class TrustedOidcIdTokenVerifierTest {
     void returnsNonceForDigestComparisonAndRejectsMissingRequiredClaims() throws Exception {
         assertThat(verifier.verify(request(token(validHeader(), validClaims().put("nonce", "different"), signingKey))).nonce())
                 .isEqualTo("different");
-        for (String claim : List.of("iss", "sub", "aud", "exp", "auth_time", "nonce")) {
+        for (String claim : List.of("iss", "sub", "aud", "exp", "nonce")) {
             ObjectNode missingClaim = validClaims();
             missingClaim.remove(claim);
             assertRejected(request(token(validHeader(), missingClaim, signingKey)));

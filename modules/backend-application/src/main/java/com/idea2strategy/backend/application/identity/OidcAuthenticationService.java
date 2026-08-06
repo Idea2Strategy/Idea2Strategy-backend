@@ -2,9 +2,11 @@ package com.idea2strategy.backend.application.identity;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
 
 public final class OidcAuthenticationService {
     private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofHours(12);
@@ -16,6 +18,10 @@ public final class OidcAuthenticationService {
     private final Clock clock;
     private final Duration sessionLifetime;
     private final int maxActiveSessions;
+    private final RegistrationQueryPort registrationQueries;
+    private final OidcIdentityCommandPort oidcCommands;
+    private final EmailProtector emailProtector;
+    private final AccountPreferenceDefaults preferenceDefaults;
 
     public OidcAuthenticationService(
             OidcIdentityQueryPort queryPort,
@@ -47,6 +53,38 @@ public final class OidcAuthenticationService {
             throw new IllegalArgumentException("maxActiveSessions must be positive");
         }
         this.maxActiveSessions = maxActiveSessions;
+        this.registrationQueries = null;
+        this.oidcCommands = null;
+        this.emailProtector = null;
+        this.preferenceDefaults = null;
+    }
+
+    public OidcAuthenticationService(
+            OidcIdentityQueryPort queryPort,
+            IdentityCommandPort commandPort,
+            OidcSubjectProtector subjectProtector,
+            SessionTokenIssuer tokenIssuer,
+            Clock clock,
+            Duration sessionLifetime,
+            int maxActiveSessions,
+            RegistrationQueryPort registrationQueries,
+            OidcIdentityCommandPort oidcCommands,
+            EmailProtector emailProtector,
+            AccountPreferenceDefaults preferenceDefaults) {
+        this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
+        this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
+        this.subjectProtector = Objects.requireNonNull(subjectProtector, "subjectProtector");
+        this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
+        if (sessionLifetime.isZero() || sessionLifetime.isNegative() || maxActiveSessions < 1) {
+            throw new IllegalArgumentException("OIDC session configuration is invalid");
+        }
+        this.maxActiveSessions = maxActiveSessions;
+        this.registrationQueries = Objects.requireNonNull(registrationQueries, "registrationQueries");
+        this.oidcCommands = Objects.requireNonNull(oidcCommands, "oidcCommands");
+        this.emailProtector = Objects.requireNonNull(emailProtector, "emailProtector");
+        this.preferenceDefaults = Objects.requireNonNull(preferenceDefaults, "preferenceDefaults");
     }
 
     public LoginResult login(OidcLoginCommand command) {
@@ -62,7 +100,7 @@ public final class OidcAuthenticationService {
                 providerCode, command.issuer(), command.subject(), command.email());
         ProtectedOidcSubject protectedSubject = subjectProtector.protect(principal);
         OidcLoginAccount account = queryPort.findActiveLogin(provider.id(), protectedSubject.hmac())
-                .orElseThrow(() -> new AuthenticationRejectedException("OIDC identity is not linked"));
+                .orElseGet(() -> registerNewAccount(command, provider, protectedSubject));
         if (account.accountStatus() != AccountLifecycleStatus.ACTIVE
                 || account.loginIdentityStatus() != LoginIdentityStatus.ACTIVE) {
             throw new AuthenticationRejectedException("Account is not active");
@@ -88,5 +126,30 @@ public final class OidcAuthenticationService {
                         account.accountId(), account.loginIdentityId(), command.correlationId(), now),
                 maxActiveSessions);
         return new LoginResult(account.accountId(), sessionId, token.rawToken(), expiresAt);
+    }
+
+    private OidcLoginAccount registerNewAccount(
+            OidcLoginCommand command, OidcProvider provider, ProtectedOidcSubject protectedSubject) {
+        if (registrationQueries == null || command.email() == null || command.email().isBlank()) {
+            throw new AuthenticationRejectedException("OIDC identity is not linked");
+        }
+        ProtectedEmail email = emailProtector.protect(command.email());
+        if (registrationQueries.emailExists(email.lookupHmac())) {
+            throw new AuthenticationRejectedException("OIDC email belongs to an existing account; explicit linking is required");
+        }
+        Instant now = clock.instant();
+        UUID accountId = UUID.randomUUID();
+        UUID loginIdentityId = UUID.randomUUID();
+        oidcCommands.createActiveRegistration(new PendingOidcRegistration(
+                accountId,
+                loginIdentityId,
+                provider.id(),
+                protectedSubject,
+                email,
+                command.correlationId(),
+                now,
+                preferenceDefaults.at(now)));
+        return new OidcLoginAccount(
+                accountId, loginIdentityId, AccountLifecycleStatus.ACTIVE, LoginIdentityStatus.ACTIVE, 1);
     }
 }
