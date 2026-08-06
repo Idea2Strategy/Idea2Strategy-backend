@@ -97,6 +97,19 @@ class BasicStrategyCatalogPersistenceIntegrationTest {
                 .isInstanceOf(StrategyCatalogNotFoundException.class);
     }
 
+    @Test
+    void readsSupportedInstrumentsWhenNoCatalogIsPublished() {
+        jdbcTemplate.update("delete from market_data.feature_definitions");
+        jdbcTemplate.update("delete from strategy.element_definitions");
+        jdbcTemplate.update("delete from strategy.element_catalog_versions");
+        var service = new BasicStrategyCatalogQueryService(
+                adapter, Clock.fixed(NOW, ZoneOffset.UTC), ZoneId.of("America/New_York"));
+
+        assertThat(service.getSupportedInstruments())
+                .extracting("symbol")
+                .containsExactly("AAPL", "SPY");
+    }
+
     private void insertCatalog(UUID id, String catalogVersion, Instant retiredAt, String hash) {
         jdbcTemplate.update(
                 """

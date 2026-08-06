@@ -38,6 +38,18 @@ public class BasicStrategyCatalogController {
         return response(queryService.getPublished(languageVersion, schemaVersion, catalogVersion));
     }
 
+    @GetMapping("/instruments")
+    public SupportedInstrumentsResponse getSupportedInstruments() {
+        return new SupportedInstrumentsResponse(queryService.getSupportedInstruments().stream()
+                .map(instrument -> new InstrumentResponse(
+                        instrument.id(),
+                        instrument.assetType(),
+                        instrument.primaryExchangeMic(),
+                        instrument.currencyCode(),
+                        instrument.symbol()))
+                .toList());
+    }
+
     private BasicStrategyCatalogResponse response(BasicStrategyCatalog catalog) {
         var version = catalog.version();
         return new BasicStrategyCatalogResponse(
@@ -103,6 +115,8 @@ public class BasicStrategyCatalogController {
             List<ElementResponse> elements,
             List<FeatureResponse> features,
             List<InstrumentResponse> instruments) {}
+
+    public record SupportedInstrumentsResponse(List<InstrumentResponse> instruments) {}
 
     public record CatalogVersionResponse(
             UUID id,

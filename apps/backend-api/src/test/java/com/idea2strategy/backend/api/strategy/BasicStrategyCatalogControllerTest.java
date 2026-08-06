@@ -60,6 +60,19 @@ class BasicStrategyCatalogControllerTest {
     }
 
     @Test
+    void exposesSupportedInstrumentsWithoutAUserSelectedCatalogVersion() throws Exception {
+        port.catalog = Optional.empty();
+
+        mvc.perform(get("/api/v1/strategy-catalogs/basic/instruments"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.instruments[0].id").value(INSTRUMENT_ID.toString()))
+                .andExpect(jsonPath("$.instruments[0].assetType").value("STOCK"))
+                .andExpect(jsonPath("$.instruments[0].primaryExchangeMic").value("XNAS"))
+                .andExpect(jsonPath("$.instruments[0].currencyCode").value("USD"))
+                .andExpect(jsonPath("$.instruments[0].symbol").value("AAPL"));
+    }
+
+    @Test
     void returnsBadRequestForBlankVersionSelectors() throws Exception {
         mvc.perform(get("/api/v1/strategy-catalogs/basic")
                         .queryParam("languageVersion", " ")

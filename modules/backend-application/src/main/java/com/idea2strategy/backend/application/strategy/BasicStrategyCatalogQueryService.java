@@ -43,6 +43,10 @@ public final class BasicStrategyCatalogQueryService {
         return catalog(version, now);
     }
 
+    public List<SupportedInstrument> getSupportedInstruments() {
+        return supportedInstruments(clock.instant());
+    }
+
     private BasicStrategyCatalog catalog(ElementCatalogVersion version, Instant now) {
         List<StrategyElementDefinition> elements = queryPort.findElements(version.id()).stream()
                 .sorted(Comparator.comparing(StrategyElementDefinition::elementCode))
@@ -52,12 +56,16 @@ public final class BasicStrategyCatalogQueryService {
                         .thenComparing(StrategyFeatureDefinition::calculatorVersion)
                         .thenComparing(StrategyFeatureDefinition::resolution))
                 .toList();
+        List<SupportedInstrument> instruments = supportedInstruments(now);
+        return new BasicStrategyCatalog(version, elements, features, instruments);
+    }
+
+    private List<SupportedInstrument> supportedInstruments(Instant now) {
         LocalDate marketDate = now.atZone(marketZone).toLocalDate();
-        List<SupportedInstrument> instruments = queryPort.findSupportedInstruments(now, marketDate).stream()
+        return queryPort.findSupportedInstruments(now, marketDate).stream()
                 .sorted(Comparator.comparing(SupportedInstrument::symbol)
                         .thenComparing(SupportedInstrument::primaryExchangeMic))
                 .toList();
-        return new BasicStrategyCatalog(version, elements, features, instruments);
     }
 
     public StrategyElementDefinition requireElement(UUID catalogId, String elementCode) {
