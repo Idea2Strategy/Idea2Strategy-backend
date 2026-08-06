@@ -261,14 +261,14 @@ class AccountOperationsFullJourneyIntegrationTest {
                         .header("Authorization", "Bearer " + user.accessToken()))
                 .andExpect(status().isUnauthorized());
 
-        String appealSession = login(mvc, email, PASSWORD, accountId);
+        TokenPair appealSession = loginTokens(mvc, email, PASSWORD, accountId);
         assertThat(count("""
                 select count(*) from identity.authentication_events
                 where account_id = ? and event_type = 'SANCTIONED_LOGIN_SUCCEEDED'
                   and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
                 """, accountId)).isOne();
         mvc.perform(get("/api/v1/auth/sessions")
-                        .header("Authorization", "Bearer " + appealSession)
+                        .header("Authorization", "Bearer " + appealSession.refreshToken())
                         .header("X-Correlation-Id", CORRELATION))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ACCOUNT_SANCTION_ACTIVE"))
@@ -500,6 +500,10 @@ class AccountOperationsFullJourneyIntegrationTest {
     }
 
     private String login(MockMvc mvc, String email, String password, UUID accountId) throws Exception {
+        return loginTokens(mvc, email, password, accountId).accessToken();
+    }
+
+    private TokenPair loginTokens(MockMvc mvc, String email, String password, UUID accountId) throws Exception {
         String login = mvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Correlation-Id", UUID.randomUUID())
@@ -509,7 +513,8 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
                 .andReturn().getResponse().getContentAsString();
-        return json.readTree(login).get("accessToken").asText();
+        var response = json.readTree(login);
+        return new TokenPair(response.get("accessToken").asText(), response.get("refreshToken").asText());
     }
 
     private void ensureNotificationPolicy(String typeCode) {
@@ -592,6 +597,8 @@ class AccountOperationsFullJourneyIntegrationTest {
     }
 
     private record Login(UUID accountId, String accessToken) {}
+
+    private record TokenPair(String accessToken, String refreshToken) {}
 
     @TestConfiguration(proxyBeanMethods = false)
     static class OperatorJwtTestConfiguration {

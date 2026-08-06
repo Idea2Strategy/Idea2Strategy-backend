@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.identity.RequestPasswordResetComman
 import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
 import com.idea2strategy.backend.application.identity.ResetPasswordCommand;
 import com.idea2strategy.backend.application.identity.IssuedRecoveryCodes;
+import com.idea2strategy.backend.application.identity.SessionManagementService;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -17,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/auth")
-@ConditionalOnBean({PasswordRecoveryService.class, PasswordResetDeliveryPort.class, CustomerAccessPrincipal.class})
+@ConditionalOnBean({PasswordRecoveryService.class, PasswordResetDeliveryPort.class, SessionManagementService.class, HmacSessionTokens.class})
 public class IdentityRecoveryController {
     private final PasswordRecoveryService recovery;
     private final PasswordResetDeliveryPort delivery;

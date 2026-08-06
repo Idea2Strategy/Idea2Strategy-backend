@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.CurrentPolicyDecision;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
 import com.idea2strategy.backend.application.identity.RecordConsentDecision;
+import com.idea2strategy.backend.application.identity.SessionManagementService;
 import com.idea2strategy.backend.domain.identity.AccountConsent;
 import java.util.List;
 import java.util.UUID;
@@ -18,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/policies")
-@ConditionalOnBean({PolicyConsentService.class, CustomerAccessPrincipal.class})
+@ConditionalOnBean({PolicyConsentService.class, SessionManagementService.class, HmacSessionTokens.class})
 public class IdentityPolicyController {
     private final PolicyConsentService policies;
     private final CustomerAccessPrincipal principal;

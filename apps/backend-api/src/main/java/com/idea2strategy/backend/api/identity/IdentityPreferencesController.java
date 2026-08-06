@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.api.identity;
 
 import com.idea2strategy.backend.application.identity.AccountPreferencesService;
+import com.idea2strategy.backend.application.identity.SessionManagementService;
 import com.idea2strategy.backend.application.identity.UpdateAccountPreferences;
 import com.idea2strategy.backend.domain.identity.AccountPreferences;
 import java.util.UUID;
@@ -14,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/account/preferences")
-@ConditionalOnBean({AccountPreferencesService.class, CustomerAccessPrincipal.class})
+@ConditionalOnBean({AccountPreferencesService.class, SessionManagementService.class, HmacSessionTokens.class})
 public class IdentityPreferencesController {
     private final AccountPreferencesService preferences;
     private final CustomerAccessPrincipal principal;
