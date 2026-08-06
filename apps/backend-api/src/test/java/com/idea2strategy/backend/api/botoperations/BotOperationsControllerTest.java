@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.idea2strategy.backend.application.botoperations.BotJudgmentLogEntry;
 import com.idea2strategy.backend.application.botoperations.BotJudgmentLogSlice;
 import com.idea2strategy.backend.application.botoperations.BotOperationsProjection;
+import com.idea2strategy.backend.application.botoperations.BotOperationsInstrument;
 import com.idea2strategy.backend.application.botoperations.BotOperationsQueryPort;
 import com.idea2strategy.backend.application.botoperations.BotOperationsQueryService;
 import com.idea2strategy.backend.domain.botcontrol.BotLifecycleStatus;
@@ -42,7 +43,9 @@ class BotOperationsControllerTest {
                         NOW,
                         NOW.minusSeconds(10),
                         "MARKET_DATA_STALE",
-                        8));
+                        8,
+                        List.of(new BotOperationsInstrument(
+                                UUID.fromString("70000000-0000-4000-8000-000000000001"), "AAPL"))));
             }
 
             @Override

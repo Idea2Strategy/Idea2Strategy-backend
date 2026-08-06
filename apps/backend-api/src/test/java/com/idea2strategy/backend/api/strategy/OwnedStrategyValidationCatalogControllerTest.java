@@ -27,7 +27,8 @@ class OwnedStrategyValidationCatalogControllerTest {
                 throw new AssertionError("query must be scoped to the current principal");
             }
             return List.of(new OwnedStrategyValidationCatalogItem(
-                    RUN_ID, STRATEGY_ID, "Momentum", 7, digest('a'), CATALOG_ID, COMPLETED_AT));
+                    RUN_ID, STRATEGY_ID, "Momentum", 7, digest('a'), CATALOG_ID,
+                    "1.0.0", "1.0.0", "1.0.0", COMPLETED_AT));
         };
         var service = new OwnedStrategyValidationCatalogQueryService(port, () -> OWNER_ID);
         var mvc = MockMvcBuilders
@@ -41,6 +42,9 @@ class OwnedStrategyValidationCatalogControllerTest {
                 .andExpect(jsonPath("$.items[0].strategyName").value("Momentum"))
                 .andExpect(jsonPath("$.items[0].requestedEditSequence").value(7))
                 .andExpect(jsonPath("$.items[0].elementCatalogVersionId").value(CATALOG_ID.toString()))
+                .andExpect(jsonPath("$.items[0].languageVersion").value("1.0.0"))
+                .andExpect(jsonPath("$.items[0].schemaVersion").value("1.0.0"))
+                .andExpect(jsonPath("$.items[0].catalogVersion").value("1.0.0"))
                 .andExpect(jsonPath("$.items[0].completedAt").value(COMPLETED_AT.toString()));
     }
 

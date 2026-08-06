@@ -112,7 +112,11 @@ class StrategyReleaseControllerTest {
 
         assertThat(releaseAdvice.assignableTypes()).containsExactly(StrategyReleaseController.class);
         assertThat(authoringAdvice.assignableTypes())
-                .containsExactly(StrategyDraftController.class, StrategyDocumentController.class);
+                .containsExactly(
+                        StrategyDraftController.class,
+                        StrategyDocumentController.class,
+                        StrategyCopyController.class,
+                        StrategyValidationController.class);
     }
 
     private static String validRequest() {

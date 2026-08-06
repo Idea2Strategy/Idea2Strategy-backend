@@ -75,6 +75,9 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
     private RoomConfigurationJooqAdapter configurationAdapter;
 
     @Autowired
+    private OwnedRoomManagementJooqAdapter ownedRoomManagementAdapter;
+
+    @Autowired
     private RoomScheduleTransitionJooqAdapter transitionAdapter;
 
     @Autowired
@@ -301,6 +304,37 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                         String.class,
                         INVITATION_ID))
                 .isEqualTo("CONSUMED");
+    }
+
+    @Test
+    void ownerManagementQueryRestoresConfigurationAndInvitationMetadata() {
+        commandAdapter.save(userRoom(ROOM_ID, "Managed secret room", RoomAccessType.SECRET));
+        jdbcTemplate.update("update competition.rooms set status = 'RECRUITING' where id = ?", ROOM_ID);
+        invitationAdapter.issue(new RoomInvitationIssueRequest(
+                        INVITATION_ID,
+                        ROOM_ID,
+                        OWNER_ID,
+                        RoomInvitationCredentialType.LINK,
+                        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                        CREATED_AT.plusSeconds(90),
+                        CREATED_AT.plusSeconds(150)))
+                .orElseThrow();
+
+        assertThat(ownedRoomManagementAdapter.findOwnedBy(OWNER_ID, 50))
+                .singleElement()
+                .satisfies(view -> {
+                    assertThat(view.roomId()).isEqualTo(ROOM_ID);
+                    assertThat(view.name()).isEqualTo("Managed secret room");
+                    assertThat(view.accessType()).isEqualTo("SECRET");
+                    assertThat(view.scoringTemplateVersionId()).isEqualTo(SCORING_VERSION_ID);
+                    assertThat(view.minimumOperationSeconds()).isEqualTo(3600);
+                    assertThat(view.invitations()).singleElement().satisfies(invitation -> {
+                        assertThat(invitation.invitationId()).isEqualTo(INVITATION_ID);
+                        assertThat(invitation.credentialType()).isEqualTo("LINK");
+                    });
+                    assertThat(view.participations()).isEmpty();
+                });
+        assertThat(ownedRoomManagementAdapter.findOwnedBy(UUID.randomUUID(), 50)).isEmpty();
     }
 
     @Test
@@ -560,6 +594,7 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         PublicRoomSearchJooqAdapter.class,
         RoomInvitationJooqAdapter.class,
         RoomConfigurationJooqAdapter.class,
+        OwnedRoomManagementJooqAdapter.class,
         RoomScheduleTransitionJooqAdapter.class
     })
     static class TestApplication {}

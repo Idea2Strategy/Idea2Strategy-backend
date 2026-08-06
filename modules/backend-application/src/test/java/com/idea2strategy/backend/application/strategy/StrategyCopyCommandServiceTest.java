@@ -95,6 +95,20 @@ class StrategyCopyCommandServiceTest {
     }
 
     @Test
+    void refusesToCopyAProStrategyWhileProAccessIsClosed() {
+        var repository = new InMemoryRepository();
+        repository.create(
+                new Strategy(SOURCE_ID, OWNER_ID, StrategyMode.PRO, "Pro draft", null, 0, NOW, NOW),
+                document(SOURCE_ID, "{\"groups\":[],\"mode\":\"PRO\"}"));
+        var service = service(repository, new RecordingDomainEventPublisher(), List.of());
+
+        assertThatThrownBy(() -> service.copyOwnedStrategy(SOURCE_ID))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Only BASIC strategies can be copied");
+        assertThat(repository.strategies).doesNotContainKey(COPY_ID);
+    }
+
+    @Test
     void copiesAnOfficialBasicPackageWithoutRetainingPackageLineage() {
         var repository = new InMemoryRepository();
         List<BasicStructureCandidate> structures = structures();

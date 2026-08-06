@@ -37,6 +37,7 @@ class StrategyLibraryPersistenceIntegrationTest {
     private static final UUID CATALOG_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final UUID FEE_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private static final UUID BUFFER_ID = UUID.fromString("71000000-0000-4000-8000-000000000001");
+    private static final UUID INSTRUMENT_ID = UUID.fromString("72000000-0000-4000-8000-000000000001");
     private static final String EXECUTION_POLICY_VERSION = "library-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-01T12:00:00Z");
 
@@ -66,6 +67,8 @@ class StrategyLibraryPersistenceIntegrationTest {
         jdbc.update("delete from backtest.runs");
         jdbc.update("delete from backtest.execution_policy_versions where version = ?", EXECUTION_POLICY_VERSION);
         jdbc.update("delete from strategy.validation_runs");
+        jdbc.update("delete from bot.launch_snapshots where bot_id in (?, ?)", BOT_ID, OTHER_BOT_ID);
+        jdbc.update("delete from strategy.strategy_documents where strategy_id in (?, ?)", DRAFT_ID, OTHER_DRAFT_ID);
         jdbc.update("delete from strategy.package_versions");
         jdbc.update("delete from strategy.packages");
         jdbc.update("delete from strategy.template_versions");
@@ -73,6 +76,8 @@ class StrategyLibraryPersistenceIntegrationTest {
         jdbc.update("delete from bot.bots where id in (?, ?)", BOT_ID, OTHER_BOT_ID);
         jdbc.update("delete from strategy.strategies where id in (?, ?)", DRAFT_ID, OTHER_DRAFT_ID);
         jdbc.update("delete from strategy.element_catalog_versions where id = ?", CATALOG_ID);
+        jdbc.update("delete from market_data.instrument_symbols where instrument_id = ?", INSTRUMENT_ID);
+        jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
         jdbc.execute(
@@ -91,6 +96,17 @@ class StrategyLibraryPersistenceIntegrationTest {
                 DRAFT_ID, OWNER_ID, now.minusMinutes(2), now.minusSeconds(10),
                 OTHER_DRAFT_ID, OTHER_OWNER_ID, now.minusMinutes(2), now.minusSeconds(5));
         jdbc.update(
+                "insert into market_data.instruments (id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
+                INSTRUMENT_ID);
+        jdbc.update(
+                "insert into market_data.instrument_symbols (instrument_id, exchange_mic, symbol, effective_from) values (?, 'XNAS', 'AAPL', ?)",
+                INSTRUMENT_ID, now.minusDays(30));
+        String draftSemantic = "{\"mode\":\"BASIC\",\"groups\":[{\"instrumentIds\":[\""
+                + INSTRUMENT_ID + "\"],\"blocks\":[{},{},{}]}]}";
+        jdbc.update(
+                "insert into strategy.strategy_documents (strategy_id, semantic_document, presentation_document, semantic_schema_version, presentation_schema_version, semantic_hash, presentation_hash, created_at, updated_at) values (?, ?::jsonb, '{}'::jsonb, '1', '1', ?, ?, ?, ?)",
+                DRAFT_ID, draftSemantic, "6".repeat(64), "7".repeat(64), now.minusMinutes(2), now.minusSeconds(10));
+        jdbc.update(
                 "insert into strategy.validation_runs (id, strategy_id, requested_by_account_id, requested_edit_sequence, semantic_hash, element_catalog_version_id, status, issue_count, result_document, requested_at, completed_at) values (?, ?, ?, 0, ?, ?, 'PASSED', 0, '{}'::jsonb, ?, ?)",
                 UUID.randomUUID(), DRAFT_ID, OWNER_ID, "b".repeat(64), CATALOG_ID,
                 now.minusSeconds(9), now.minusSeconds(8));
@@ -98,6 +114,11 @@ class StrategyLibraryPersistenceIntegrationTest {
                 "insert into bot.bots (id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, execution_eligible_from, created_at, updated_at) values (?, ?, 'PRO', 'Owned release', 'STOPPED', ?, ?, ?, ?), (?, ?, 'BASIC', 'Other release', 'RUNNING', ?, ?, ?, ?)",
                 BOT_ID, OWNER_ID, now.minusSeconds(20), now.minusSeconds(20), now.minusMinutes(2), now.minusSeconds(20),
                 OTHER_BOT_ID, OTHER_OWNER_ID, now.minusSeconds(35), now.minusSeconds(35), now.minusMinutes(2), now.minusSeconds(35));
+        jdbc.update(
+                "insert into bot.launch_snapshots (bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, semantic_hash, presentation_hash, snapshot_hash, created_at) values (?, '1', ?::jsonb, '{}'::jsonb, ?, ?, ?, ?)",
+                BOT_ID,
+                "{\"mode\":\"PRO\",\"groups\":[{\"instrumentIds\":[\"" + INSTRUMENT_ID + "\"],\"blocks\":[{}]}]}",
+                "1".repeat(64), "2".repeat(64), "3".repeat(64), now.minusSeconds(20));
         jdbc.update(
                 "insert into trading.fee_policy_versions (id, policy_code, version, fee_rate_bps, calculation_rules_version, rules_hash, effective_from, published_at) values (?, 'OFFICIAL', '1', 20, '1', ?, ?, ?)",
                 FEE_ID, "c".repeat(64), now.minusDays(1), now.minusDays(1));
@@ -139,7 +160,11 @@ class StrategyLibraryPersistenceIntegrationTest {
                         StrategyLibraryItemKind.PACKAGE,
                         StrategyLibraryItemKind.TEMPLATE);
         assertThat(items.get(0).validationStatus()).isEqualTo("PASSED");
+        assertThat(items.get(0).blockCount()).isEqualTo(3);
+        assertThat(items.get(0).symbols()).containsExactly("AAPL");
         assertThat(items.get(1).backtestStatus()).isEqualTo("COMPLETED");
+        assertThat(items.get(1).blockCount()).isEqualTo(1);
+        assertThat(items.get(1).symbols()).containsExactly("AAPL");
         assertThat(items.get(2).name()).isEqualTo("모멘텀 패키지");
         assertThat(items).extracting(StrategyLibraryItem::id)
                 .doesNotContain(OTHER_DRAFT_ID, OTHER_BOT_ID);

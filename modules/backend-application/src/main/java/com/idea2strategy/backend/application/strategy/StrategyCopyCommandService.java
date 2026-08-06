@@ -80,6 +80,9 @@ public final class StrategyCopyCommandService {
         Strategy source = strategyQueryPort
                 .findOwnedById(Objects.requireNonNull(sourceStrategyId, "sourceStrategyId"), ownerAccountId)
                 .orElseThrow(() -> new NoSuchElementException("Strategy not found"));
+        if (source.mode() != StrategyMode.BASIC) {
+            throw new IllegalArgumentException("Only BASIC strategies can be copied");
+        }
         StrategyDocument sourceDocument = documentQueryPort
                 .findOwnedByStrategyId(sourceStrategyId, ownerAccountId)
                 .orElseThrow(() -> new NoSuchElementException("Strategy document not found"));

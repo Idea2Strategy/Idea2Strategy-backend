@@ -29,9 +29,12 @@ public class BasicStrategyCatalogController {
 
     @GetMapping
     public BasicStrategyCatalogResponse getPublished(
-            @RequestParam String languageVersion,
-            @RequestParam String schemaVersion,
-            @RequestParam String catalogVersion) {
+            @RequestParam(required = false) String languageVersion,
+            @RequestParam(required = false) String schemaVersion,
+            @RequestParam(required = false) String catalogVersion) {
+        if (languageVersion == null && schemaVersion == null && catalogVersion == null) {
+            return response(queryService.getLatestPublished());
+        }
         requireText(languageVersion, "languageVersion");
         requireText(schemaVersion, "schemaVersion");
         requireText(catalogVersion, "catalogVersion");

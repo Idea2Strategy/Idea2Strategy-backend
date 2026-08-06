@@ -1,10 +1,8 @@
 package com.idea2strategy.backend.application.botoperations;
 
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
-import com.idea2strategy.backend.domain.botcontrol.BotLifecycleStatus;
 import java.time.Clock;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -54,36 +52,16 @@ public final class BotOperationsQueryService {
                 projection.lifecycleChangedAt(),
                 projection.executionBlockedAt(),
                 projection.executionBlockReasonCode(),
-                projection.lastEventSequence());
+                projection.lastEventSequence(),
+                projection.instruments());
     }
 
     private BotOperationsState stateOf(BotOperationsProjection projection) {
-        if (projection.lifecycleStatus() == BotLifecycleStatus.STOPPING) {
-            return BotOperationsState.STOPPING;
-        }
-        if (projection.lifecycleStatus() == BotLifecycleStatus.STOPPED) {
-            return BotOperationsState.STOPPED;
-        }
-        if (projection.executionBlockedAt() != null) {
-            return blockedState(projection.executionBlockReasonCode());
-        }
-        if (projection.executionEligibleFrom().isAfter(clock.instant())) {
-            return BotOperationsState.WAITING;
-        }
-        return BotOperationsState.RUNNING;
-    }
-
-    private static BotOperationsState blockedState(String reasonCode) {
-        String reason = reasonCode == null ? "" : reasonCode.toUpperCase(Locale.ROOT);
-        if (reason.contains("SETTLEMENT")) {
-            return BotOperationsState.SETTLEMENT_FAILED;
-        }
-        if (reason.contains("MARKET_DATA")
-                || reason.contains("DATA_DEGRADED")
-                || reason.contains("DATA_QUALITY")
-                || reason.contains("WATERMARK")) {
-            return BotOperationsState.DATA_DEGRADED;
-        }
-        return BotOperationsState.ACTION_REQUIRED;
+        return BotOperationsStateResolver.resolve(
+                projection.lifecycleStatus(),
+                projection.executionEligibleFrom(),
+                projection.executionBlockedAt(),
+                projection.executionBlockReasonCode(),
+                clock.instant());
     }
 }

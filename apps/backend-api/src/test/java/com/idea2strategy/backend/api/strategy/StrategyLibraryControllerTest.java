@@ -39,7 +39,9 @@ class StrategyLibraryControllerTest {
                 null,
                 true,
                 NOW.minusSeconds(1),
-                null));
+                null,
+                2,
+                List.of("AAPL")));
         var service = new StrategyLibraryQueryService(
                 port, () -> OWNER_ID, Clock.fixed(NOW, ZoneOffset.UTC));
         mvc = MockMvcBuilders.standaloneSetup(new StrategyLibraryController(service))
@@ -56,6 +58,8 @@ class StrategyLibraryControllerTest {
                 .andExpect(jsonPath("$.items[0].mode").value("BASIC"))
                 .andExpect(jsonPath("$.items[0].validationStatus").value("PASSED"))
                 .andExpect(jsonPath("$.items[0].editable").value(true))
+                .andExpect(jsonPath("$.items[0].blockCount").value(2))
+                .andExpect(jsonPath("$.items[0].symbols[0]").value("AAPL"))
                 .andExpect(jsonPath("$.hasMore").value(false))
                 .andExpect(jsonPath("$.nextCursor").doesNotExist());
     }

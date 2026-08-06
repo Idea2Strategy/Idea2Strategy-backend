@@ -147,8 +147,13 @@ class StrategyValidationRunPersistenceIntegrationTest {
                 NOW.plusSeconds(1)));
 
         assertThat(validationQueryAdapter.findCurrentValidOwnedBy(OWNER_ID))
-                .extracting(item -> item.validationRunId())
-                .containsExactly(RUN_ID);
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.validationRunId()).isEqualTo(RUN_ID);
+                    assertThat(item.languageVersion()).isEqualTo("basic/v1");
+                    assertThat(item.schemaVersion()).isEqualTo("schema/v1");
+                    assertThat(item.catalogVersion()).isEqualTo("catalog/v1");
+                });
         assertThat(validationQueryAdapter.findCurrentValidOwnedBy(OTHER_OWNER_ID)).isEmpty();
 
         jdbcTemplate.update(

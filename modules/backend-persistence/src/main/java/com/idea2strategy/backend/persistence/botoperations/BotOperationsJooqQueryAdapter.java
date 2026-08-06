@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.idea2strategy.backend.application.botoperations.BotJudgmentLogEntry;
 import com.idea2strategy.backend.application.botoperations.BotJudgmentLogSlice;
+import com.idea2strategy.backend.application.botoperations.BotOperationsInstrument;
 import com.idea2strategy.backend.application.botoperations.BotOperationsProjection;
 import com.idea2strategy.backend.application.botoperations.BotOperationsQueryPort;
 import com.idea2strategy.backend.domain.botcontrol.BotLifecycleStatus;
@@ -50,7 +51,7 @@ public class BotOperationsJooqQueryAdapter implements BotOperationsQueryPort {
         var eventBotId = field(name("e", "bot_id"), UUID.class);
         var eventSequence = field(name("e", "event_sequence"), Long.class);
 
-        return dsl.select(
+        List<BotOperationsProjection> projections = dsl.select(
                         id,
                         botName,
                         status,
@@ -73,7 +74,49 @@ public class BotOperationsJooqQueryAdapter implements BotOperationsQueryPort {
                         record.get(eligibleFrom).toInstant(),
                         toInstant(record.get(blockedAt)),
                         record.get(blockReason),
-                        record.get("last_event_sequence", Long.class)));
+                        record.get("last_event_sequence", Long.class),
+                        List.of()));
+        return projections.stream()
+                .map(projection -> new BotOperationsProjection(
+                        projection.botId(),
+                        projection.name(),
+                        projection.lifecycleStatus(),
+                        projection.lifecycleChangedAt(),
+                        projection.executionEligibleFrom(),
+                        projection.executionBlockedAt(),
+                        projection.executionBlockReasonCode(),
+                        projection.lastEventSequence(),
+                        findReleasedInstruments(projection.botId())))
+                .toList();
+    }
+
+    private List<BotOperationsInstrument> findReleasedInstruments(UUID botId) {
+        var partitions = table(name("bot", "bot_partitions")).as("p");
+        var flows = table(name("bot", "flows")).as("f");
+        var flowInstruments = table(name("bot", "flow_instruments")).as("fi");
+        var symbols = table(name("market_data", "instrument_symbols")).as("s");
+        var partitionId = field(name("p", "id"), UUID.class);
+        var partitionBotId = field(name("p", "bot_id"), UUID.class);
+        var flowId = field(name("f", "id"), UUID.class);
+        var flowPartitionId = field(name("f", "partition_id"), UUID.class);
+        var flowInstrumentFlowId = field(name("fi", "flow_id"), UUID.class);
+        var instrumentId = field(name("fi", "instrument_id"), UUID.class);
+        var symbolInstrumentId = field(name("s", "instrument_id"), UUID.class);
+        var symbol = field(name("s", "symbol"), String.class);
+        var effectiveFrom = field(name("s", "effective_from"), OffsetDateTime.class);
+        var effectiveTo = field(name("s", "effective_to"), OffsetDateTime.class);
+        var now = field("current_timestamp", OffsetDateTime.class);
+
+        return dsl.selectDistinct(instrumentId, symbol)
+                .from(partitions)
+                .join(flows).on(flowPartitionId.eq(partitionId))
+                .join(flowInstruments).on(flowInstrumentFlowId.eq(flowId))
+                .join(symbols).on(symbolInstrumentId.eq(instrumentId)
+                        .and(effectiveFrom.le(now))
+                        .and(effectiveTo.isNull().or(effectiveTo.gt(now))))
+                .where(partitionBotId.eq(botId))
+                .orderBy(symbol.asc(), instrumentId.asc())
+                .fetch(record -> new BotOperationsInstrument(record.get(instrumentId), record.get(symbol)));
     }
 
     @Override

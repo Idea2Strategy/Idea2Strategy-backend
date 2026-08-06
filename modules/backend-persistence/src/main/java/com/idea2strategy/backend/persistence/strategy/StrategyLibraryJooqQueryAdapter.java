@@ -62,6 +62,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
     private List<StrategyLibraryItem> findDrafts(
             UUID ownerAccountId, OffsetDateTime snapshot, StrategyLibraryPosition after, int limit) {
         var strategies = table(name("strategy", "strategies")).as("s");
+        var documents = table(name("strategy", "strategy_documents")).as("d");
         var validations = table(name("strategy", "validation_runs")).as("v");
         Field<UUID> id = field(name("s", "id"), UUID.class);
         Field<UUID> owner = field(name("s", "owner_account_id"), UUID.class);
@@ -71,6 +72,10 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<OffsetDateTime> updatedAt = field(name("s", "updated_at"), OffsetDateTime.class);
         Field<OffsetDateTime> archivedAt = field(name("s", "archived_at"), OffsetDateTime.class);
         Field<OffsetDateTime> deletedAt = field(name("s", "deleted_at"), OffsetDateTime.class);
+        Field<UUID> documentStrategyId = field(name("d", "strategy_id"), UUID.class);
+        Field<JSONB> semanticDocument = field(name("d", "semantic_document"), JSONB.class);
+        Field<Integer> blockCount = blockCount(semanticDocument);
+        Field<String[]> symbols = symbols(semanticDocument, snapshot);
         Field<UUID> validationStrategyId = field(name("v", "strategy_id"), UUID.class);
         Field<String> validationState = field(name("v", "status"), String.class);
         Field<OffsetDateTime> validationRequestedAt = field(name("v", "requested_at"), OffsetDateTime.class);
@@ -89,8 +94,12 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         when(archivedAt.isNull(), inline("DRAFT")).otherwise(inline("ARCHIVED")),
                         latestValidation,
                         updatedAt,
-                        archivedAt)
+                        archivedAt,
+                        blockCount,
+                        symbols)
                 .from(strategies)
+                .leftJoin(documents)
+                .on(documentStrategyId.eq(id))
                 .where(owner.eq(ownerAccountId)
                         .and(deletedAt.isNull())
                         .and(updatedAt.le(snapshot))
@@ -108,12 +117,15 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         null,
                         record.get(archivedAt) == null,
                         record.get(updatedAt).toInstant(),
-                        null));
+                        null,
+                        record.get(blockCount),
+                        symbolList(record.get(symbols))));
     }
 
     private List<StrategyLibraryItem> findReleased(
             UUID ownerAccountId, OffsetDateTime snapshot, StrategyLibraryPosition after, int limit) {
         var bots = table(name("bot", "bots")).as("b");
+        var snapshots = table(name("bot", "launch_snapshots")).as("ls");
         var backtests = table(name("backtest", "runs")).as("bt");
         Field<UUID> id = field(name("b", "id"), UUID.class);
         Field<UUID> owner = field(name("b", "owner_account_id"), UUID.class);
@@ -122,6 +134,10 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<String> lifecycle = field(name("b", "lifecycle_status"), String.class);
         Field<OffsetDateTime> updatedAt = field(name("b", "updated_at"), OffsetDateTime.class);
         Field<OffsetDateTime> deletedAt = field(name("b", "deleted_at"), OffsetDateTime.class);
+        Field<UUID> snapshotBotId = field(name("ls", "bot_id"), UUID.class);
+        Field<JSONB> semanticSnapshot = field(name("ls", "semantic_snapshot"), JSONB.class);
+        Field<Integer> blockCount = blockCount(semanticSnapshot);
+        Field<String[]> symbols = symbols(semanticSnapshot, snapshot);
         Field<UUID> backtestBotId = field(name("bt", "bot_id"), UUID.class);
         Field<String> backtestState = field(name("bt", "status"), String.class);
         Field<OffsetDateTime> queuedAt = field(name("bt", "queued_at"), OffsetDateTime.class);
@@ -132,8 +148,10 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                 .limit(1)
                 .asField("backtest_status");
 
-        return dsl.select(id, mode, botName, lifecycle, latestBacktest, updatedAt)
+        return dsl.select(id, mode, botName, lifecycle, latestBacktest, updatedAt, blockCount, symbols)
                 .from(bots)
+                .leftJoin(snapshots)
+                .on(snapshotBotId.eq(id))
                 .where(owner.eq(ownerAccountId)
                         .and(deletedAt.isNull())
                         .and(updatedAt.le(snapshot))
@@ -151,7 +169,9 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         record.get(latestBacktest),
                         false,
                         record.get(updatedAt).toInstant(),
-                        null));
+                        null,
+                        record.get(blockCount),
+                        symbolList(record.get(symbols))));
     }
 
     private List<StrategyLibraryItem> findPackages(
@@ -168,6 +188,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<String> version = field(name("pv", "version"), String.class);
         Field<JSONB> names = field(name("pv", "name_i18n"), JSONB.class);
         Field<JSONB> descriptions = field(name("pv", "description_i18n"), JSONB.class);
+        Field<JSONB> flowDocument = field(name("pv", "flow_document"), JSONB.class);
         Field<OffsetDateTime> publishedAt = field(name("pv", "published_at"), OffsetDateTime.class);
         Field<OffsetDateTime> retiredAt = field(name("pv", "retired_at"), OffsetDateTime.class);
         Field<UUID> newerId = field(name("npv", "id"), UUID.class);
@@ -176,6 +197,8 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<OffsetDateTime> newerRetiredAt = field(name("npv", "retired_at"), OffsetDateTime.class);
         Field<String> displayName = localized(names, code);
         Field<String> displayDescription = localized(descriptions, inline(null, String.class));
+        Field<Integer> blockCount = blockCount(flowDocument);
+        Field<String[]> symbols = symbols(flowDocument, snapshot);
 
         Condition noNewerVersion = notExists(selectOne()
                 .from(newer)
@@ -185,7 +208,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         .and(newerPublishedAt.gt(publishedAt)
                                 .or(newerPublishedAt.eq(publishedAt).and(newerId.gt(id))))));
 
-        return dsl.select(id, displayName, displayDescription, status, version, publishedAt)
+        return dsl.select(id, displayName, displayDescription, status, version, publishedAt, blockCount, symbols)
                 .from(packages)
                 .join(versions)
                 .on(versionPackageId.eq(packageId))
@@ -208,7 +231,9 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         null,
                         false,
                         record.get(publishedAt).toInstant(),
-                        record.get(version)));
+                        record.get(version),
+                        record.get(blockCount),
+                        symbolList(record.get(symbols))));
     }
 
     private List<StrategyLibraryItem> findTemplates(
@@ -225,6 +250,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<String> version = field(name("tv", "version"), String.class);
         Field<JSONB> names = field(name("tv", "name_i18n"), JSONB.class);
         Field<JSONB> descriptions = field(name("tv", "description_i18n"), JSONB.class);
+        Field<JSONB> semanticSkeleton = field(name("tv", "semantic_skeleton"), JSONB.class);
         Field<OffsetDateTime> publishedAt = field(name("tv", "published_at"), OffsetDateTime.class);
         Field<OffsetDateTime> retiredAt = field(name("tv", "retired_at"), OffsetDateTime.class);
         Field<UUID> newerId = field(name("ntv", "id"), UUID.class);
@@ -233,6 +259,8 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<OffsetDateTime> newerRetiredAt = field(name("ntv", "retired_at"), OffsetDateTime.class);
         Field<String> displayName = localized(names, code);
         Field<String> displayDescription = localized(descriptions, inline(null, String.class));
+        Field<Integer> blockCount = blockCount(semanticSkeleton);
+        Field<String[]> symbols = symbols(semanticSkeleton, snapshot);
 
         Condition noNewerVersion = notExists(selectOne()
                 .from(newer)
@@ -242,7 +270,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         .and(newerPublishedAt.gt(publishedAt)
                                 .or(newerPublishedAt.eq(publishedAt).and(newerId.gt(id))))));
 
-        return dsl.select(id, displayName, displayDescription, status, version, publishedAt)
+        return dsl.select(id, displayName, displayDescription, status, version, publishedAt, blockCount, symbols)
                 .from(templates)
                 .join(versions)
                 .on(versionTemplateId.eq(templateId))
@@ -265,7 +293,35 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         null,
                         false,
                         record.get(publishedAt).toInstant(),
-                        record.get(version)));
+                        record.get(version),
+                        record.get(blockCount),
+                        symbolList(record.get(symbols))));
+    }
+
+    private static Field<Integer> blockCount(Field<JSONB> document) {
+        return field(
+                "(select coalesce(sum(jsonb_array_length(case when jsonb_typeof(group_node -> 'blocks') = 'array' then group_node -> 'blocks' else '[]'::jsonb end)), 0)::int "
+                        + "from jsonb_array_elements(case when jsonb_typeof({0} -> 'groups') = 'array' then {0} -> 'groups' else '[]'::jsonb end) group_node)",
+                Integer.class,
+                document);
+    }
+
+    private static Field<String[]> symbols(Field<JSONB> document, OffsetDateTime snapshot) {
+        return field(
+                "(select coalesce(array_agg(distinct active_symbol.symbol::text order by active_symbol.symbol::text), array[]::text[]) "
+                        + "from jsonb_array_elements(case when jsonb_typeof({0} -> 'groups') = 'array' then {0} -> 'groups' else '[]'::jsonb end) group_node "
+                        + "cross join lateral jsonb_array_elements_text(case when jsonb_typeof(group_node -> 'instrumentIds') = 'array' then group_node -> 'instrumentIds' else '[]'::jsonb end) requested(value) "
+                        + "join market_data.instrument_symbols active_symbol on active_symbol.instrument_id = "
+                        + "case when requested.value ~ '^[0-9a-fA-F-]{36}$' then requested.value::uuid else null end "
+                        + "and active_symbol.effective_from <= {1} "
+                        + "and (active_symbol.effective_to is null or active_symbol.effective_to > {1}))",
+                String[].class,
+                document,
+                inline(snapshot));
+    }
+
+    private static List<String> symbolList(String[] values) {
+        return values == null ? List.of() : List.of(values);
     }
 
     private static Field<String> localized(Field<JSONB> i18n, Field<String> fallback) {

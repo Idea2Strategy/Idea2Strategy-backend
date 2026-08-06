@@ -84,7 +84,8 @@ class BotOperationsQueryServiceTest {
             Instant blockedAt,
             String blockReason) {
         return new BotOperationsProjection(
-                id, "Basic bot", lifecycle, NOW.minusSeconds(60), eligibleFrom, blockedAt, blockReason, 7L);
+                id, "Basic bot", lifecycle, NOW.minusSeconds(60), eligibleFrom, blockedAt, blockReason, 7L,
+                List.of(new BotOperationsInstrument(UUID.fromString("70000000-0000-4000-8000-000000000001"), "AAPL")));
     }
 
     private static final class RecordingPort implements BotOperationsQueryPort {
