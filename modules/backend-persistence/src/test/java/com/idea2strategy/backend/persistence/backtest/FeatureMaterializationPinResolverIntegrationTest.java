@@ -67,7 +67,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 + "(select id from market_data.dataset_manifests where feed_id = ?)", FEED);
         jdbc.update("delete from storage.objects where bucket_name = 'test'");
         jdbc.update("delete from market_data.dataset_manifests where feed_id = ?", FEED);
-        jdbc.update("delete from market_data.pipeline_runs where pipeline_code = 'FEATURE'");
+        jdbc.update("delete from market_data.pipeline_runs where pipeline_code = 'MATERIALIZE_FEATURE_OUTPUT'");
         jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
         jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.feeds where id = ?", FEED);
