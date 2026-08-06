@@ -130,7 +130,7 @@ public final class Idea2StrategyCli {
                 .put("password", password)
                 .put("deviceLabel", args.optional("--device-label", "idea2strategy-cli"));
         JsonNode response = api.post("/api/v1/auth/login", body, null);
-        String token = response.path("sessionToken").asText();
+        String token = response.path("accessToken").asText();
         if (token.isBlank()) {
             throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Login response did not contain a session token");
         }

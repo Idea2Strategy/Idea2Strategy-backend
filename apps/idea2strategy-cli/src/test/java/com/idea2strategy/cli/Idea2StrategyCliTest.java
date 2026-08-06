@@ -49,7 +49,7 @@ class Idea2StrategyCliTest {
     void loginReadsPasswordFromStandardInputAndStoresTokenWithoutEchoingSecrets() throws Exception {
         server.removeContext("/");
         server.createContext("/api/v1/auth/login", exchange -> respond(exchange, 200,
-                "{\"accountId\":\"a\",\"sessionToken\":\"top-secret-token\"}"));
+                "{\"accountId\":\"a\",\"accessToken\":\"top-secret-token\"}"));
 
         Result result = run("correct horse battery staple\n", "--base-url", baseUrl,
                 "--config-dir", tempDir.toString(), "login", "--email", "person@example.com");

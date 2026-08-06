@@ -258,7 +258,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 + "where target_domain = 'ACCOUNT_SANCTION' and correlation_id = ?", CORRELATION))
                 .isGreaterThanOrEqualTo(1);
         mvc.perform(get("/api/v1/cases/{caseId}", UUID.randomUUID())
-                        .header("Authorization", "Bearer " + user.sessionToken()))
+                        .header("Authorization", "Bearer " + user.accessToken()))
                 .andExpect(status().isUnauthorized());
 
         String appealSession = login(mvc, email, PASSWORD, accountId);
@@ -406,7 +406,7 @@ class AccountOperationsFullJourneyIntegrationTest {
         assertThat(worker.deliver(delivery, "a22f-policy-v1", 3, Duration.ofSeconds(1)))
                 .isEqualTo(NotificationEmailWorker.DeliveryDisposition.COMPLETED);
         String feed = mvc.perform(get("/api/v1/account/notifications")
-                        .header("Authorization", "Bearer " + user.sessionToken()))
+                        .header("Authorization", "Bearer " + user.accessToken()))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         assertThat(feed).contains("BOT_UPDATE");
@@ -419,7 +419,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 """.formatted(id(74));
         String report = mvc.perform(post("/api/v1/cases")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + user.sessionToken())
+                        .header("Authorization", "Bearer " + user.accessToken())
                         .header("X-Correlation-Id", CORRELATION)
                         .header("Idempotency-Key", "a22f-room-report")
                         .content(reportBody))
@@ -509,7 +509,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
                 .andReturn().getResponse().getContentAsString();
-        return json.readTree(login).get("sessionToken").asText();
+        return json.readTree(login).get("accessToken").asText();
     }
 
     private void ensureNotificationPolicy(String typeCode) {
@@ -591,7 +591,7 @@ class AccountOperationsFullJourneyIntegrationTest {
         return UUID.fromString("a22f0000-0000-4000-8000-" + "%012d".formatted(suffix));
     }
 
-    private record Login(UUID accountId, String sessionToken) {}
+    private record Login(UUID accountId, String accessToken) {}
 
     @TestConfiguration(proxyBeanMethods = false)
     static class OperatorJwtTestConfiguration {

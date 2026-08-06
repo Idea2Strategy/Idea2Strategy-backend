@@ -133,11 +133,11 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
                 .andReturn().getResponse().getContentAsString();
-        String sessionToken = json.readTree(login).get("sessionToken").asText();
+        String accessToken = json.readTree(login).get("accessToken").asText();
 
         mvc.perform(patch("/api/v1/account/preferences")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + sessionToken)
+                        .header("Authorization", "Bearer " + accessToken)
                         .header("X-Correlation-Id", CORRELATION)
                         .content("""
                                 {"languageCode":"ko","timezoneName":"Asia/Seoul","themePreference":"DARK"}
@@ -151,7 +151,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 """;
         String created = mvc.perform(post("/api/v1/cases")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + sessionToken)
+                        .header("Authorization", "Bearer " + accessToken)
                         .header("X-Correlation-Id", CORRELATION)
                         .header("Idempotency-Key", "a22-http-case")
                         .content(caseRequest))
@@ -163,14 +163,14 @@ class AccountHttpPersistenceJourneyIntegrationTest {
 
         mvc.perform(post("/api/v1/cases")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .header("Authorization", "Bearer " + sessionToken)
+                        .header("Authorization", "Bearer " + accessToken)
                         .header("X-Correlation-Id", CORRELATION)
                         .header("Idempotency-Key", "a22-http-case")
                         .content(caseRequest))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(caseId.toString()));
         mvc.perform(get("/api/v1/cases/{caseId}", caseId)
-                        .header("Authorization", "Bearer " + sessionToken))
+                        .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(caseId.toString()));
         mvc.perform(get("/api/v1/cases/{caseId}", caseId))
