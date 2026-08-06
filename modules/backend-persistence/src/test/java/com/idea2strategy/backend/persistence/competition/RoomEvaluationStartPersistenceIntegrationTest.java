@@ -57,7 +57,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID FEATURE_MANIFEST_ID = id(20);
     private static final UUID FEATURE_OBJECT_ID = id(21);
     private static final UUID FEATURE_DATASET_OBJECT_ID = id(22);
-    private static final UUID FEATURE_FEED_ID = id(23);
+    private static final UUID FEATURE_FEED_ID = UUID.fromString("063f8f27-5c6a-5348-b2bb-abc3c634149c");
     private static final Instant EVALUATION_START = Instant.parse("2026-08-02T04:00:00Z");
     private static final Instant OBSERVED_AT = EVALUATION_START.plusSeconds(15);
 
@@ -158,7 +158,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update(
                 "insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'E11 Backtest', 'v1', 'ACTIVE', ?)",
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'E11 Backtest', 'internal-derived-v1', 'ACTIVE', ?)",
                 PROVIDER_ID, at.minusDays(2));
         jdbc.update(
                 "insert into market_data.feeds "
@@ -721,9 +721,10 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update(
                 "insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
-                        + "started_at, completed_at) values (?, 'TEST_FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                        + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "
+                        + "'feature-series.parquet.v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
                 FEATURE_PIPELINE_RUN_ID, "competition-feature:" + FEATURE_PIPELINE_RUN_ID,
-                "sha256:" + "c".repeat(64), "sha256:" + "b".repeat(64), at.minusHours(2), at.minusHours(1));
+                "sha256:" + "e".repeat(64), "sha256:" + "b".repeat(64), at.minusHours(2), at.minusHours(1));
         jdbc.update("insert into market_data.dataset_manifests "
                         + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
                         + "period_end, schema_version, dataset_hash, created_at, available_at) values "

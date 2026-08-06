@@ -42,7 +42,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
     private static final UUID FEATURE_OBJECT = id(13);
     private static final UUID FEATURE_DATASET_OBJECT = id(14);
     private static final UUID MATERIALIZATION = id(15);
-    private static final UUID FEATURE_FEED = id(16);
+    private static final UUID FEATURE_FEED = UUID.fromString("e436aeea-814e-5be5-ab29-e93e628a9aa5");
     private static final String POLICY = "backtest-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
 
@@ -102,7 +102,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update(
                 "insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Custom Test', 'v1', 'ACTIVE', ?)",
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Custom Test', 'internal-derived-v1', 'ACTIVE', ?)",
                 PROVIDER, at);
         jdbc.update(
                 "insert into market_data.feeds "
@@ -136,7 +136,8 @@ class CustomBacktestJooqAdapterIntegrationTest {
                 FEATURE, CATALOG, "c".repeat(64));
         jdbc.update("insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
-                        + "started_at, completed_at) values (?, 'FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                        + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "
+                        + "'feature-series.parquet.v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
                 PIPELINE, PIPELINE.toString(), "b".repeat(64), "f".repeat(64), at.minusDays(1), at.minusDays(1));
         jdbc.update("insert into market_data.dataset_manifests "
                         + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "

@@ -49,7 +49,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
-    private static final UUID FEATURE_FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000012");
+    private static final UUID FEATURE_FEED_ID = UUID.fromString("2c4ff221-e499-5f43-8241-71f727d144bf");
     private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_OBJECT_ID = UUID.fromString("e3000000-0000-4000-8000-000000000011");
@@ -108,7 +108,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 PLAN_ID, CATALOG_ID, HASH_A, HASH_B, HASH_C, at);
         jdbc.update(
                 "insert into market_data.providers (id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Test', 'rights/v1', 'ACTIVE', ?)",
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Test', 'internal-derived-v1', 'ACTIVE', ?)",
                 UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
         jdbc.update(
                 "insert into market_data.feeds "
@@ -136,11 +136,12 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 "insert into market_data.feature_definitions "
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
-                        + "values (?, ?, 'RSI_14', '1.0.0', '1m', '{}'::jsonb, 'NUMBER', 14, ?)",
+                        + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1m', '{}'::jsonb, 'NUMBER', 14, ?)",
                 FEATURE_ID, CATALOG_ID, HASH_B);
         jdbc.update("insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
-                        + "started_at, completed_at) values (?, 'FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                        + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "
+                        + "'feature-series.parquet.v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
                 FEATURE_PIPELINE_ID, FEATURE_PIPELINE_ID.toString(), HASH_A, HASH_B, at, at);
         jdbc.update("insert into market_data.dataset_manifests "
                         + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
