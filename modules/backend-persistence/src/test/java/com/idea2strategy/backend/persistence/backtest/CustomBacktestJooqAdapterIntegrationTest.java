@@ -42,6 +42,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
     private static final UUID FEATURE_OBJECT = id(13);
     private static final UUID FEATURE_DATASET_OBJECT = id(14);
     private static final UUID MATERIALIZATION = id(15);
+    private static final UUID FEATURE_FEED = UUID.fromString("084734d5-f52e-5541-bec6-11a85ed3d84b");
     private static final String POLICY = "backtest-policy-v1";
     private static final Instant NOW = Instant.parse("2026-08-04T12:00:00Z");
 
@@ -84,7 +85,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
         jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.dataset_manifests where id = ?", DATASET);
-        jdbc.update("delete from market_data.feeds where id = ?", FEED);
+        jdbc.update("delete from market_data.feeds where id in (?, ?)", FEED, FEATURE_FEED);
         jdbc.update("delete from market_data.providers where id = ?", PROVIDER);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER);
@@ -101,13 +102,19 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update(
                 "insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'CUSTOM_TEST', 'Custom Test', 'v1', 'ACTIVE', ?)",
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Custom Test', 'internal-derived-v1', 'ACTIVE', ?)",
                 PROVIDER, at);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'CUSTOM_TEST', 'BAR', '1d', 'UTC', 'v1', ?)",
                 FEED, PROVIDER, at);
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'FEATURE_RSI_14_1D_RSI_1_0_0', 'FEATURE_SERIES', '1d', 'UTC', "
+                        + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
+                FEATURE_FEED, PROVIDER, at);
         jdbc.update(
                 "insert into market_data.dataset_manifests "
                         + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
@@ -126,17 +133,18 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
                         + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
-                FEATURE, CATALOG, "c".repeat(64));
+                FEATURE, CATALOG, "sha256:" + "c".repeat(64));
         jdbc.update("insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
-                        + "started_at, completed_at) values (?, 'FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                        + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "
+                        + "'feature-series.parquet.v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
                 PIPELINE, PIPELINE.toString(), "b".repeat(64), "f".repeat(64), at.minusDays(1), at.minusDays(1));
         jdbc.update("insert into market_data.dataset_manifests "
                         + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
                         + "period_end, schema_version, dataset_hash, created_at, available_at) values "
                         + "(?, ?, ?, 'DERIVED', '1d', 1, 'AVAILABLE', '2023-12-01T00:00:00Z', "
                         + "'2025-01-01T00:00:00Z', 'feature-series.parquet.v1', ?, ?, ?)",
-                FEATURE_MANIFEST, FEED, INSTRUMENT, "d".repeat(64), at.minusDays(1), at.minusDays(1));
+                FEATURE_MANIFEST, FEATURE_FEED, INSTRUMENT, "d".repeat(64), at.minusDays(1), at.minusDays(1));
         jdbc.update("insert into storage.objects "
                         + "(id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, "
                         + "byte_size, file_format, compression_codec, media_type, schema_version, row_count, "

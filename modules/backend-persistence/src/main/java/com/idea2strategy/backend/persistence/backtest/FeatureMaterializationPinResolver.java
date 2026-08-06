@@ -4,6 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -24,8 +28,13 @@ import org.springframework.stereotype.Component;
 @Component
 public final class FeatureMaterializationPinResolver {
     static final String OUTPUT_SCHEMA = "feature-series.parquet.v1";
+    private static final UUID UUID_NAMESPACE = UUID.fromString("05a27d5a-75d8-4d57-bc9a-31cedf90d791");
+    private static final String INTERNAL_PROVIDER_CODE = "IDEA2STRATEGY_INTERNAL";
+    private static final String INTERNAL_PROVIDER_RIGHTS = "internal-derived-v1";
+    private static final String FEATURE_PIPELINE_CODE = "MATERIALIZE_FEATURE_OUTPUT";
     private static final Pattern SHORTHAND = Pattern.compile("(?<amount>[1-9][0-9]*)(?<unit>[smhd])");
     private static final Pattern SHA_256 = Pattern.compile("(?:sha256:)?[0-9a-f]{64}");
+    private static final Pattern CANONICAL_SHA_256 = Pattern.compile("sha256:[0-9a-f]{64}");
 
     private final DSLContext dsl;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -74,28 +83,48 @@ public final class FeatureMaterializationPinResolver {
                 .minus(resolution.multipliedBy(requirement.requiredObservations()));
         OffsetDateTime requiredEnd = evaluationEnd.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC);
         var candidates = dsl.fetch(
-                "select fm.id, fm.result_hash, fm.period_start, fm.period_end, fm.available_at, "
-                        + "fd.calculator_version, fd.resolution as definition_resolution, "
-                        + "fd.required_history_points, dm.instrument_id as manifest_instrument_id, "
+                "select fm.id, fm.input_dataset_set_hash, fm.result_hash, fm.period_start, fm.period_end, "
+                        + "fm.available_at, "
+                        + "pr.pipeline_code, pr.pipeline_version, pr.input_hash as pipeline_input_hash, "
+                        + "pr.status::text as pipeline_status, pr.output_hash as pipeline_output_hash, "
+                        + "pr.completed_at as pipeline_completed_at, "
+                        + "fd.feature_code, fd.calculator_version, fd.resolution as definition_resolution, "
+                        + "fd.definition_hash, fd.required_history_points, provider.code as provider_code, "
+                        + "provider.rights_version as provider_rights_version, "
+                        + "provider.status as provider_status, feed.data_kind as feed_data_kind, "
+                        + "feed.resolution as feed_resolution, feed.timezone_name as feed_timezone_name, "
+                        + "feed.id as feed_id, feed.code as feed_code, feed.feed_version, "
+                        + "feed.retired_at as feed_retired_at, dm.id as manifest_id, "
+                        + "dm.instrument_id as manifest_instrument_id, "
                         + "dm.data_layer, dm.resolution as manifest_resolution, dm.status::text as manifest_status, "
                         + "dm.period_start as manifest_period_start, dm.period_end as manifest_period_end, "
                         + "dm.schema_version, dm.dataset_hash, dm.available_at as manifest_available_at, "
+                        + "dm.object_count as manifest_object_count, "
                         + "(select count(*) from market_data.dataset_objects dox "
                         + " join storage.objects o on o.id = dox.object_id "
                         + " where dox.dataset_manifest_id = dm.id) as object_count, "
                         + "(select count(*) from market_data.dataset_objects dox "
                         + " join storage.objects o on o.id = dox.object_id "
                         + " where dox.dataset_manifest_id = dm.id and (o.status <> 'AVAILABLE' "
-                        + " or o.provider_version_id = '' or o.schema_version <> ? or o.file_format <> 'PARQUET' "
+                        + " or btrim(o.provider_version_id) = '' or o.schema_version <> ? "
+                        + " or o.file_format <> 'PARQUET' or dox.object_kind <> 'FEATURE_SERIES' "
+                        + " or dox.row_count is null or dox.row_count <= 0 "
+                        + " or o.row_count is null or o.row_count <= 0 or o.byte_size <= 0 "
+                        + " or o.verified_at is null or o.verified_at > ?::timestamptz "
+                        + " or o.quarantined_at is not null or o.superseded_at is not null "
+                        + " or o.deleted_at is not null "
                         + " or o.content_hash !~ '^(sha256:)?[0-9a-f]{64}$')) as invalid_object_count "
                         + "from market_data.feature_materializations fm "
                         + "join market_data.feature_definitions fd on fd.id = fm.feature_definition_id "
+                        + "join market_data.pipeline_runs pr on pr.id = fm.pipeline_run_id "
                         + "join market_data.dataset_manifests dm on dm.id = fm.output_dataset_manifest_id "
+                        + "join market_data.feeds feed on feed.id = dm.feed_id "
+                        + "join market_data.providers provider on provider.id = feed.provider_id "
                         + "where fm.feature_definition_id = ? and fm.instrument_id = ? and fm.status = 'SUCCEEDED' "
                         + "and fm.period_start <= ?::timestamptz and fm.period_end >= ?::timestamptz "
                         + "and fm.available_at <= ?::timestamptz "
                         + "order by fm.id",
-                OUTPUT_SCHEMA, requirement.featureId(), instrumentId, requiredStart, requiredEnd, asOf);
+                OUTPUT_SCHEMA, asOf, requirement.featureId(), instrumentId, requiredStart, requiredEnd, asOf);
         if (candidates.size() != 1) {
             throw new IllegalStateException("Required feature/instrument tuple must resolve to exactly one "
                     + "SUCCEEDED feature materialization: " + requirement.featureId() + "/" + instrumentId);
@@ -114,7 +143,49 @@ public final class FeatureMaterializationPinResolver {
         }
         requireCoverage(candidate, "period_start", "period_end", requiredStart, requiredEnd, "materialization");
         requireVisible(candidate.get("available_at", OffsetDateTime.class), asOf, "materialization");
-        requireHash(candidate.get("result_hash", String.class), "materialization result hash");
+        String resultHash = candidate.get("result_hash", String.class);
+        requireHash(resultHash, "materialization result hash");
+
+        String pipelineOutputHash = candidate.get("pipeline_output_hash", String.class);
+        requireHash(pipelineOutputHash, "pipeline result hash");
+        OffsetDateTime pipelineCompletedAt = candidate.get("pipeline_completed_at", OffsetDateTime.class);
+        if (!"SUCCEEDED".equals(candidate.get("pipeline_status", String.class))
+                || pipelineCompletedAt == null || pipelineCompletedAt.isAfter(asOf)
+                || !prefixed(resultHash).equals(prefixed(pipelineOutputHash))) {
+            throw mismatch("pipeline result hash/status");
+        }
+        if (!FEATURE_PIPELINE_CODE.equals(candidate.get("pipeline_code", String.class))
+                || !OUTPUT_SCHEMA.equals(candidate.get("pipeline_version", String.class))
+                || !Objects.equals(candidate.get("input_dataset_set_hash", String.class),
+                        candidate.get("pipeline_input_hash", String.class))) {
+            throw mismatch("pipeline identity/input");
+        }
+
+        String definitionHash = candidate.get("definition_hash", String.class);
+        String calculatorVersion = candidate.get("calculator_version", String.class);
+        String definitionResolution = candidate.get("definition_resolution", String.class);
+        String featureCode = candidate.get("feature_code", String.class);
+        if (definitionHash == null || !CANONICAL_SHA_256.matcher(definitionHash).matches()) {
+            throw mismatch("feature definition hash");
+        }
+        UUID expectedFeedId = deterministicUuid(
+                "feature-output-feed", definitionHash, calculatorVersion, definitionResolution, OUTPUT_SCHEMA);
+        if (!INTERNAL_PROVIDER_CODE.equals(candidate.get("provider_code", String.class))
+                || !INTERNAL_PROVIDER_RIGHTS.equals(candidate.get("provider_rights_version", String.class))
+                || !"ACTIVE".equals(candidate.get("provider_status", String.class))
+                || !expectedFeedId.equals(candidate.get("feed_id", UUID.class))
+                || !expectedFeedCode(featureCode, definitionResolution, calculatorVersion)
+                        .equals(candidate.get("feed_code", String.class))
+                || !expectedFeedVersion(calculatorVersion).equals(candidate.get("feed_version", String.class))
+                || !"FEATURE_SERIES".equals(candidate.get("feed_data_kind", String.class))
+                || !"UTC".equals(candidate.get("feed_timezone_name", String.class))
+                || !normalizedDuration(candidate.get("feed_resolution", String.class)).equals(resolution)) {
+            throw mismatch("feature output feed identity");
+        }
+        OffsetDateTime feedRetiredAt = candidate.get("feed_retired_at", OffsetDateTime.class);
+        if (feedRetiredAt != null && !feedRetiredAt.isAfter(asOf)) {
+            throw mismatch("feature output feed availability");
+        }
 
         if (!instrumentId.equals(candidate.get("manifest_instrument_id", UUID.class))) {
             throw mismatch("output manifest instrument");
@@ -135,14 +206,99 @@ public final class FeatureMaterializationPinResolver {
                 candidate, "manifest_period_start", "manifest_period_end", requiredStart, requiredEnd, "manifest");
         requireVisible(candidate.get("manifest_available_at", OffsetDateTime.class), asOf, "manifest");
         requireHash(candidate.get("dataset_hash", String.class), "output manifest hash");
+        Number manifestObjectCount = candidate.get("manifest_object_count", Number.class);
         Number objectCount = candidate.get("object_count", Number.class);
         Number invalidObjectCount = candidate.get("invalid_object_count", Number.class);
-        if (objectCount == null || objectCount.longValue() == 0
+        if (manifestObjectCount == null || manifestObjectCount.longValue() <= 0
+                || objectCount == null || objectCount.longValue() != manifestObjectCount.longValue()
                 || invalidObjectCount == null || invalidObjectCount.longValue() != 0) {
             throw new IllegalStateException(
                     "Feature output manifest must identify complete versioned " + OUTPUT_SCHEMA + " objects");
         }
-        return new FeaturePin(candidate.get("id", UUID.class), prefixed(candidate.get("result_hash", String.class)));
+        requireObjectCoverage(candidate.get("manifest_id", UUID.class), requiredStart, requiredEnd);
+        return new FeaturePin(candidate.get("id", UUID.class), prefixed(resultHash));
+    }
+
+    private void requireObjectCoverage(UUID manifestId, OffsetDateTime requiredStart, OffsetDateTime requiredEnd) {
+        var receipts = dsl.fetch(
+                "select dox.period_start as membership_period_start, dox.period_end as membership_period_end, "
+                        + "dox.row_count as membership_row_count, o.period_start as object_period_start, "
+                        + "o.period_end as object_period_end, o.row_count as object_row_count "
+                        + "from market_data.dataset_objects dox "
+                        + "join storage.objects o on o.id = dox.object_id "
+                        + "where dox.dataset_manifest_id = ? "
+                        + "order by dox.period_start, dox.period_end, dox.shard_key, dox.part_number, dox.id",
+                manifestId);
+        OffsetDateTime coveredUntil = requiredStart;
+        for (Record receipt : receipts) {
+            OffsetDateTime membershipStart = receipt.get("membership_period_start", OffsetDateTime.class);
+            OffsetDateTime membershipEnd = receipt.get("membership_period_end", OffsetDateTime.class);
+            OffsetDateTime objectStart = receipt.get("object_period_start", OffsetDateTime.class);
+            OffsetDateTime objectEnd = receipt.get("object_period_end", OffsetDateTime.class);
+            Number membershipRows = receipt.get("membership_row_count", Number.class);
+            Number objectRows = receipt.get("object_row_count", Number.class);
+            if (membershipStart == null || membershipEnd == null
+                    || !membershipStart.equals(objectStart) || !membershipEnd.equals(objectEnd)
+                    || !membershipStart.isBefore(membershipEnd)
+                    || membershipRows == null || objectRows == null
+                    || membershipRows.longValue() != objectRows.longValue()) {
+                throw incompleteObjects();
+            }
+            if (!membershipEnd.isAfter(requiredStart)) {
+                continue;
+            }
+            if (membershipStart.isAfter(coveredUntil)) {
+                throw incompleteObjects();
+            }
+            if (membershipEnd.isAfter(coveredUntil)) {
+                coveredUntil = membershipEnd;
+            }
+        }
+        if (coveredUntil.isBefore(requiredEnd)) {
+            throw incompleteObjects();
+        }
+    }
+
+    private static IllegalStateException incompleteObjects() {
+        return new IllegalStateException(
+                "Feature output manifest must identify complete versioned " + OUTPUT_SCHEMA + " objects");
+    }
+
+    private static String expectedFeedCode(String featureCode, String resolution, String calculatorVersion) {
+        return "FEATURE_" + identityPart(featureCode) + "_" + identityPart(resolution) + "_"
+                + identityPart(calculatorVersion);
+    }
+
+    private static String expectedFeedVersion(String calculatorVersion) {
+        return calculatorVersion.replace(':', '-') + "+" + OUTPUT_SCHEMA;
+    }
+
+    private static String identityPart(String value) {
+        return value.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", "_");
+    }
+
+    static UUID deterministicUuid(Object... values) {
+        StringBuilder name = new StringBuilder();
+        for (Object value : values) {
+            if (!name.isEmpty()) {
+                name.append('|');
+            }
+            name.append(value);
+        }
+        try {
+            MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+            sha1.update(ByteBuffer.allocate(16)
+                    .putLong(UUID_NAMESPACE.getMostSignificantBits())
+                    .putLong(UUID_NAMESPACE.getLeastSignificantBits())
+                    .array());
+            byte[] digest = sha1.digest(name.toString().getBytes(StandardCharsets.UTF_8));
+            digest[6] = (byte) ((digest[6] & 0x0f) | 0x50);
+            digest[8] = (byte) ((digest[8] & 0x3f) | 0x80);
+            ByteBuffer bytes = ByteBuffer.wrap(digest);
+            return new UUID(bytes.getLong(), bytes.getLong());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-1 must be available for UUIDv5", exception);
+        }
     }
 
     private static void requireCoverage(

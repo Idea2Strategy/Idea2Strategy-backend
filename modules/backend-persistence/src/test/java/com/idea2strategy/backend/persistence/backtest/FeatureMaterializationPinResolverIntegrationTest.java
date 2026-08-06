@@ -26,8 +26,13 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(classes = FeatureMaterializationPinResolverIntegrationTest.TestApplication.class)
 class FeatureMaterializationPinResolverIntegrationTest {
     private static final UUID CATALOG = id(1);
-    private static final UUID PROVIDER = id(2);
-    private static final UUID FEED = id(3);
+    private static final String HASH = "a".repeat(64);
+    private static final String DEFINITION_HASH = "sha256:" + HASH;
+    private static final UUID PROVIDER = FeatureMaterializationPinResolver.deterministicUuid(
+            "provider", "IDEA2STRATEGY_INTERNAL");
+    private static final UUID FEED = FeatureMaterializationPinResolver.deterministicUuid(
+            "feature-output-feed", DEFINITION_HASH, "rsi:1.0.0", "1d",
+            FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
     private static final UUID INSTRUMENT = id(4);
     private static final UUID FEATURE = id(5);
     private static final UUID PIPELINE = id(6);
@@ -35,7 +40,6 @@ class FeatureMaterializationPinResolverIntegrationTest {
     private static final UUID OBJECT = id(8);
     private static final UUID DATASET_OBJECT = id(9);
     private static final UUID MATERIALIZATION = id(10);
-    private static final String HASH = "a".repeat(64);
     private static final OffsetDateTime AS_OF = OffsetDateTime.parse("2026-08-04T12:00:00Z");
 
     @Container
@@ -63,7 +67,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 + "(select id from market_data.dataset_manifests where feed_id = ?)", FEED);
         jdbc.update("delete from storage.objects where bucket_name = 'test'");
         jdbc.update("delete from market_data.dataset_manifests where feed_id = ?", FEED);
-        jdbc.update("delete from market_data.pipeline_runs where pipeline_code = 'FEATURE'");
+        jdbc.update("delete from market_data.pipeline_runs where pipeline_code = 'MATERIALIZE_FEATURE_OUTPUT'");
         jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
         jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.feeds where id = ?", FEED);
@@ -76,10 +80,12 @@ class FeatureMaterializationPinResolverIntegrationTest {
                         + "'data/v1', ?, ?)", CATALOG, HASH, created);
         jdbc.update("insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'FEATURE_TEST', 'Feature Test', 'v1', 'ACTIVE', ?)", PROVIDER, created);
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Feature Test', 'internal-derived-v1', 'ACTIVE', ?)",
+                PROVIDER, created);
         jdbc.update("insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
-                        + "values (?, ?, 'FEATURE_TEST', 'FEATURE', '1d', 'UTC', 'v1', ?)",
+                        + "values (?, ?, 'FEATURE_RSI_14_1D_RSI_1_0_0', 'FEATURE_SERIES', '1d', 'UTC', "
+                        + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
                 FEED, PROVIDER, created);
         jdbc.update("insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -88,7 +94,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
                         + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
-                FEATURE, CATALOG, HASH);
+                FEATURE, CATALOG, DEFINITION_HASH);
         seedMaterialization(MATERIALIZATION, PIPELINE, MANIFEST, OBJECT, DATASET_OBJECT, "b".repeat(64));
     }
 
@@ -127,13 +133,87 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 .hasMessageContaining("feature-series.parquet.v1");
     }
 
+    @Test
+    void rejectsStaleUnavailableAndHashInconsistentPublicationMetadata() {
+        jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", "c".repeat(64), PIPELINE);
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pipeline result hash");
+        jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", HASH, PIPELINE);
+
+        jdbc.update("update storage.objects set verified_at = null where id = ?", OBJECT);
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("complete versioned");
+        jdbc.update("update storage.objects set verified_at = ? where id = ?", AS_OF.minusDays(1), OBJECT);
+
+        jdbc.update("update market_data.feeds set retired_at = ? where id = ?", AS_OF.minusHours(1), FEED);
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("feature output feed");
+    }
+
+    @Test
+    void rejectsAFeedThatDoesNotMatchTheDefinitionsDeterministicIdentity() {
+        jdbc.update("update market_data.feeds set code = 'FEATURE_OTHER_1D_RSI_1_0_0' where id = ?", FEED);
+        assertRejected("feature output feed identity");
+        jdbc.update("update market_data.feeds set code = 'FEATURE_RSI_14_1D_RSI_1_0_0' where id = ?", FEED);
+
+        jdbc.update("update market_data.feeds set feed_version = 'rsi-2.0.0+feature-series.parquet.v1' where id = ?", FEED);
+        assertRejected("feature output feed identity");
+        jdbc.update("update market_data.feeds set feed_version = 'rsi-1.0.0+feature-series.parquet.v1' where id = ?", FEED);
+
+        jdbc.update("update market_data.providers set rights_version = 'wrong-rights' where id = ?", PROVIDER);
+        assertRejected("feature output feed identity");
+    }
+
+    @Test
+    void rejectsAPipelineRunThatDoesNotOwnTheMaterializationInputAndSchema() {
+        jdbc.update("update market_data.pipeline_runs set pipeline_code = 'OTHER' where id = ?", PIPELINE);
+        assertRejected("pipeline identity/input");
+        jdbc.update("update market_data.pipeline_runs set pipeline_code = 'MATERIALIZE_FEATURE_OUTPUT' where id = ?", PIPELINE);
+
+        jdbc.update("update market_data.pipeline_runs set pipeline_version = 'unknown.v1' where id = ?", PIPELINE);
+        assertRejected("pipeline identity/input");
+        jdbc.update("update market_data.pipeline_runs set pipeline_version = ? where id = ?", FeatureMaterializationPinResolver.OUTPUT_SCHEMA, PIPELINE);
+
+        jdbc.update("update market_data.pipeline_runs set input_hash = ? where id = ?", "c".repeat(64), PIPELINE);
+        assertRejected("pipeline identity/input");
+    }
+
+    @Test
+    void rejectsObjectReceiptsWhosePeriodsOrRowsDoNotAuthoritativelyCoverTheManifest() {
+        jdbc.update("update market_data.dataset_objects set row_count = row_count - 1 where id = ?", DATASET_OBJECT);
+        assertRejected("complete versioned");
+        jdbc.update("update market_data.dataset_objects set row_count = row_count + 1 where id = ?", DATASET_OBJECT);
+
+        jdbc.update("update market_data.dataset_objects set period_start = period_start + interval '1 day' where id = ?", DATASET_OBJECT);
+        assertRejected("complete versioned");
+        jdbc.update("update market_data.dataset_objects set period_start = period_start - interval '1 day' where id = ?", DATASET_OBJECT);
+
+        jdbc.update("update storage.objects set period_end = '2024-06-01T00:00:00Z' where id = ?", OBJECT);
+        assertRejected("complete versioned");
+    }
+
+    private void assertRejected(String message) {
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(message);
+    }
+
     private void seedMaterialization(
             UUID materialization, UUID pipeline, UUID manifest, UUID object, UUID datasetObject, String inputHash) {
         var created = AS_OF.minusDays(1);
         jdbc.update("insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
-                        + "started_at, completed_at) values (?, 'FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
-                pipeline, pipeline.toString(), inputHash, HASH, created, created);
+                        + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', ?, ?, "
+                        + "'SUCCEEDED', ?, ?, ?, ?)",
+                pipeline, FeatureMaterializationPinResolver.OUTPUT_SCHEMA, pipeline.toString(), inputHash, HASH,
+                created, created);
         jdbc.update("insert into market_data.dataset_manifests "
                         + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
                         + "period_end, schema_version, dataset_hash, created_at, available_at) values "

@@ -57,6 +57,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID FEATURE_MANIFEST_ID = id(20);
     private static final UUID FEATURE_OBJECT_ID = id(21);
     private static final UUID FEATURE_DATASET_OBJECT_ID = id(22);
+    private static final UUID FEATURE_FEED_ID = UUID.fromString("063f8f27-5c6a-5348-b2bb-abc3c634149c");
     private static final Instant EVALUATION_START = Instant.parse("2026-08-02T04:00:00Z");
     private static final Instant OBSERVED_AT = EVALUATION_START.plusSeconds(15);
 
@@ -127,7 +128,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from market_data.dataset_manifests where id in (?, ?)", FIRST_DATASET_ID, SECOND_DATASET_ID);
-        jdbc.update("delete from market_data.feeds where id = ?", FEED_ID);
+        jdbc.update("delete from market_data.feeds where id in (?, ?)", FEED_ID, FEATURE_FEED_ID);
         jdbc.update("delete from market_data.providers where id = ?", PROVIDER_ID);
         jdbc.update("delete from market_data.instruments where id = ?", FEATURE_INSTRUMENT_ID);
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
@@ -157,13 +158,19 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update(
                 "insert into market_data.providers "
                         + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'E11_BACKTEST', 'E11 Backtest', 'v1', 'ACTIVE', ?)",
+                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'E11 Backtest', 'internal-derived-v1', 'ACTIVE', ?)",
                 PROVIDER_ID, at.minusDays(2));
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'E11_BACKTEST', 'BAR', '1d', 'UTC', 'v1', ?)",
                 FEED_ID, PROVIDER_ID, at.minusDays(2));
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'FEATURE_RSI_14_1M_RSI_1_0_0', 'FEATURE_SERIES', '1m', 'UTC', "
+                        + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
+                FEATURE_FEED_ID, PROVIDER_ID, at.minusDays(2));
         seedDataset(FIRST_DATASET_ID, "5", at);
         seedDataset(SECOND_DATASET_ID, "6", at);
     }
@@ -714,15 +721,16 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update(
                 "insert into market_data.pipeline_runs "
                         + "(id, pipeline_code, pipeline_version, idempotency_key, status, input_hash, output_hash, "
-                        + "started_at, completed_at) values (?, 'TEST_FEATURE', 'v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
+                        + "started_at, completed_at) values (?, 'MATERIALIZE_FEATURE_OUTPUT', "
+                        + "'feature-series.parquet.v1', ?, 'SUCCEEDED', ?, ?, ?, ?)",
                 FEATURE_PIPELINE_RUN_ID, "competition-feature:" + FEATURE_PIPELINE_RUN_ID,
-                "sha256:" + "c".repeat(64), "sha256:" + "d".repeat(64), at.minusHours(2), at.minusHours(1));
+                "sha256:" + "e".repeat(64), "sha256:" + "b".repeat(64), at.minusHours(2), at.minusHours(1));
         jdbc.update("insert into market_data.dataset_manifests "
                         + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, "
                         + "period_end, schema_version, dataset_hash, created_at, available_at) values "
                         + "(?, ?, ?, 'DERIVED', '1m', 1, 'AVAILABLE', '2024-12-31T00:00:00Z', "
                         + "'2026-01-01T00:00:00Z', 'feature-series.parquet.v1', ?, ?, ?)",
-                FEATURE_MANIFEST_ID, FEED_ID, FEATURE_INSTRUMENT_ID, "a".repeat(64),
+                FEATURE_MANIFEST_ID, FEATURE_FEED_ID, FEATURE_INSTRUMENT_ID, "a".repeat(64),
                 at.minusHours(2), at.minusHours(1));
         jdbc.update("insert into storage.objects "
                         + "(id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, "

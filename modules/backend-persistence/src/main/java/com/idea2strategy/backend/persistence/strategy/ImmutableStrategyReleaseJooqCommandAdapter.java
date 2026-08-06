@@ -242,8 +242,14 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         String expectedDatasetHash = prefixed(dataset.get("dataset_hash", String.class));
         java.time.LocalDate periodStart = dataset.get("period_start", java.time.LocalDate.class);
         java.time.LocalDate periodEnd = dataset.get("period_end", java.time.LocalDate.class);
-        List<FeaturePin> resolvedFeatures = featurePins.resolve(
-                release.contractPlan().planDocument(), periodStart, periodEnd, queuedAt);
+        final List<FeaturePin> resolvedFeatures;
+        try {
+            resolvedFeatures = featurePins.resolve(
+                    release.contractPlan().planDocument(), periodStart, periodEnd, queuedAt);
+        } catch (IllegalStateException exception) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest feature pins are not publishable: " + exception.getMessage());
+        }
         BasicPayload basicPayload = payloadDocument(
                 request, expectedDatasetHash, periodStart, periodEnd, resolvedFeatures);
         String payload = basicPayload.document();
