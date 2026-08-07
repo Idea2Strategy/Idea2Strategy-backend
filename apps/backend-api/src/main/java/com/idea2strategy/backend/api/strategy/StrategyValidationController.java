@@ -2,7 +2,6 @@ package com.idea2strategy.backend.api.strategy;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.idea2strategy.backend.application.strategy.BacktestDataCoverageQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationFinding;
@@ -21,24 +20,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/strategies/{strategyId}")
-@ConditionalOnBean({
-    BasicStrategyValidationCommandService.class,
-    BasicStrategyCatalogQueryService.class,
-    BacktestDataCoverageQueryService.class
-})
+@ConditionalOnBean({BasicStrategyValidationCommandService.class, BasicStrategyCatalogQueryService.class})
 public class StrategyValidationController {
     private final BasicStrategyValidationCommandService validationService;
     private final BasicStrategyCatalogQueryService catalogService;
-    private final BacktestDataCoverageQueryService coverageService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public StrategyValidationController(
             BasicStrategyValidationCommandService validationService,
-            BasicStrategyCatalogQueryService catalogService,
-            BacktestDataCoverageQueryService coverageService) {
+            BasicStrategyCatalogQueryService catalogService) {
         this.validationService = validationService;
         this.catalogService = catalogService;
-        this.coverageService = coverageService;
     }
 
     @PostMapping("/validations")
@@ -50,7 +42,7 @@ public class StrategyValidationController {
             throw new IllegalArgumentException("catalogId is required");
         }
         var catalog = catalogService.getPublished(request.catalogId());
-        var run = validationService.validate(strategyId, catalog, coverageService.coverageFor(catalog));
+        var run = validationService.validate(strategyId, catalog);
         return response(run);
     }
 
@@ -68,7 +60,6 @@ public class StrategyValidationController {
         var run = validationService.preview(
                 strategyId,
                 catalog,
-                coverageService.coverageFor(catalog),
                 writeJson(request.semanticDocument()),
                 request.clientRevision());
         return response(run);

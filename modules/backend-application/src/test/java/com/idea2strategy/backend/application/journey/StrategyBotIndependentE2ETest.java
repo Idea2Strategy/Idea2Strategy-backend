@@ -100,8 +100,7 @@ class StrategyBotIndependentE2ETest {
                 principal,
                 new FixedIdGenerator(VALIDATION_ID),
                 clock);
-        StrategyValidationRun validation = validations.validate(
-                strategyId, catalog(), backtest.coverageFor(strategyId));
+        StrategyValidationRun validation = validations.validate(strategyId, catalog());
 
         var plans = new BasicExecutionPlanCommandService(
                 repository,
@@ -130,7 +129,10 @@ class StrategyBotIndependentE2ETest {
         assertThat(strategyId).isEqualTo(STRATEGY_ID);
         assertThat(saved.editSequence()).isEqualTo(1);
         assertThat(validation.status()).isEqualTo(StrategyValidationStatus.VALID);
-        assertThat(backtest.requestedStrategyIds()).containsExactly(STRATEGY_ID);
+        /* decision.backtest.supportability: validation must not consult data coverage, because a run
+           pinned by edit sequence, semantic hash and catalog version cannot hold a conclusion about
+           infrastructure state. Availability is resolved at release and backtest request time. */
+        assertThat(backtest.requestedStrategyIds()).isEmpty();
         assertThat(release.botId()).isEqualTo(BOT_ID);
         assertThat(trading.backtestRequest().botId()).isEqualTo(BOT_ID);
         assertThat(run.mode()).isEqualTo(BotRunDispatchMode.IMMEDIATE);
