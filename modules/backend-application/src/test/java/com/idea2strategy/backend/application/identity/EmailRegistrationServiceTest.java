@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -67,6 +68,69 @@ class EmailRegistrationServiceTest {
     }
 
     @Test
+    void pendingEmailSignupReusesTheAccountAndIssuesANewVerificationToken() {
+        UUID accountId = UUID.randomUUID();
+        var commands = new RecordingRegistrationPort();
+        var queries = new RegistrationQueryPort() {
+            @Override
+            public boolean emailExists(String emailLookupHmac) {
+                return true;
+            }
+
+            @Override
+            public Optional<ExistingEmailRegistration> findEmailRegistration(
+                    List<IdentifierFingerprint> comparisonFingerprints) {
+                return Optional.of(new ExistingEmailRegistration(
+                        accountId,
+                        AccountLifecycleStatus.PENDING_VERIFICATION,
+                        EmailStatus.PENDING_VERIFICATION));
+            }
+        };
+        var service = service(
+                queries,
+                commands,
+                new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
+
+        SignupResult result = service.signup(new SignupCommand(
+                "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), "192.0.2.0/24"));
+
+        assertThat(result.accountId()).isEqualTo(accountId);
+        assertThat(result.verificationToken()).isEqualTo("raw-verification-token");
+        assertThat(commands.registrations).isEmpty();
+        assertThat(commands.replacements)
+                .singleElement()
+                .satisfies(replacement -> {
+                    assertThat(replacement.accountId()).isEqualTo(accountId);
+                    assertThat(replacement.tokenDigest()).isEqualTo("digest:raw-verification-token");
+                });
+    }
+
+    @Test
+    void activeEmailSignupRemainsAConflict() {
+        var queries = new RegistrationQueryPort() {
+            @Override
+            public boolean emailExists(String emailLookupHmac) {
+                return true;
+            }
+
+            @Override
+            public Optional<ExistingEmailRegistration> findEmailRegistration(
+                    List<IdentifierFingerprint> comparisonFingerprints) {
+                return Optional.of(new ExistingEmailRegistration(
+                        UUID.randomUUID(), AccountLifecycleStatus.ACTIVE, EmailStatus.VERIFIED));
+            }
+        };
+
+        assertThatThrownBy(() -> service(
+                        queries,
+                        new RecordingRegistrationPort(),
+                        new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM))
+                .signup(new SignupCommand(
+                        "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null)))
+                .isInstanceOf(DuplicateEmailException.class);
+    }
+
+    @Test
     void expiredAndConsumedVerificationTokensCannotActivateAccount() {
         var commands = new RecordingRegistrationPort();
         var service = service(false, commands);
@@ -109,8 +173,15 @@ class EmailRegistrationServiceTest {
             boolean duplicate,
             RecordingRegistrationPort commands,
             AccountPreferenceDefaults defaults) {
+        return service(lookup -> duplicate, commands, defaults);
+    }
+
+    private static EmailRegistrationService service(
+            RegistrationQueryPort queries,
+            RecordingRegistrationPort commands,
+            AccountPreferenceDefaults defaults) {
         return new EmailRegistrationService(
-                lookup -> duplicate,
+                queries,
                 commands,
                 raw -> new ProtectedEmail(
                         raw.trim().toLowerCase(),

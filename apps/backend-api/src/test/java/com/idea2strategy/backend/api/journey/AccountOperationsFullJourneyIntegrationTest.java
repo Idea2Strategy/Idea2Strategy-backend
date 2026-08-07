@@ -10,8 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.idea2strategy.backend.api.identity.AccountVerificationEmailRequested;
 import com.idea2strategy.backend.api.identity.PasswordResetEmailRequested;
-import com.idea2strategy.backend.api.identity.VerificationEmailRequested;
 import com.idea2strategy.backend.application.identity.AccountLifecycleService;
 import com.idea2strategy.backend.application.notification.NotificationRequest;
 import com.idea2strategy.backend.operatortrust.VersionedOperatorSubjectHmac;
@@ -487,9 +487,9 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString();
         UUID accountId = UUID.fromString(json.readTree(signup).get("accountId").asText());
-        String verificationToken = events.stream(VerificationEmailRequested.class)
-                .filter(event -> event.email().equals(email))
-                .map(VerificationEmailRequested::verificationToken)
+        String verificationToken = events.stream(AccountVerificationEmailRequested.class)
+                .filter(event -> event.accountId().equals(accountId))
+                .map(AccountVerificationEmailRequested::verificationToken)
                 .findFirst().orElseThrow();
         mvc.perform(post("/api/v1/auth/verify-email")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
@@ -59,7 +61,27 @@ class IdentityAuthControllerTest {
 
         assertThat(response.getStatusCode().value()).isEqualTo(202);
         assertThat(response.getBody().toString()).doesNotContain("raw-verification-secret");
-        verify(delivery).send("person@example.com", "raw-verification-secret", expiresAt);
+        verify(delivery).send(accountId, "raw-verification-secret", expiresAt);
+    }
+
+    @Test
+    void verificationLinkActivatesTheAccountAndRedirectsToLogin() throws Exception {
+        var registration = mock(EmailRegistrationService.class);
+        var controller = new IdentityAuthController(
+                registration,
+                mock(EmailAuthenticationService.class),
+                mock(VerificationDeliveryPort.class),
+                jwt(),
+                cookies());
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new IdentityAuthExceptionHandler())
+                .build();
+
+        mvc.perform(get("/api/v1/auth/verify-email").param("token", "raw-verification-secret"))
+                .andExpect(status().isSeeOther())
+                .andExpect(header().string("Location", "/login?emailVerified=true"));
+
+        verify(registration).verify(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
