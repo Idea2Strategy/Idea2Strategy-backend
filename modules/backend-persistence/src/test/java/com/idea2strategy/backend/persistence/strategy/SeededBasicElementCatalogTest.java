@@ -154,7 +154,11 @@ class SeededBasicElementCatalogTest {
     void theComparisonThresholdIsAnExactDecimalString() {
         assertThat(jdbc.queryForObject("""
                 select parameter_schema -> 'properties' -> 'threshold' ->> 'type'
-                from strategy.element_definitions where element_code = 'BASIC_RSI_CROSS'
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where element.element_code = 'BASIC_RSI_CROSS'
+                  and version.retired_at is null
                 """, String.class)).isEqualTo("string");
     }
 
