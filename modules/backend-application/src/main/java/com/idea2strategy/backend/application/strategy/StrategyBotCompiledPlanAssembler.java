@@ -129,8 +129,11 @@ public final class StrategyBotCompiledPlanAssembler {
 
         Map<String, StrategyElementDefinition> elements = new HashMap<>();
         catalog.elements().forEach(element -> elements.put(element.elementCode(), element));
-        Map<String, StrategyFeatureDefinition> features = new HashMap<>();
-        catalog.features().forEach(feature -> features.put(feature.featureCode(), feature));
+        Map<FeatureRequirementKey, StrategyFeatureDefinition> features = new HashMap<>();
+        catalog.features().forEach(feature -> features.put(
+                new FeatureRequirementKey(
+                        feature.featureCode(), normalizedResolution(feature.resolution())),
+                feature));
 
         Map<String, List<PlanStep>> containers = containersByKey(planRoot, elements);
         List<RequiredFeature> requiredFeatures = requiredFeatures(planRoot, elements, features);
@@ -307,7 +310,7 @@ public final class StrategyBotCompiledPlanAssembler {
     private List<RequiredFeature> requiredFeatures(
             JsonNode planRoot,
             Map<String, StrategyElementDefinition> elements,
-            Map<String, StrategyFeatureDefinition> features) {
+            Map<FeatureRequirementKey, StrategyFeatureDefinition> features) {
         Map<FeatureRequirementKey, Set<String>> instrumentsByFeature = new LinkedHashMap<>();
         for (JsonNode flow : planRoot.path("flows")) {
             Set<String> instruments = new LinkedHashSet<>();
@@ -318,15 +321,16 @@ public final class StrategyBotCompiledPlanAssembler {
                 if (element != null) {
                     parse(element.executionContract()).path("backtest").path("features")
                             .forEach(feature -> {
-                                StrategyFeatureDefinition definition = features.get(feature.asText());
+                                String requested = step.path("parameters").path("resolution").asText();
+                                FeatureRequirementKey key = resolveFeatureRequirement(
+                                        features, feature.asText(), requested);
+                                StrategyFeatureDefinition definition = features.get(key);
                                 if (definition == null) {
                                     throw new IllegalStateException(
-                                            "Validated feature is missing from its catalog: " + feature.asText());
+                                            "Validated feature is missing from its catalog: "
+                                                    + feature.asText() + "@" + requested);
                                 }
-                                String requested = step.path("parameters").path("resolution")
-                                        .asText(definition.resolution());
-                                requirements.add(new FeatureRequirementKey(
-                                        feature.asText(), normalizedResolution(liveResolution(requested))));
+                                requirements.add(key);
                             });
                 }
             });
@@ -339,7 +343,7 @@ public final class StrategyBotCompiledPlanAssembler {
                 .sorted(java.util.Comparator.comparing(FeatureRequirementKey::featureCode)
                         .thenComparing(FeatureRequirementKey::resolution))
                 .forEach(requirement -> {
-            StrategyFeatureDefinition definition = features.get(requirement.featureCode());
+            StrategyFeatureDefinition definition = features.get(requirement);
             if (definition == null) {
                 throw new IllegalStateException(
                         "Validated feature is missing from its catalog: " + requirement.featureCode());
@@ -353,6 +357,23 @@ public final class StrategyBotCompiledPlanAssembler {
                     requiredObservations(definition)));
         });
         return List.copyOf(requirements);
+    }
+
+    private FeatureRequirementKey resolveFeatureRequirement(
+            Map<FeatureRequirementKey, StrategyFeatureDefinition> features,
+            String featureCode,
+            String requested) {
+        if (!requested.isBlank()) {
+            return new FeatureRequirementKey(featureCode, normalizedResolution(liveResolution(requested)));
+        }
+        List<FeatureRequirementKey> matches = features.keySet().stream()
+                .filter(key -> key.featureCode().equals(featureCode))
+                .toList();
+        if (matches.size() == 1) {
+            return matches.getFirst();
+        }
+        throw new IllegalStateException(
+                "Feature " + featureCode + " must select exactly one live resolution");
     }
 
     /**

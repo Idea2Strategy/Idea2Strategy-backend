@@ -201,22 +201,25 @@ class SeededBasicElementCatalogTest {
                 });
     }
 
-    /** The full catalog evaluates its rolling event state directly and declares no fake feature dependency. */
+    /** Only RSI_CROSS consumes the one official historical feature; other blocks stay raw-market operations. */
     @Test
-    void doesNotDeclareUnrelatedFeatureDependencies() {
+    void declaresOnlyTheOfficialRsiFeatureDependency() {
         List<String> declared = jdbc.queryForList("""
-                select jsonb_array_elements_text(execution_contract -> 'backtest' -> 'features')
+                select element_code || ':' || feature
                 from strategy.element_definitions element
                 join strategy.element_catalog_versions version
                   on version.id = element.element_catalog_version_id
+                cross join lateral jsonb_array_elements_text(
+                    execution_contract -> 'backtest' -> 'features') feature
                 where version.retired_at is null
+                order by 1
                 """, String.class);
 
-        assertThat(declared).isEmpty();
+        assertThat(declared).containsExactly("BASIC_RSI_CROSS:RSI_14");
     }
 
     @Test
-    void publishesOnlyProductionResolutionsAndDynamicBacktestFeeds() {
+    void publishesOnlyProductionResolutionsWithoutPerElementBacktestFeeds() {
         List<String> resolutionEnums = jdbc.queryForList("""
                 select distinct jsonb_array_elements_text(parameter_schema #> '{properties,resolution,enum}')
                 from strategy.element_definitions element
@@ -228,15 +231,30 @@ class SeededBasicElementCatalogTest {
                 """, String.class);
         assertThat(resolutionEnums).containsExactly("1d", "1h", "30m", "4h");
 
-        List<String> feedResolutions = jdbc.queryForList("""
-                select distinct feed ->> 'resolution'
+        Integer feedDeclarations = jdbc.queryForObject("""
+                select count(*)
                 from strategy.element_definitions element
                 join strategy.element_catalog_versions version
                   on version.id = element.element_catalog_version_id
-                cross join lateral jsonb_array_elements(execution_contract #> '{backtest,feeds}') feed
                 where version.retired_at is null
-                """, String.class);
-        assertThat(feedResolutions).containsExactly("$resolution");
+                  and execution_contract #> '{backtest,feeds}' is not null
+                """, Integer.class);
+        assertThat(feedDeclarations).isZero();
+
+        UUID activeCatalog = jdbc.queryForObject(
+                "select id from strategy.element_catalog_versions where retired_at is null",
+                UUID.class);
+        assertThat(catalogAdapter.findFeatures(activeCatalog))
+                .extracting("id", "featureCode", "resolution")
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(
+                                UUID.fromString("eddfb2d4-8586-5260-8fc9-9c8125990270"), "RSI_14", "1d"),
+                        org.assertj.core.groups.Tuple.tuple(
+                                UUID.fromString("2e18c093-5d4e-5d9a-bd22-b7e5679f1a3e"), "RSI_14", "1h"),
+                        org.assertj.core.groups.Tuple.tuple(
+                                UUID.fromString("4b1c6801-0259-5176-a857-0e5ea923d898"), "RSI_14", "30m"),
+                        org.assertj.core.groups.Tuple.tuple(
+                                UUID.fromString("1b2785bd-20f0-50a2-ae96-6a1f7bad74b9"), "RSI_14", "4h"));
 
         assertThat(jdbc.queryForList("""
                 select jsonb_array_elements_text(parameter_schema #> '{properties,executionMode,enum}')

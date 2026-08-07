@@ -78,31 +78,57 @@ final class BasicExecutionPlanCompiler {
             BasicBlockAssembly assembly,
             BasicStrategyCatalog catalog,
             Map<String, StrategyElementDefinition> elements) {
-        Set<String> requiredCodes = new LinkedHashSet<>();
+        Map<FeatureKey, StrategyFeatureDefinition> definitions = new HashMap<>();
+        catalog.features().forEach(feature -> definitions.put(
+                new FeatureKey(feature.featureCode(), feature.resolution()), feature));
+        Set<FeatureKey> requiredKeys = new LinkedHashSet<>();
         for (var group : assembly.groups()) {
             for (var block : group.blocks()) {
                 try {
                     JsonNode contract = objectMapper.readTree(elements.get(block.elementCode()).executionContract());
                     for (JsonNode feature : contract.path("backtest").path("features")) {
-                        requiredCodes.add(feature.asText());
+                        requiredKeys.add(resolveFeatureKey(
+                                definitions, feature.asText(), block.parameters().get("resolution"), block.elementCode()));
                     }
                 } catch (JsonProcessingException exception) {
                     throw new IllegalStateException("Validated element contract is not compilable", exception);
                 }
             }
         }
-        Map<String, StrategyFeatureDefinition> definitions = new HashMap<>();
-        catalog.features().forEach(feature -> definitions.put(feature.featureCode(), feature));
         var required = new ArrayList<StrategyFeatureDefinition>();
-        requiredCodes.stream().sorted().forEach(code -> {
-            StrategyFeatureDefinition definition = definitions.get(code);
+        requiredKeys.stream()
+                .sorted(Comparator.comparing(FeatureKey::featureCode).thenComparing(FeatureKey::resolution))
+                .forEach(key -> {
+            StrategyFeatureDefinition definition = definitions.get(key);
             if (definition == null) {
-                throw new IllegalStateException("Validated feature is missing from its catalog: " + code);
+                throw new IllegalStateException(
+                        "Validated feature is missing from its catalog: "
+                                + key.featureCode() + "@" + key.resolution());
             }
             required.add(definition);
         });
         return List.copyOf(required);
     }
+
+    private FeatureKey resolveFeatureKey(
+            Map<FeatureKey, StrategyFeatureDefinition> definitions,
+            String featureCode,
+            Object configured,
+            String elementCode) {
+        if (configured instanceof String resolution && !resolution.isBlank()) {
+            return new FeatureKey(featureCode, resolution);
+        }
+        List<FeatureKey> matches = definitions.keySet().stream()
+                .filter(key -> key.featureCode().equals(featureCode))
+                .toList();
+        if (matches.size() == 1) {
+            return matches.getFirst();
+        }
+        throw new IllegalStateException(
+                "Feature block " + elementCode + " must select exactly one resolution");
+    }
+
+    private record FeatureKey(String featureCode, String resolution) {}
 
     private String featureDocument(List<StrategyFeatureDefinition> features) {
         ArrayNode root = objectMapper.createArrayNode();

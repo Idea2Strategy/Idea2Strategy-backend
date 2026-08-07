@@ -40,11 +40,11 @@ class BasicBacktestCapabilityValidatorTest {
        adjusted bars at the evaluated resolution are a platform invariant, not a per-element claim. */
     @Test
     void acceptsAnElementThatDeclaresNoFeedBecauseAdjustedBarsAreAPlatformInvariant() {
-        var result = validator.validate(assembly(), catalog(featureOnlyContract()));
+        var result = validator.validate(
+                assembly("4h", "4h"), catalog(featureOnlyContract(), featureFreeContract()));
 
         assertThat(result.issues()).isEmpty();
-        // Only the trigger element still declares one; the RSI element contributed none.
-        assertThat(result.requiredFeeds()).containsExactly(new FeedResolution("SIP_OHLCV", "1m"));
+        assertThat(result.requiredFeeds()).isEmpty();
         assertThat(result.requiredFeatures()).containsExactly("RSI_14");
     }
 
@@ -59,7 +59,7 @@ class BasicBacktestCapabilityValidatorTest {
         assertThat(result.issues()).singleElement().satisfies(issue -> {
             assertThat(issue.code()).isEqualTo("BACKTEST_FEATURE_UNKNOWN");
             assertThat(issue.location()).isEqualTo("groups[0].blocks[1].elementCode");
-            assertThat(issue.requirements()).containsExactly("feature:SMA_20");
+                    assertThat(issue.requirements()).containsExactly("feature:SMA_20", "resolution:30m");
         });
     }
 
@@ -104,9 +104,9 @@ class BasicBacktestCapabilityValidatorTest {
     @Test
     void rejectsUnsupportedOrMixedProductionResolutions() {
         var mixed = validator.validate(
-                assembly("30m", "1h"), catalog(dynamicRsiContract(), dynamicFeedContract()));
+                assembly("30m", "1h"), catalog(featureOnlyContract(), featureFreeContract()));
         var legacy = validator.validate(
-                assembly("1m", "1m"), catalog(dynamicRsiContract(), dynamicFeedContract()));
+                assembly("1m", "1m"), catalog(featureOnlyContract(), featureFreeContract()));
 
         assertThat(mixed.issues()).extracting(BasicBacktestCapabilityIssue::code)
                 .contains("BACKTEST_MULTIPLE_RESOLUTIONS");
@@ -115,7 +115,7 @@ class BasicBacktestCapabilityValidatorTest {
     }
 
     private static BasicBlockAssembly assembly() {
-        return assembly(null, null);
+        return assembly("30m", "30m");
     }
 
     private static BasicBlockAssembly assembly(String triggerResolution, String conditionResolution) {
@@ -157,26 +157,32 @@ class BasicBacktestCapabilityValidatorTest {
                         element("MARKET_OPEN", "{}", "{\"signal\":{\"type\":\"BOOLEAN\"}}", marketOpenContract),
                         element("RSI", "{\"input\":{\"type\":\"BOOLEAN\"}}", "{\"result\":{\"type\":\"BOOLEAN\"}}", rsiContract),
                         element("BUY_ORDER", "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}", noDataContract())),
-                List.of(new StrategyFeatureDefinition(
-                        UUID.randomUUID(),
-                        CATALOG_ID,
-                        "RSI_14",
-                        "1.0.0",
-                        "1m",
-                        "{\"period\":14}",
-                        "NUMBER",
-                        14,
-                        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")),
+                java.util.stream.Stream.of("30m", "1h", "4h", "1d")
+                        .map(resolution -> new StrategyFeatureDefinition(
+                                UUID.nameUUIDFromBytes(("RSI_14:" + resolution).getBytes(
+                                        java.nio.charset.StandardCharsets.UTF_8)),
+                                CATALOG_ID,
+                                "RSI_14",
+                                "1.0.0",
+                                resolution,
+                                "{\"period\":14}",
+                                "NUMBER",
+                                14,
+                                "c".repeat(63) + Integer.toHexString(resolution.length())))
+                        .toList(),
                 List.of(new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
     }
 
     private static StrategyElementDefinition element(String code, String inputs, String outputs, String contract) {
+        String parameterSchema = "BUY_ORDER".equals(code)
+                ? "{\"type\":\"object\",\"properties\":{}}"
+                : "{\"type\":\"object\",\"properties\":{\"resolution\":{\"type\":\"string\"}}}";
         return new StrategyElementDefinition(
                 UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                 CATALOG_ID,
                 code,
                 "BLOCK",
-                "{\"type\":\"object\",\"properties\":{\"resolution\":{\"type\":\"string\"}}}",
+                parameterSchema,
                 inputs,
                 outputs,
                 contract,
@@ -207,6 +213,10 @@ class BasicBacktestCapabilityValidatorTest {
 
     private static String featureOnlyContract() {
         return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"features\":[\"RSI_14\"]}}";
+    }
+
+    private static String featureFreeContract() {
+        return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"features\":[]}}";
     }
 
     private static String noDataContract() {

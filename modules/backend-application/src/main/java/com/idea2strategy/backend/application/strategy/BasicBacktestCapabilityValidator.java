@@ -55,8 +55,10 @@ public final class BasicBacktestCapabilityValidator {
 
         Map<String, StrategyElementDefinition> elements = new HashMap<>();
         catalog.elements().forEach(element -> elements.put(element.elementCode(), element));
-        Set<String> catalogFeatures = new HashSet<>();
-        catalog.features().forEach(feature -> catalogFeatures.add(feature.featureCode()));
+        Map<String, Set<String>> catalogFeatures = new HashMap<>();
+        catalog.features().forEach(feature -> catalogFeatures
+                .computeIfAbsent(feature.featureCode(), ignored -> new HashSet<>())
+                .add(feature.resolution()));
 
         var requiredFeeds = new TreeSet<>(FEED_ORDER);
         var requiredFeatures = new TreeSet<String>();
@@ -96,7 +98,7 @@ public final class BasicBacktestCapabilityValidator {
             BasicBlockAssembly.BasicBlock block,
             StrategyElementDefinition definition,
             String location,
-            Set<String> catalogFeatures,
+            Map<String, Set<String>> catalogFeatures,
             Set<FeedResolution> requiredFeeds,
             Set<String> requiredFeatures,
             Set<String> resolvedResolutions,
@@ -127,6 +129,8 @@ public final class BasicBacktestCapabilityValidator {
             return;
         }
 
+        resolveConfiguredResolution(block, definition, location, resolvedResolutions, issues);
+
         /* A feed declaration is optional. Adjusted bars at the evaluated resolution are a platform
            invariant, so an element states the official features it reads and need not name a feed.
            A declaration is still read where a published catalog carries one, so both catalog
@@ -152,12 +156,13 @@ public final class BasicBacktestCapabilityValidator {
                     Object configuredResolution = block.parameters().get("resolution");
                     resolution = configuredResolution instanceof String value ? value : "";
                     if (!PRODUCTION_RESOLUTIONS.contains(resolution)) {
-                        add(issues, "BACKTEST_RESOLUTION_UNSUPPORTED", location,
-                                "Production backtests support only 30m, 1h, 4h, or 1d",
-                                List.of("resolution:" + resolution));
+                        if (!declaresResolutionParameter(definition)) {
+                            add(issues, "BACKTEST_RESOLUTION_UNSUPPORTED", location,
+                                    "Production backtests support only 30m, 1h, 4h, or 1d",
+                                    List.of("resolution:" + resolution));
+                        }
                         continue;
                     }
-                    resolvedResolutions.add(resolution);
                 } else if (resolution.startsWith("$")) {
                     add(issues, "BACKTEST_CONTRACT_INVALID", location,
                             "Backtest feed declares an unknown dynamic resolution", List.of());
@@ -182,11 +187,46 @@ public final class BasicBacktestCapabilityValidator {
             requiredFeatures.add(feature);
             /* Catalog membership is a function of the pinned catalog, so it stays. Whether the
                feature has been materialized is not, so it does not. */
-            if (!catalogFeatures.contains(feature)) {
-                add(issues, "BACKTEST_FEATURE_UNKNOWN", location,
-                        "Backtest feature is not defined by the supplied catalog",
-                        List.of("feature:" + feature));
+            Object configured = block.parameters().get("resolution");
+            String resolution = configured instanceof String value ? value : "";
+            Set<String> availableResolutions = catalogFeatures.getOrDefault(feature, Set.of());
+            if (resolution.isBlank() && availableResolutions.size() == 1) {
+                resolution = availableResolutions.iterator().next();
             }
+            if (!availableResolutions.contains(resolution)) {
+                add(issues, "BACKTEST_FEATURE_UNKNOWN", location,
+                        "Backtest feature is not defined at the selected resolution by the supplied catalog",
+                        List.of("feature:" + feature, "resolution:" + resolution));
+            }
+        }
+    }
+
+    private void resolveConfiguredResolution(
+            BasicBlockAssembly.BasicBlock block,
+            StrategyElementDefinition definition,
+            String location,
+            Set<String> resolvedResolutions,
+            List<BasicBacktestCapabilityIssue> issues) {
+        if (!declaresResolutionParameter(definition)) {
+            return;
+        }
+        Object configured = block.parameters().get("resolution");
+        String resolution = configured instanceof String value ? value : "";
+        if (!PRODUCTION_RESOLUTIONS.contains(resolution)) {
+            add(issues, "BACKTEST_RESOLUTION_UNSUPPORTED", location,
+                    "Production backtests support only 30m, 1h, 4h, or 1d",
+                    List.of("resolution:" + resolution));
+            return;
+        }
+        resolvedResolutions.add(resolution);
+    }
+
+    private boolean declaresResolutionParameter(StrategyElementDefinition definition) {
+        try {
+            JsonNode schema = objectMapper.readTree(definition.parameterSchema());
+            return schema != null && schema.path("properties").has("resolution");
+        } catch (JsonProcessingException exception) {
+            return false;
         }
     }
 

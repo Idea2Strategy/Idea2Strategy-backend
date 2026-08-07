@@ -175,8 +175,9 @@ public final class ImmutableStrategyReleaseCommandService {
             UUID planId,
             BasicStrategyCatalog catalog,
             String configurationHash) {
-        Map<String, UUID> featureIds = new HashMap<>();
-        catalog.features().forEach(feature -> featureIds.put(feature.featureCode(), feature.id()));
+        Map<FeatureKey, UUID> featureIds = new HashMap<>();
+        catalog.features().forEach(feature -> featureIds.put(
+                new FeatureKey(feature.featureCode(), feature.resolution()), feature.id()));
         Map<String, Set<String>> elementFeatures = new HashMap<>();
         catalog.elements().forEach(element -> elementFeatures.put(
                 element.elementCode(), featureCodes(parse(element.executionContract()))));
@@ -188,9 +189,12 @@ public final class ImmutableStrategyReleaseCommandService {
             List<UUID> instruments = new ArrayList<>();
             flowNode.path("instrumentIds").forEach(node -> instruments.add(UUID.fromString(node.asText())));
             Set<UUID> requiredFeatures = new LinkedHashSet<>();
-            flowNode.path("steps").forEach(step -> elementFeatures
-                    .getOrDefault(step.path("elementCode").asText(), Set.of())
-                    .forEach(code -> requiredFeatures.add(requireFeatureId(featureIds, code))));
+            flowNode.path("steps").forEach(step -> {
+                String resolution = step.path("parameters").path("resolution").asText();
+                elementFeatures.getOrDefault(step.path("elementCode").asText(), Set.of())
+                        .forEach(code -> requiredFeatures.add(
+                                requireFeatureId(featureIds, code, resolution)));
+            });
             List<FeatureRequirement> requirements = new ArrayList<>();
             for (UUID instrumentId : instruments) {
                 requiredFeatures.forEach(featureId -> requirements.add(
@@ -256,13 +260,17 @@ public final class ImmutableStrategyReleaseCommandService {
         return result;
     }
 
-    private UUID requireFeatureId(Map<String, UUID> featureIds, String code) {
-        UUID id = featureIds.get(code);
+    private UUID requireFeatureId(
+            Map<FeatureKey, UUID> featureIds, String code, String resolution) {
+        UUID id = featureIds.get(new FeatureKey(code, resolution));
         if (id == null) {
-            throw new IllegalStateException("Validated feature is missing from its catalog: " + code);
+            throw new IllegalStateException(
+                    "Validated feature is missing from its catalog: " + code + "@" + resolution);
         }
         return id;
     }
+
+    private record FeatureKey(String featureCode, String resolution) {}
 
     private UUID derivedId(UUID releaseId, String component) {
         return UUID.nameUUIDFromBytes((releaseId + ":" + component).getBytes(StandardCharsets.UTF_8));
