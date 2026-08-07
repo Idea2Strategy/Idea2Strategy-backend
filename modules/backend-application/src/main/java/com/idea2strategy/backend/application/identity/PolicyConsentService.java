@@ -3,6 +3,7 @@ package com.idea2strategy.backend.application.identity;
 import com.idea2strategy.backend.domain.identity.AccountConsent;
 import com.idea2strategy.backend.domain.identity.AccountPreferences;
 import com.idea2strategy.backend.domain.identity.ConsentDecision;
+import com.idea2strategy.backend.domain.identity.PolicyDocumentVersion;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
@@ -29,6 +30,18 @@ public final class PolicyConsentService {
                 .map(document -> new CurrentPolicyDecision(
                         document,
                         queries.findLatestConsent(accountId, document.id())))
+                .toList();
+    }
+
+    /**
+     * Returns the exact current required documents a signed-out dormant account must
+     * accept before reactivation. This deliberately contains no account-specific
+     * consent state, so it is safe to expose before authentication.
+     */
+    public List<PolicyDocumentVersion> requiredReactivationPolicies(String languageCode) {
+        AccountPreferences.requireSupportedLanguage(languageCode);
+        return queries.findCurrentPolicies(languageCode, clock.instant()).stream()
+                .filter(PolicyDocumentVersion::required)
                 .toList();
     }
 

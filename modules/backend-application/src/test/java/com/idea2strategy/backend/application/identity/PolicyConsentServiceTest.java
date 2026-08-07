@@ -38,6 +38,28 @@ class PolicyConsentServiceTest {
     }
 
     @Test
+    void exposesOnlyRequiredCurrentDocumentsForSignedOutReactivation() {
+        var repository = new Repository();
+        repository.currentPolicies.add(document(CURRENT_DOCUMENT_ID, "2", null));
+        repository.currentPolicies.add(new PolicyDocumentVersion(
+                UUID.randomUUID(),
+                "MARKETING",
+                "1",
+                "en",
+                "Marketing",
+                "text/markdown",
+                "Optional body",
+                "sha256:optional",
+                false,
+                NOW.minusSeconds(60),
+                null));
+
+        assertThat(service(repository).requiredReactivationPolicies("en"))
+                .extracting(PolicyDocumentVersion::id)
+                .containsExactly(CURRENT_DOCUMENT_ID);
+    }
+
+    @Test
     void recordsAnAppendOnlyDecisionThroughTheTransactionalCommandPort() {
         var repository = new Repository();
         UUID correlationId = UUID.randomUUID();

@@ -7,6 +7,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -20,18 +22,21 @@ public class IdentityOidcLoginController {
     private final OidcAuthenticationService authentication;
     private final TrustedOidcIdTokenVerifier verifier;
     private final CustomerJwtCodec jwt;
+    private final RefreshSessionCookie refreshCookie;
 
     public IdentityOidcLoginController(
             OidcAuthenticationService authentication,
             TrustedOidcIdTokenVerifier verifier,
-            CustomerJwtCodec jwt) {
+            CustomerJwtCodec jwt,
+            RefreshSessionCookie refreshCookie) {
         this.authentication = authentication;
         this.verifier = verifier;
         this.jwt = jwt;
+        this.refreshCookie = refreshCookie;
     }
 
     @PostMapping("/login")
-    public IdentityAuthController.LoginResponse login(
+    public ResponseEntity<IdentityAuthController.LoginResponse> login(
             @RequestBody OidcLoginRequest request,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         String providerCode = request.providerCode().trim().toUpperCase(Locale.ROOT);
@@ -44,14 +49,19 @@ public class IdentityOidcLoginController {
                 verified.email(),
                 request.deviceLabel(),
                 correlation(correlationId)));
-        return new IdentityAuthController.LoginResponse(
+        var body = new IdentityAuthController.LoginResponse(
                 result.accountId(),
                 result.sessionId(),
                 "Bearer",
                 jwt.issueAccess(result.accountId(), result.sessionId()),
-                jwt.issueRefresh(result.accountId(), result.sessionId(), result.sessionToken(), result.expiresAt()),
                 jwt.accessExpiresAt(),
                 result.expiresAt());
+        String refreshJwt = jwt.issueRefresh(
+                result.accountId(), result.sessionId(), result.sessionToken(), result.expiresAt());
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE,
+                        refreshCookie.issue(refreshJwt, result.expiresAt()).toString())
+                .body(body);
     }
 
     private static UUID correlation(String value) {

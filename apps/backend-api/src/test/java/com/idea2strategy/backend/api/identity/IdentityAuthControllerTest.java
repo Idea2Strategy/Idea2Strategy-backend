@@ -27,7 +27,7 @@ class IdentityAuthControllerTest {
         Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(registration.signup(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new SignupResult(accountId, "raw-verification-secret", expiresAt));
-        var controller = new IdentityAuthController(registration, authentication, delivery, jwt());
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt(), cookies());
 
         var response = controller.signup(
                 new IdentityAuthController.SignupRequest("person@example.com", "a sufficiently long passphrase"),
@@ -49,23 +49,27 @@ class IdentityAuthControllerTest {
         Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(authentication.login(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new LoginResult(accountId, sessionId, "opaque-session-token", expiresAt));
-        var controller = new IdentityAuthController(registration, authentication, delivery, jwt());
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt(), cookies());
 
         var response = controller.login(
                 new IdentityAuthController.LoginRequest("person@example.com", "a sufficiently long passphrase", "Chrome"),
                 UUID.randomUUID().toString());
 
-        assertThat(response.accountId()).isEqualTo(accountId);
-        assertThat(response.sessionId()).isEqualTo(sessionId);
-        assertThat(response.tokenType()).isEqualTo("Bearer");
-        assertThat(response.accessToken()).hasSizeGreaterThan(100).contains(".");
-        assertThat(response.refreshToken()).hasSizeGreaterThan(100).contains(".");
-        assertThat(response.accessToken()).doesNotContain("opaque-session-token");
-        assertThat(response.refreshToken()).doesNotContain("opaque-session-token");
-        assertThat(jwt().verifyAccess(response.accessToken()).accountId()).isEqualTo(accountId);
-        assertThat(jwt().verifyRefresh(response.refreshToken()).sessionSecret()).isEqualTo("opaque-session-token");
-        assertThat(response.toString()).doesNotContain("a sufficiently long passphrase");
-        assertThat(response.toString()).doesNotContain("opaque-session-token");
+        var body = response.getBody();
+        assertThat(body.accountId()).isEqualTo(accountId);
+        assertThat(body.sessionId()).isEqualTo(sessionId);
+        assertThat(body.tokenType()).isEqualTo("Bearer");
+        assertThat(body.accessToken()).hasSizeGreaterThan(100).contains(".");
+        assertThat(body.accessToken()).doesNotContain("opaque-session-token");
+        assertThat(jwt().verifyAccess(body.accessToken()).accountId()).isEqualTo(accountId);
+        assertThat(response.getHeaders().getFirst(org.springframework.http.HttpHeaders.SET_COOKIE))
+                .contains("i2s_refresh=")
+                .contains("HttpOnly")
+                .contains("Secure")
+                .contains("SameSite=Strict")
+                .doesNotContain("opaque-session-token");
+        assertThat(body.toString()).doesNotContain("a sufficiently long passphrase");
+        assertThat(body.toString()).doesNotContain("opaque-session-token");
     }
 
     @Test
@@ -77,7 +81,7 @@ class IdentityAuthControllerTest {
         Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(registration.resendVerification(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(new VerificationDelivery("replacement-secret", expiresAt));
-        var controller = new IdentityAuthController(registration, authentication, delivery, jwt());
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt(), cookies());
 
         var response = controller.resendVerification(
                 new IdentityAuthController.ResendVerificationRequest(accountId),
@@ -97,5 +101,12 @@ class IdentityAuthControllerTest {
                 "idea2strategy-api",
                 "idea2strategy-refresh",
                 Duration.ofMinutes(5));
+    }
+
+    private static RefreshSessionCookie cookies() {
+        return new RefreshSessionCookie(
+                Clock.fixed(Instant.parse("2026-08-02T00:00:00Z"), ZoneOffset.UTC),
+                true,
+                "Strict");
     }
 }

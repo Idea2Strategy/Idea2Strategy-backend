@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.identity.PolicyConsentService;
 import com.idea2strategy.backend.application.identity.RecordConsentDecision;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
 import com.idea2strategy.backend.domain.identity.AccountConsent;
+import com.idea2strategy.backend.domain.identity.PolicyDocumentVersion;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -37,6 +38,11 @@ public class IdentityPolicyController {
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         return policies.currentPolicies(principal.accountId(), language);
+    }
+
+    @GetMapping("/reactivation")
+    public List<PolicyDocumentVersion> reactivation(@RequestParam String language) {
+        return policies.requiredReactivationPolicies(language);
     }
 
     @GetMapping("/{policyDocumentId}/consents")

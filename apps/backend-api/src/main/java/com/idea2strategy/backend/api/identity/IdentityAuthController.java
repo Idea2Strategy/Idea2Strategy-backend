@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -25,16 +26,19 @@ public class IdentityAuthController {
     private final EmailAuthenticationService authenticationService;
     private final VerificationDeliveryPort verificationDelivery;
     private final CustomerJwtCodec jwt;
+    private final RefreshSessionCookie refreshCookie;
 
     public IdentityAuthController(
             EmailRegistrationService registrationService,
             EmailAuthenticationService authenticationService,
             VerificationDeliveryPort verificationDelivery,
-            CustomerJwtCodec jwt) {
+            CustomerJwtCodec jwt,
+            RefreshSessionCookie refreshCookie) {
         this.registrationService = registrationService;
         this.authenticationService = authenticationService;
         this.verificationDelivery = verificationDelivery;
         this.jwt = jwt;
+        this.refreshCookie = refreshCookie;
     }
 
     @PostMapping("/signup")
@@ -69,7 +73,7 @@ public class IdentityAuthController {
     }
 
     @PostMapping("/login")
-    public LoginResponse login(
+    public ResponseEntity<LoginResponse> login(
             @RequestBody LoginRequest request,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         var result = authenticationService.login(new LoginCommand(
@@ -77,15 +81,19 @@ public class IdentityAuthController {
         return tokenResponse(result.accountId(), result.sessionId(), result.sessionToken(), result.expiresAt());
     }
 
-    private LoginResponse tokenResponse(UUID accountId, UUID sessionId, String sessionSecret, Instant refreshExpiresAt) {
-        return new LoginResponse(
+    ResponseEntity<LoginResponse> tokenResponse(
+            UUID accountId, UUID sessionId, String sessionSecret, Instant refreshExpiresAt) {
+        String refreshJwt = jwt.issueRefresh(accountId, sessionId, sessionSecret, refreshExpiresAt);
+        var body = new LoginResponse(
                 accountId,
                 sessionId,
                 "Bearer",
                 jwt.issueAccess(accountId, sessionId),
-                jwt.issueRefresh(accountId, sessionId, sessionSecret, refreshExpiresAt),
                 jwt.accessExpiresAt(),
                 refreshExpiresAt);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.issue(refreshJwt, refreshExpiresAt).toString())
+                .body(body);
     }
 
     private static UUID correlation(String value) {
@@ -138,13 +146,12 @@ public class IdentityAuthController {
             UUID sessionId,
             String tokenType,
             String accessToken,
-            String refreshToken,
             Instant accessExpiresAt,
             Instant refreshExpiresAt) {
         @Override
         public String toString() {
             return "LoginResponse[accountId=" + accountId + ",sessionId=" + sessionId
-                    + ",tokenType=" + tokenType + ",accessToken=REDACTED,refreshToken=REDACTED"
+                    + ",tokenType=" + tokenType + ",accessToken=REDACTED"
                     + ",accessExpiresAt=" + accessExpiresAt + ",refreshExpiresAt=" + refreshExpiresAt + "]";
         }
     }

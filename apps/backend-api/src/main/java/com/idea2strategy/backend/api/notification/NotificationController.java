@@ -26,7 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/account/notifications")
 @ConditionalOnProperty(prefix = "identity.crypto", name = {
-        "email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key"})
+        "email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key",
+        "customer-jwt-signing-key"})
 public class NotificationController {
     private final NotificationQueryService queries;
     private final NotificationService notifications;

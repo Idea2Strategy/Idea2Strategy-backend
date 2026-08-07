@@ -38,7 +38,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key",
+        "identity.crypto.customer-jwt-signing-key"})
 @EntityScan(basePackageClasses = {
     StrategyJpaEntity.class,
     StrategyDocumentJpaEntity.class,

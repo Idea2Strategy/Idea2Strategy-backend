@@ -72,6 +72,7 @@ class OperatorBootstrapTrustReadExactStackIntegrationTest {
         registry.add("identity.crypto.lookup-hmac-key", () -> key);
         registry.add("identity.crypto.verification-hmac-key", () -> key);
         registry.add("identity.crypto.session-hmac-key", () -> key);
+        registry.add("identity.crypto.customer-jwt-signing-key", () -> key);
         registry.add("idea2strategy.operator-auth.enabled", () -> "true");
         registry.add("idea2strategy.operator-auth.issuer", () -> ISSUER);
         registry.add("idea2strategy.operator-auth.jwk-set-uri", () -> ISSUER + "/jwks");

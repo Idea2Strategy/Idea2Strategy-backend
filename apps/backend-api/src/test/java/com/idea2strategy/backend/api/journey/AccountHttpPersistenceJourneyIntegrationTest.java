@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,12 +13,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.api.identity.VerificationEmailRequested;
+import com.idea2strategy.backend.api.identity.CustomerJwtCodec;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRbacCommand;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
 import com.idea2strategy.backend.persistence.operatorrbac.OperatorRbacPersistenceAdapter;
 import com.idea2strategy.backend.operatortrust.VersionedOperatorSubjectHmac;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +43,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.event.ApplicationEvents;
 import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
+import jakarta.servlet.http.Cookie;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.testcontainers.junit.jupiter.Container;
@@ -49,6 +55,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest
 @Import(AccountHttpPersistenceJourneyIntegrationTest.OperatorJwtTestConfiguration.class)
 class AccountHttpPersistenceJourneyIntegrationTest {
+    private static final byte[] JWT_KEY =
+            "abcdefabcdefabcdefabcdefabcdefab".getBytes(StandardCharsets.UTF_8);
     private static final UUID CORRELATION = id(1);
     private static final String EMAIL = "a22-http@example.com";
     private static final String PASSWORD = "correct horse battery staple 2026!";
@@ -73,10 +81,12 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         registry.add("spring.flyway.enabled", () -> "true");
         String key = Base64.getEncoder().encodeToString(
                 "01234567890123456789012345678901".getBytes(StandardCharsets.UTF_8));
+        String jwtKey = Base64.getEncoder().encodeToString(JWT_KEY);
         registry.add("identity.crypto.email-encryption-key", () -> key);
         registry.add("identity.crypto.lookup-hmac-key", () -> key);
         registry.add("identity.crypto.verification-hmac-key", () -> key);
         registry.add("identity.crypto.session-hmac-key", () -> key);
+        registry.add("identity.crypto.customer-jwt-signing-key", () -> jwtKey);
         registry.add("idea2strategy.operator-auth.enabled", () -> "true");
         registry.add("idea2strategy.operator-auth.issuer", () -> "https://operator.example");
         registry.add("idea2strategy.operator-auth.jwk-set-uri", () -> "https://operator.example/jwks");
@@ -124,7 +134,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                                 """.formatted(verificationToken)))
                 .andExpect(status().isNoContent());
 
-        String login = mvc.perform(post("/api/v1/auth/login")
+        var loginResult = mvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Correlation-Id", CORRELATION)
                         .content("""
@@ -132,8 +142,36 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                                 """.formatted(EMAIL, PASSWORD)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
-                .andReturn().getResponse().getContentAsString();
-        String accessToken = json.readTree(login).get("accessToken").asText();
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andReturn();
+        String login = loginResult.getResponse().getContentAsString();
+        JsonNode loginBody = json.readTree(login);
+        String accessToken = loginBody.get("accessToken").asText();
+        UUID sessionId = UUID.fromString(loginBody.get("sessionId").asText());
+        Cookie refreshCookie = loginResult.getResponse().getCookie("i2s_refresh");
+        assertThat(refreshCookie).isNotNull();
+        assertThat(refreshCookie.isHttpOnly()).isTrue();
+        assertThat(refreshCookie.getSecure()).isTrue();
+        assertThat(refreshCookie.getPath()).isEqualTo("/api/v1/auth/sessions");
+        assertThat(loginResult.getResponse().getHeader("Set-Cookie")).contains("SameSite=Strict");
+
+        var rotationResult = mvc.perform(post("/api/v1/auth/sessions/rotate")
+                        .cookie(refreshCookie)
+                        .header("X-Correlation-Id", CORRELATION))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accountId").value(accountId.toString()))
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andReturn();
+        accessToken = json.readTree(rotationResult.getResponse().getContentAsString()).get("accessToken").asText();
+        Cookie rotatedRefreshCookie = rotationResult.getResponse().getCookie("i2s_refresh");
+        assertThat(rotatedRefreshCookie).isNotNull();
+        assertThat(rotatedRefreshCookie.getValue()).isNotEqualTo(refreshCookie.getValue());
+
+        String expiredAccess = expiredAccess(accountId, sessionId);
+        mvc.perform(get("/api/v1/account/preferences")
+                        .header("Authorization", "Bearer " + expiredAccess))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REJECTED"));
 
         mvc.perform(patch("/api/v1/account/preferences")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -185,6 +223,19 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         assertThat(count("select count(*) from operations.case_events where case_id = ?", caseId)).isOne();
         assertThat(count("select count(*) from operations.outbox_messages where aggregate_id = ? and event_type = 'USER_CASE_SUBMITTED'", caseId))
                 .isOne();
+
+        mvc.perform(delete("/api/v1/auth/sessions/current")
+                        .cookie(rotatedRefreshCookie)
+                        .header("X-Correlation-Id", CORRELATION))
+                .andExpect(status().isNoContent())
+                .andExpect(result -> assertThat(result.getResponse().getHeader("Set-Cookie"))
+                        .contains("i2s_refresh=")
+                        .contains("Max-Age=0"));
+        mvc.perform(get("/api/v1/account/preferences")
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isUnauthorized());
+        assertThat(count("select count(*) from identity.sessions where account_id = ? and revoked_at is null", accountId))
+                .isZero();
     }
 
     @Test
@@ -284,6 +335,17 @@ class AccountHttpPersistenceJourneyIntegrationTest {
 
     private long count(String sql, Object... args) {
         return jdbc.queryForObject(sql, Long.class, args);
+    }
+
+    private static String expiredAccess(UUID accountId, UUID sessionId) {
+        return new CustomerJwtCodec(
+                JWT_KEY,
+                Clock.fixed(Instant.now().minus(Duration.ofMinutes(10)), ZoneOffset.UTC),
+                "https://ideatostrategy.com",
+                "idea2strategy-api",
+                "idea2strategy-refresh",
+                Duration.ofMinutes(5))
+                .issueAccess(accountId, sessionId);
     }
 
     private static UUID id(int suffix) {
