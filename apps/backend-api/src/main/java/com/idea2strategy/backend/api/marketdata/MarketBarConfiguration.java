@@ -26,9 +26,4 @@ public class MarketBarConfiguration {
             CurrentPrincipal principal) {
         return new MarketBarService(adapter, catalog, principal);
     }
-
-    @Bean(destroyMethod = "close")
-    MarketBarSseHub marketBarSseHub(MarketBarService service) {
-        return new MarketBarSseHub(service);
-    }
 }
