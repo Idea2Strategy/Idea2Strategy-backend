@@ -1,6 +1,5 @@
 package com.idea2strategy.backend.api.strategy;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -9,9 +8,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.idea2strategy.backend.application.strategy.BacktestDataCoverage;
-import com.idea2strategy.backend.application.strategy.BacktestDataCoverage.FeedResolution;
-import com.idea2strategy.backend.application.strategy.BacktestDataCoverageQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalog;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
@@ -21,10 +17,8 @@ import com.idea2strategy.backend.domain.strategy.StrategyValidationRun;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationStatus;
 import java.time.Instant;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -45,7 +39,7 @@ class StrategyValidationControllerTest {
         when(version.dataRequirementVersion()).thenReturn("alpaca-sip/v1");
         when(catalog.version()).thenReturn(version);
         when(catalogService.getPublished(CATALOG_ID)).thenReturn(catalog);
-        when(validationService.validate(any(), any(), any())).thenReturn(new StrategyValidationRun(
+        when(validationService.validate(any(), any())).thenReturn(new StrategyValidationRun(
                 VALIDATION_ID,
                 STRATEGY_ID,
                 OWNER_ID,
@@ -56,19 +50,14 @@ class StrategyValidationControllerTest {
                 StrategyValidationStatus.VALID,
                 List.of(new StrategyValidationFinding(
                         StrategyValidationFinding.Severity.WARNING,
-                        "BACKTEST_FEED_UNAVAILABLE",
+                        "BACKTEST_BLOCK_UNSUPPORTED",
                         "groups[0]",
-                        "Historical coverage is unavailable",
-                        List.of("feed:ADJUSTED_BAR@1m"))),
+                        "Element is not reproducible in backtests",
+                        List.of("ORDER_EVENT_HISTORY"))),
                 NOW,
                 NOW));
-        var coverageService = mock(BacktestDataCoverageQueryService.class);
-        when(coverageService.coverageFor(catalog)).thenReturn(new BacktestDataCoverage(
-                "alpaca-sip/v1",
-                Set.of(new FeedResolution("ADJUSTED_BAR", "1m")),
-                Set.of("RSI_14")));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                        new StrategyValidationController(validationService, catalogService, coverageService))
+                        new StrategyValidationController(validationService, catalogService))
                 .setControllerAdvice(new StrategyAuthoringExceptionHandler())
                 .build();
 
@@ -80,13 +69,9 @@ class StrategyValidationControllerTest {
                 .andExpect(jsonPath("$.status").value("VALID"))
                 .andExpect(jsonPath("$.findings[0].severity").value("WARNING"));
 
-        var coverage = ArgumentCaptor.forClass(BacktestDataCoverage.class);
+        // Validation is asked only for the document and its catalog; availability is not its question.
         verify(validationService).validate(org.mockito.ArgumentMatchers.eq(STRATEGY_ID),
-                org.mockito.ArgumentMatchers.same(catalog), coverage.capture());
-        assertThat(coverage.getValue().dataRequirementVersion()).isEqualTo("alpaca-sip/v1");
-        assertThat(coverage.getValue().feeds()).containsExactly(new FeedResolution("ADJUSTED_BAR", "1m"));
-        assertThat(coverage.getValue().features()).containsExactly("RSI_14");
-        verify(coverageService).coverageFor(catalog);
+                org.mockito.ArgumentMatchers.same(catalog));
     }
 
     @Test
@@ -98,7 +83,7 @@ class StrategyValidationControllerTest {
         when(version.dataRequirementVersion()).thenReturn("alpaca-sip/v1");
         when(catalog.version()).thenReturn(version);
         when(catalogService.getPublished(CATALOG_ID)).thenReturn(catalog);
-        when(validationService.preview(any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq(9L)))
+        when(validationService.preview(any(), any(), any(), org.mockito.ArgumentMatchers.eq(9L)))
                 .thenReturn(new StrategyValidationRun(
                         VALIDATION_ID, STRATEGY_ID, OWNER_ID, null, 9, "b".repeat(64), CATALOG_ID,
                         StrategyValidationStatus.INVALID,
@@ -107,11 +92,8 @@ class StrategyValidationControllerTest {
                                 "REQUIRED_PARAMETER_MISSING", "groups[0].blocks[0].parameters.threshold",
                                 "Required parameter is missing", List.of())),
                         NOW, NOW));
-        var coverageService = mock(BacktestDataCoverageQueryService.class);
-        when(coverageService.coverageFor(catalog)).thenReturn(new BacktestDataCoverage(
-                "alpaca-sip/v1", Set.of(), Set.of()));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                        new StrategyValidationController(validationService, catalogService, coverageService))
+                        new StrategyValidationController(validationService, catalogService))
                 .setControllerAdvice(new StrategyAuthoringExceptionHandler())
                 .build();
 
@@ -129,7 +111,6 @@ class StrategyValidationControllerTest {
         verify(validationService).preview(
                 org.mockito.ArgumentMatchers.eq(STRATEGY_ID),
                 org.mockito.ArgumentMatchers.same(catalog),
-                any(BacktestDataCoverage.class),
                 any(String.class),
                 org.mockito.ArgumentMatchers.eq(9L));
     }

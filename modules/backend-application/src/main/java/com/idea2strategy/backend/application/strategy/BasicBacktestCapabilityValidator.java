@@ -32,10 +32,18 @@ public final class BasicBacktestCapabilityValidator {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * Reports what a strategy requires of historical data, and never whether that data exists.
+     *
+     * <p>{@code decision.backtest.supportability} assigns availability to release and backtest
+     * request time, where it is resolved against the artifacts the backtest execution contract pins
+     * into the request. Coverage is infrastructure state that moves with what the pipeline has
+     * published, so a conclusion about it cannot live in a record pinned only by edit sequence,
+     * semantic hash and catalog version.
+     */
     public BasicBacktestCapabilityResult validate(
             BasicBlockAssembly assembly,
-            BasicStrategyCatalog catalog,
-            BacktestDataCoverage coverage) {
+            BasicStrategyCatalog catalog) {
         var assemblyResult = assemblyValidator.validate(assembly, catalog);
         if (!assemblyResult.valid()) {
             var issues = assemblyResult.issues().stream()
@@ -43,17 +51,6 @@ public final class BasicBacktestCapabilityValidator {
                             issue.code(), issue.location(), issue.message(), List.of()))
                     .toList();
             return new BasicBacktestCapabilityResult(List.of(), List.of(), issues);
-        }
-
-        if (!catalog.version().dataRequirementVersion().equals(coverage.dataRequirementVersion())) {
-            return new BasicBacktestCapabilityResult(
-                    List.of(),
-                    List.of(),
-                    List.of(new BasicBacktestCapabilityIssue(
-                            "DATA_REQUIREMENT_VERSION_MISMATCH",
-                            "dataRequirementVersion",
-                            "Backtest coverage must match the catalog data requirement version",
-                            List.of("dataRequirementVersion:" + catalog.version().dataRequirementVersion()))));
         }
 
         Map<String, StrategyElementDefinition> elements = new HashMap<>();
@@ -76,7 +73,6 @@ public final class BasicBacktestCapabilityValidator {
                         elements.get(block.elementCode()),
                         location,
                         catalogFeatures,
-                        coverage,
                         requiredFeeds,
                         requiredFeatures,
                         resolvedResolutions,
@@ -101,7 +97,6 @@ public final class BasicBacktestCapabilityValidator {
             StrategyElementDefinition definition,
             String location,
             Set<String> catalogFeatures,
-            BacktestDataCoverage coverage,
             Set<FeedResolution> requiredFeeds,
             Set<String> requiredFeatures,
             Set<String> resolvedResolutions,
@@ -132,43 +127,48 @@ public final class BasicBacktestCapabilityValidator {
             return;
         }
 
+        /* A feed declaration is optional. Adjusted bars at the evaluated resolution are a platform
+           invariant, so an element states the official features it reads and need not name a feed.
+           A declaration is still read where a published catalog carries one, so both catalog
+           versions validate identically. */
         JsonNode feeds = backtest.get("feeds");
         JsonNode features = backtest.get("features");
-        if (feeds == null || !feeds.isArray() || features == null || !features.isArray()) {
+        if (features == null || !features.isArray()) {
             add(issues, "BACKTEST_CONTRACT_INVALID", location,
-                    "Supported backtest contract must declare feed and feature arrays", List.of());
+                    "Supported backtest contract must declare a feature array", List.of());
+            return;
+        }
+        if (feeds != null && !feeds.isArray()) {
+            add(issues, "BACKTEST_CONTRACT_INVALID", location,
+                    "Backtest feeds must be an array when declared", List.of());
             return;
         }
 
-        for (JsonNode feedNode : feeds) {
-            String feed = textOrFallback(feedNode.get("feed"), "");
-            String resolution = textOrFallback(feedNode.get("resolution"), "");
-            if ("$resolution".equals(resolution)) {
-                Object configuredResolution = block.parameters().get("resolution");
-                resolution = configuredResolution instanceof String value ? value : "";
-                if (!PRODUCTION_RESOLUTIONS.contains(resolution)) {
-                    add(issues, "BACKTEST_RESOLUTION_UNSUPPORTED", location,
-                            "Production backtests support only 30m, 1h, 4h, or 1d",
-                            List.of("resolution:" + resolution));
+        if (feeds != null) {
+            for (JsonNode feedNode : feeds) {
+                String feed = textOrFallback(feedNode.get("feed"), "");
+                String resolution = textOrFallback(feedNode.get("resolution"), "");
+                if ("$resolution".equals(resolution)) {
+                    Object configuredResolution = block.parameters().get("resolution");
+                    resolution = configuredResolution instanceof String value ? value : "";
+                    if (!PRODUCTION_RESOLUTIONS.contains(resolution)) {
+                        add(issues, "BACKTEST_RESOLUTION_UNSUPPORTED", location,
+                                "Production backtests support only 30m, 1h, 4h, or 1d",
+                                List.of("resolution:" + resolution));
+                        continue;
+                    }
+                    resolvedResolutions.add(resolution);
+                } else if (resolution.startsWith("$")) {
+                    add(issues, "BACKTEST_CONTRACT_INVALID", location,
+                            "Backtest feed declares an unknown dynamic resolution", List.of());
                     continue;
                 }
-                resolvedResolutions.add(resolution);
-            } else if (resolution.startsWith("$")) {
-                add(issues, "BACKTEST_CONTRACT_INVALID", location,
-                        "Backtest feed declares an unknown dynamic resolution", List.of());
-                continue;
-            }
-            if (feed.isBlank() || resolution.isBlank()) {
-                add(issues, "BACKTEST_CONTRACT_INVALID", location,
-                        "Backtest feed must declare an exact feed and resolution", List.of());
-                continue;
-            }
-            var requirement = new FeedResolution(feed, resolution);
-            requiredFeeds.add(requirement);
-            if (!coverage.feeds().contains(requirement)) {
-                add(issues, "BACKTEST_FEED_UNAVAILABLE", location,
-                        "Exact historical feed and resolution are unavailable",
-                        List.of("feed:" + feed + "@" + resolution));
+                if (feed.isBlank() || resolution.isBlank()) {
+                    add(issues, "BACKTEST_CONTRACT_INVALID", location,
+                            "Backtest feed must declare an exact feed and resolution", List.of());
+                    continue;
+                }
+                requiredFeeds.add(new FeedResolution(feed, resolution));
             }
         }
 
@@ -180,13 +180,11 @@ public final class BasicBacktestCapabilityValidator {
             }
             String feature = featureNode.asText();
             requiredFeatures.add(feature);
+            /* Catalog membership is a function of the pinned catalog, so it stays. Whether the
+               feature has been materialized is not, so it does not. */
             if (!catalogFeatures.contains(feature)) {
                 add(issues, "BACKTEST_FEATURE_UNKNOWN", location,
                         "Backtest feature is not defined by the supplied catalog",
-                        List.of("feature:" + feature));
-            } else if (!coverage.features().contains(feature)) {
-                add(issues, "BACKTEST_FEATURE_UNAVAILABLE", location,
-                        "Exact historical feature is unavailable",
                         List.of("feature:" + feature));
             }
         }

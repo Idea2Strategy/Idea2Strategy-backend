@@ -16,7 +16,6 @@ import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -27,13 +26,8 @@ class BasicBacktestCapabilityValidatorTest {
     private final BasicBacktestCapabilityValidator validator = new BasicBacktestCapabilityValidator();
 
     @Test
-    void acceptsOnlyExactFeedResolutionAndFeatureCoverage() {
-        var coverage = new BacktestDataCoverage(
-                "data/v1",
-                Set.of(new FeedResolution("SIP_OHLCV", "1m")),
-                Set.of("RSI_14"));
-
-        var result = validator.validate(assembly(), catalog(supportedRsiContract()), coverage);
+    void reportsWhatTheStrategyRequiresWithoutJudgingWhetherItIsAvailable() {
+        var result = validator.validate(assembly(), catalog(supportedRsiContract()));
 
         assertThat(result.backtestable()).isTrue();
         assertThat(result.issues()).isEmpty();
@@ -41,24 +35,44 @@ class BasicBacktestCapabilityValidatorTest {
         assertThat(result.requiredFeatures()).containsExactly("RSI_14");
     }
 
+    /* decision.backtest.supportability moves availability to release and backtest request time,
+       where it is resolved against pinned artifacts. A feed declaration is therefore optional:
+       adjusted bars at the evaluated resolution are a platform invariant, not a per-element claim. */
     @Test
-    void rejectsCoarserOrDifferentDataWithoutApproximationAtEachBlock() {
-        var coverage = new BacktestDataCoverage(
-                "data/v1",
-                Set.of(new FeedResolution("SIP_OHLCV", "5m")),
-                Set.of("SMA_20"));
+    void acceptsAnElementThatDeclaresNoFeedBecauseAdjustedBarsAreAPlatformInvariant() {
+        var result = validator.validate(assembly(), catalog(featureOnlyContract()));
 
-        var result = validator.validate(assembly(), catalog(supportedRsiContract()), coverage);
+        assertThat(result.issues()).isEmpty();
+        // Only the trigger element still declares one; the RSI element contributed none.
+        assertThat(result.requiredFeeds()).containsExactly(new FeedResolution("SIP_OHLCV", "1m"));
+        assertThat(result.requiredFeatures()).containsExactly("RSI_14");
+    }
+
+    @Test
+    void stillRejectsAFeatureTheSuppliedCatalogDoesNotDefine() {
+        String unknownFeature = "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,"
+                + "\"features\":[\"SMA_20\"]}}";
+
+        var result = validator.validate(assembly(), catalog(unknownFeature));
 
         assertThat(result.backtestable()).isFalse();
+        assertThat(result.issues()).singleElement().satisfies(issue -> {
+            assertThat(issue.code()).isEqualTo("BACKTEST_FEATURE_UNKNOWN");
+            assertThat(issue.location()).isEqualTo("groups[0].blocks[1].elementCode");
+            assertThat(issue.requirements()).containsExactly("feature:SMA_20");
+        });
+    }
+
+    @Test
+    void rejectsAFeedDeclarationThatIsPresentButNotAnArray() {
+        String malformed = "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,"
+                + "\"feeds\":\"SIP_OHLCV\",\"features\":[]}}";
+
+        var result = validator.validate(assembly(), catalog(malformed));
+
         assertThat(result.issues())
-                .extracting(BasicBacktestCapabilityIssue::code, BasicBacktestCapabilityIssue::location)
-                .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple("BACKTEST_FEED_UNAVAILABLE", "groups[0].blocks[0].elementCode"),
-                        org.assertj.core.groups.Tuple.tuple("BACKTEST_FEED_UNAVAILABLE", "groups[0].blocks[1].elementCode"),
-                        org.assertj.core.groups.Tuple.tuple("BACKTEST_FEATURE_UNAVAILABLE", "groups[0].blocks[1].elementCode"));
-        assertThat(result.issues().get(0).requirements()).containsExactly("feed:SIP_OHLCV@1m");
-        assertThat(result.issues().get(2).requirements()).containsExactly("feature:RSI_14");
+                .extracting(BasicBacktestCapabilityIssue::code)
+                .containsExactly("BACKTEST_CONTRACT_INVALID");
     }
 
     @Test
@@ -67,7 +81,7 @@ class BasicBacktestCapabilityValidatorTest {
                 + "\"reason\":\"Historical order-event sequence cannot be reproduced\","
                 + "\"requirements\":[\"ORDER_EVENT_HISTORY\",\"EVENT_SEQUENCE\"]}}";
 
-        var result = validator.validate(assembly(), catalog(unsupported), coverage());
+        var result = validator.validate(assembly(), catalog(unsupported));
 
         assertThat(result.backtestable()).isFalse();
         assertThat(result.issues()).singleElement().satisfies(issue -> {
@@ -79,30 +93,9 @@ class BasicBacktestCapabilityValidatorTest {
     }
 
     @Test
-    void rejectsCoverageFromAnotherCatalogDataRequirementVersion() {
-        var coverage = new BacktestDataCoverage(
-                "data/v2",
-                Set.of(new FeedResolution("SIP_OHLCV", "1m")),
-                Set.of("RSI_14"));
-
-        var result = validator.validate(assembly(), catalog(supportedRsiContract()), coverage);
-
-        assertThat(result.backtestable()).isFalse();
-        assertThat(result.issues())
-                .extracting(BasicBacktestCapabilityIssue::code, BasicBacktestCapabilityIssue::location)
-                .containsExactly(org.assertj.core.groups.Tuple.tuple(
-                        "DATA_REQUIREMENT_VERSION_MISMATCH", "dataRequirementVersion"));
-    }
-
-    @Test
     void resolvesTheProductionFeedFromEachBlocksResolutionParameter() {
-        var coverage = new BacktestDataCoverage(
-                "data/v1",
-                Set.of(new FeedResolution("SIP_OHLCV", "4h")),
-                Set.of("RSI_14"));
-
         var result = validator.validate(
-                assembly("4h", "4h"), catalog(dynamicRsiContract(), dynamicFeedContract()), coverage);
+                assembly("4h", "4h"), catalog(dynamicRsiContract(), dynamicFeedContract()));
 
         assertThat(result.backtestable()).isTrue();
         assertThat(result.requiredFeeds()).containsExactly(new FeedResolution("SIP_OHLCV", "4h"));
@@ -110,29 +103,15 @@ class BasicBacktestCapabilityValidatorTest {
 
     @Test
     void rejectsUnsupportedOrMixedProductionResolutions() {
-        var coverage = new BacktestDataCoverage(
-                "data/v1",
-                Set.of(
-                        new FeedResolution("SIP_OHLCV", "30m"),
-                        new FeedResolution("SIP_OHLCV", "1h")),
-                Set.of("RSI_14"));
-
         var mixed = validator.validate(
-                assembly("30m", "1h"), catalog(dynamicRsiContract(), dynamicFeedContract()), coverage);
+                assembly("30m", "1h"), catalog(dynamicRsiContract(), dynamicFeedContract()));
         var legacy = validator.validate(
-                assembly("1m", "1m"), catalog(dynamicRsiContract(), dynamicFeedContract()), coverage);
+                assembly("1m", "1m"), catalog(dynamicRsiContract(), dynamicFeedContract()));
 
         assertThat(mixed.issues()).extracting(BasicBacktestCapabilityIssue::code)
                 .contains("BACKTEST_MULTIPLE_RESOLUTIONS");
         assertThat(legacy.issues()).extracting(BasicBacktestCapabilityIssue::code)
                 .contains("BACKTEST_RESOLUTION_UNSUPPORTED");
-    }
-
-    private static BacktestDataCoverage coverage() {
-        return new BacktestDataCoverage(
-                "data/v1",
-                Set.of(new FeedResolution("SIP_OHLCV", "1m")),
-                Set.of("RSI_14"));
     }
 
     private static BasicBlockAssembly assembly() {
@@ -224,6 +203,10 @@ class BasicBacktestCapabilityValidatorTest {
         return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,"
                 + "\"feeds\":[{\"feed\":\"SIP_OHLCV\",\"resolution\":\"$resolution\"}],"
                 + "\"features\":[\"RSI_14\"]}}";
+    }
+
+    private static String featureOnlyContract() {
+        return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"features\":[\"RSI_14\"]}}";
     }
 
     private static String noDataContract() {
