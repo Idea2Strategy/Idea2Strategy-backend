@@ -91,18 +91,22 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         .and(validationSemanticHash.eq(documentSemanticHash)))
                 .orderBy(validationRequestedAt.desc())
                 .limit(1)
-                .asField("validation_status");
+                .asField();
         Field<String> normalizedValidation = when(latestValidation.eq("PASSED"), inline("VALID"))
-                .otherwise(latestValidation);
+                .otherwise(latestValidation)
+                .as("validation_status");
         Field<String> draftStatus = when(latestValidation.in("VALID", "PASSED"), inline("READY"))
                 .otherwise(inline("INCOMPLETE"));
+        Field<String> libraryStatus = when(archivedAt.isNull(), draftStatus)
+                .otherwise(inline("ARCHIVED"))
+                .as("library_status");
 
         return dsl.select(
                         id,
                         mode,
                         strategyName,
                         description,
-                        when(archivedAt.isNull(), draftStatus).otherwise(inline("ARCHIVED")),
+                        libraryStatus,
                         normalizedValidation,
                         updatedAt,
                         archivedAt,
@@ -123,7 +127,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         StrategyMode.valueOf(record.get(mode)),
                         record.get(strategyName),
                         record.get(description),
-                        record.get(archivedAt) == null ? record.get(draftStatus) : "ARCHIVED",
+                        record.get(libraryStatus),
                         record.get(normalizedValidation),
                         null,
                         record.get(archivedAt) == null,
