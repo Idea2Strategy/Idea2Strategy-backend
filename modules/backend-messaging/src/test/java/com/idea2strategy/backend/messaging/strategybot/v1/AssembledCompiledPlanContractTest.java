@@ -53,7 +53,7 @@ class AssembledCompiledPlanContractTest {
                 .satisfies(flow -> assertThat(flow.steps()).hasSize(3));
         assertThat(plan.requiredFeatures()).singleElement().satisfies(feature -> {
             assertThat(feature.featureId()).isEqualTo(FEATURE_ID.toString());
-            assertThat(feature.resolution()).isEqualTo("PT1M");
+            assertThat(feature.resolution()).isEqualTo("PT30M");
             assertThat(feature.requiredObservations()).isEqualTo(14);
         });
     }
@@ -100,7 +100,7 @@ class AssembledCompiledPlanContractTest {
         return "{\"schemaVersion\":\"basic-compiled-plan.v1\",\"compilerVersion\":\"basic-compiler:1.0.0\","
                 + "\"requiredFeatureSetHash\":\"" + HASH_A + "\",\"flows\":[{"
                 + "\"key\":\"buy\",\"container\":\"BUY\",\"instrumentIds\":[\"" + AAPL + "\"],\"steps\":["
-                + "{\"sequence\":1,\"elementCode\":\"BASIC_RSI_READ\",\"parameters\":{\"resolution\":\"1m\"}},"
+                + "{\"sequence\":1,\"elementCode\":\"BASIC_RSI_READ\",\"parameters\":{\"resolution\":\"30m\"}},"
                 + "{\"sequence\":2,\"elementCode\":\"BASIC_VALUE_COMPARE\","
                 + "\"parameters\":{\"operator\":\"LT\",\"threshold\":\"30\"}},"
                 + "{\"sequence\":3,\"elementCode\":\"BASIC_EQUAL_ALLOCATION_ORDER\",\"parameters\":{}}]}]}";
@@ -120,7 +120,7 @@ class AssembledCompiledPlanContractTest {
                                 "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\",\"side\":\"$container\"}",
                                 "[]")),
                 List.of(new StrategyFeatureDefinition(
-                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "1m", "{\"period\":14}",
+                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "30m", "{\"period\":14}",
                         "NUMBER", 15, HASH_B)),
                 List.of(new SupportedInstrument(AAPL, "STOCK", "XNAS", "USD", "AAPL")));
     }

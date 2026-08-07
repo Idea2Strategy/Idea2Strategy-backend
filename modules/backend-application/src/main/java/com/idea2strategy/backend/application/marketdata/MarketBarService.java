@@ -6,7 +6,6 @@ import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Consumer;
 
 public final class MarketBarService {
     private final MarketBarPort port;
@@ -23,24 +22,24 @@ public final class MarketBarService {
     }
 
     public List<MarketBarView> findRecent(UUID instrumentId, int limit) {
-        return findRecentSnapshot(instrumentId, limit).bars();
+        return findRecentSnapshot(instrumentId, MarketBarTimeframe.THIRTY_MINUTES, limit).bars();
     }
 
     public MarketBarSnapshot findRecentSnapshot(UUID instrumentId, int limit) {
+        return findRecentSnapshot(instrumentId, MarketBarTimeframe.THIRTY_MINUTES, limit);
+    }
+
+    public MarketBarSnapshot findRecentSnapshot(
+            UUID instrumentId, MarketBarTimeframe timeframe, int limit) {
         SupportedInstrument instrument = authorizeAndRequireSupported(instrumentId);
+        Objects.requireNonNull(timeframe, "timeframe");
         if (limit < 1 || limit > 1000) {
             throw new IllegalArgumentException("limit must be between 1 and 1000");
         }
-        List<MarketBarView> bars = port.findRecent(instrumentId, limit).stream()
+        List<MarketBarView> bars = port.findRecent(instrumentId, timeframe, limit).stream()
                 .map(bar -> view(instrument.symbol(), bar))
                 .toList();
         return new MarketBarSnapshot(instrumentId, instrument.symbol(), bars);
-    }
-
-    public AutoCloseable subscribe(UUID instrumentId, Consumer<MarketBarView> listener) {
-        Objects.requireNonNull(listener, "listener");
-        SupportedInstrument instrument = authorizeAndRequireSupported(instrumentId);
-        return port.subscribe(instrumentId, bar -> listener.accept(view(instrument.symbol(), bar)));
     }
 
     private SupportedInstrument authorizeAndRequireSupported(UUID instrumentId) {

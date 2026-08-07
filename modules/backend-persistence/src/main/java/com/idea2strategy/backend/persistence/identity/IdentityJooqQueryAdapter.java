@@ -1,5 +1,6 @@
 package com.idea2strategy.backend.persistence.identity;
 
+import static org.jooq.impl.DSL.falseCondition;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.name;
 import static org.jooq.impl.DSL.table;
@@ -9,7 +10,9 @@ import com.idea2strategy.backend.application.identity.AccountRecoveryQueryPort;
 import com.idea2strategy.backend.application.identity.CustomerAccessState;
 import com.idea2strategy.backend.application.identity.CustomerAccessStateQueryPort;
 import com.idea2strategy.backend.application.identity.EmailStatus;
+import com.idea2strategy.backend.application.identity.ExistingEmailRegistration;
 import com.idea2strategy.backend.application.identity.IdentityQueryPort;
+import com.idea2strategy.backend.application.identity.IdentifierFingerprint;
 import com.idea2strategy.backend.application.identity.LoginIdentityStatus;
 import com.idea2strategy.backend.application.identity.OidcIdentityQueryPort;
 import com.idea2strategy.backend.application.identity.OidcLoginAccount;
@@ -46,6 +49,31 @@ public class IdentityJooqQueryAdapter
         return dsl.fetchExists(dsl.selectOne()
                 .from(table(name("identity", "account_emails")))
                 .where(field(name("email_lookup_hmac"), String.class).eq(emailLookupHmac)));
+    }
+
+    @Override
+    public Optional<ExistingEmailRegistration> findEmailRegistration(
+            List<IdentifierFingerprint> comparisonFingerprints) {
+        var emails = table(name("identity", "account_emails")).as("email");
+        var accounts = table(name("identity", "accounts")).as("account");
+        var accountId = field(name("account", "id"), UUID.class);
+        var lifecycleStatus = field(name("account", "lifecycle_status")).cast(String.class);
+        var emailStatus = field(name("email", "status")).cast(String.class);
+        Condition identifierMatch = falseCondition();
+        for (var fingerprint : comparisonFingerprints) {
+            identifierMatch = identifierMatch.or(
+                    field(name("email", "email_lookup_hmac"), String.class).eq(fingerprint.value())
+                            .and(field(name("email", "email_lookup_key_version"), Short.class)
+                                    .eq(fingerprint.keyVersion())));
+        }
+        return dsl.select(accountId, lifecycleStatus, emailStatus)
+                .from(emails)
+                .join(accounts).on(field(name("email", "account_id"), UUID.class).eq(accountId))
+                .where(identifierMatch)
+                .fetchOptional(record -> new ExistingEmailRegistration(
+                        record.value1(),
+                        AccountLifecycleStatus.valueOf(record.value2()),
+                        EmailStatus.valueOf(record.value3())));
     }
 
     @Override

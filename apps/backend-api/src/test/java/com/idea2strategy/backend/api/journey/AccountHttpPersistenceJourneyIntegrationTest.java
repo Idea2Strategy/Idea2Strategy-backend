@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.idea2strategy.backend.api.identity.VerificationEmailRequested;
+import com.idea2strategy.backend.api.identity.AccountVerificationEmailRequested;
 import com.idea2strategy.backend.api.identity.CustomerJwtCodec;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRbacCommand;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
@@ -122,8 +122,9 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 .andExpect(jsonPath("$.verificationRequired").value(true))
                 .andReturn().getResponse().getContentAsString();
         UUID accountId = UUID.fromString(json.readTree(signup).get("accountId").asText());
-        String verificationToken = events.stream(VerificationEmailRequested.class)
-                .map(VerificationEmailRequested::verificationToken)
+        String verificationToken = events.stream(AccountVerificationEmailRequested.class)
+                .filter(event -> event.accountId().equals(accountId))
+                .map(AccountVerificationEmailRequested::verificationToken)
                 .findFirst().orElseThrow();
 
         mvc.perform(post("/api/v1/auth/verify-email")

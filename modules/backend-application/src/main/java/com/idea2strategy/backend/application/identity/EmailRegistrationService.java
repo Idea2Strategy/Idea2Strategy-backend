@@ -67,6 +67,10 @@ public final class EmailRegistrationService {
         passwordPolicy.validate(command.password());
         ProtectedEmail email = emailProtector.protect(command.email());
         validateEmail(email.normalized());
+        var existing = queryPort.findEmailRegistration(email.comparisonFingerprints());
+        if (existing.isPresent()) {
+            return continuePendingRegistration(existing.orElseThrow(), command);
+        }
         if (queryPort.emailExists(email.lookupHmac())) {
             throw new DuplicateEmailException();
         }
@@ -75,19 +79,46 @@ public final class EmailRegistrationService {
         var expiresAt = now.plus(VERIFICATION_LIFETIME);
         VerificationToken token = tokenIssuer.issue();
         UUID accountId = UUID.randomUUID();
-        commandPort.createPending(new PendingRegistration(
-                accountId,
+        try {
+            commandPort.createPending(new PendingRegistration(
+                    accountId,
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    email,
+                    passwordHasher.hash(command.password()),
+                    token.digest(),
+                    now,
+                    expiresAt,
+                    command.correlationId(),
+                    command.requestIpPrefix(),
+                    preferenceDefaults.at(now)));
+        } catch (DuplicateEmailException duplicate) {
+            var racedRegistration = queryPort.findEmailRegistration(email.comparisonFingerprints());
+            if (racedRegistration.isPresent()) {
+                return continuePendingRegistration(racedRegistration.orElseThrow(), command);
+            }
+            throw duplicate;
+        }
+        return new SignupResult(accountId, token.rawToken(), expiresAt);
+    }
+
+    private SignupResult continuePendingRegistration(
+            ExistingEmailRegistration existing, SignupCommand command) {
+        if (!existing.awaitingVerification()) {
+            throw new DuplicateEmailException();
+        }
+        var now = clock.instant();
+        var expiresAt = now.plus(VERIFICATION_LIFETIME);
+        VerificationToken token = tokenIssuer.issue();
+        commandPort.replaceVerification(new VerificationReplacement(
                 UUID.randomUUID(),
-                UUID.randomUUID(),
-                email,
-                passwordHasher.hash(command.password()),
+                existing.accountId(),
                 token.digest(),
                 now,
                 expiresAt,
                 command.correlationId(),
-                command.requestIpPrefix(),
-                preferenceDefaults.at(now)));
-        return new SignupResult(accountId, token.rawToken(), expiresAt);
+                command.requestIpPrefix()));
+        return new SignupResult(existing.accountId(), token.rawToken(), expiresAt);
     }
 
     public void verify(VerifyEmailCommand command) {

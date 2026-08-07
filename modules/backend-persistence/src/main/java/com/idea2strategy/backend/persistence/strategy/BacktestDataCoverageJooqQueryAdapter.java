@@ -22,7 +22,17 @@ public class BacktestDataCoverageJooqQueryAdapter implements BacktestDataCoverag
     /**
      * A feed counts as readable only when a published manifest carries content for it. The feed row
      * alone proves the feed is modelled, not that history exists, so the manifest is the authority.
-     * The element execution contract names the feed by its data kind, which is what this returns.
+     *
+     * <p>This returns the feed's data kind, which is what the element execution contract compares
+     * against — and that comparison cannot currently succeed. The contract requires
+     * {@code ADJUSTED_BAR@1m}, but {@code ADJUSTED_BAR} is not a data kind anywhere in the
+     * publication model: the pipeline writes {@code BARS} for every bar feed and expresses adjustment
+     * as {@code dataset_manifests.data_layer = 'ADJUSTED'}, a column this query does not read.
+     * Renaming the token would therefore accept raw bars for a feature whose definition says raw bars
+     * are not substitutable, so the mismatch is left visible rather than papered over. Adjusted bars
+     * are also published only at {@code 30m}. The required-feed expression is under review in
+     * {@code proposals/strategy-domain-decisions} §7; until it is settled this reports what the
+     * publication model actually contains.
      */
     @Override
     public Set<FeedResolution> findAvailableFeeds(Instant observedAt) {

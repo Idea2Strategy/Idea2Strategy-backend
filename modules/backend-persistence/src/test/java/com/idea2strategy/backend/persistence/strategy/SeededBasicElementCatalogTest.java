@@ -49,12 +49,12 @@ class SeededBasicElementCatalogTest {
     private BasicStrategyCatalogJooqQueryAdapter catalogAdapter;
 
     @Test
-    void publishesOneActiveFullCatalogAndRetiresTheRsiOnlyCatalog() {
+    void publishesOneActiveLiveTimeframeCatalogAndRetiresEarlierCatalogs() {
         List<Map<String, Object>> versions = jdbc.queryForList(
                 "select catalog_version, language_version, data_requirement_version, retired_at "
                         + "from strategy.element_catalog_versions");
 
-        assertThat(versions).hasSize(3);
+        assertThat(versions).hasSize(4);
         assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
             assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-08");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
@@ -63,6 +63,8 @@ class SeededBasicElementCatalogTest {
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-04"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-07"))
+                .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
+        assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-08-live-bars"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
     }
 
@@ -156,9 +158,24 @@ class SeededBasicElementCatalogTest {
                 from strategy.element_definitions element
                 join strategy.element_catalog_versions version
                   on version.id = element.element_catalog_version_id
-                where element_code = 'BASIC_RSI_CROSS'
+                where element.element_code = 'BASIC_RSI_CROSS'
                   and version.retired_at is null
                 """, String.class)).isEqualTo("string");
+    }
+
+    @Test
+    void exposesOnlyFinalizedStrategyResolutionsToTheEditor() {
+        List<String> resolutions = jdbc.queryForList("""
+                select distinct jsonb_array_elements_text(
+                    parameter_schema -> 'properties' -> 'resolution' -> 'enum')
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
+                  and parameter_schema #> '{properties,resolution}' is not null
+                """, String.class);
+
+        assertThat(resolutions).containsExactlyInAnyOrder("30m", "1h", "4h", "1d");
     }
 
     /**
@@ -224,7 +241,7 @@ class SeededBasicElementCatalogTest {
         assertThat(jdbc.queryForList("""
                 select jsonb_array_elements_text(parameter_schema #> '{properties,executionMode,enum}')
                 from strategy.element_definitions
-                where element_catalog_version_id = '0f3a0000-0000-4000-8000-000000000001'::uuid
+                where element_catalog_version_id = '0f4a0000-0000-4000-8000-000000000001'::uuid
                   and element_code = 'BASIC_EQUAL_ALLOCATION_ORDER'
                 order by 1
                 """, String.class)).containsExactly(
