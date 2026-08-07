@@ -244,17 +244,11 @@ class SeededBasicElementCatalogTest {
         UUID activeCatalog = jdbc.queryForObject(
                 "select id from strategy.element_catalog_versions where retired_at is null",
                 UUID.class);
+        // Feature definitions are owned by Data Pipeline and enter production through the root
+        // canonical bundle assembler. This repository's central-only fixture must not duplicate
+        // that contribution under the same Flyway version.
         assertThat(catalogAdapter.findFeatures(activeCatalog))
-                .extracting("id", "featureCode", "resolution")
-                .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(
-                                UUID.fromString("eddfb2d4-8586-5260-8fc9-9c8125990270"), "RSI_14", "1d"),
-                        org.assertj.core.groups.Tuple.tuple(
-                                UUID.fromString("2e18c093-5d4e-5d9a-bd22-b7e5679f1a3e"), "RSI_14", "1h"),
-                        org.assertj.core.groups.Tuple.tuple(
-                                UUID.fromString("4b1c6801-0259-5176-a857-0e5ea923d898"), "RSI_14", "30m"),
-                        org.assertj.core.groups.Tuple.tuple(
-                                UUID.fromString("1b2785bd-20f0-50a2-ae96-6a1f7bad74b9"), "RSI_14", "4h"));
+                .isEmpty();
 
         assertThat(jdbc.queryForList("""
                 select jsonb_array_elements_text(parameter_schema #> '{properties,executionMode,enum}')

@@ -102,8 +102,7 @@ class MigrationPolicyTest {
                         "V20260807120000__backend_customer_refresh_token_families.sql",
                         "V20260807130000__backend_publish_full_basic_element_catalog.sql",
                         "V20260808000000__backend_publish_live_strategy_timeframes.sql",
-                        "V20260808120000__backend_publish_production_backtest_resolutions.sql",
-                        "V20260808120100__pipeline_seed_production_rsi_timeframes.sql"),
+                        "V20260808120000__backend_publish_production_backtest_resolutions.sql"),
                 plan.orderedFileNames());
     }
 
