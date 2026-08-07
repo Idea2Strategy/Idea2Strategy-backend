@@ -76,8 +76,7 @@ public final class BasicStrategyValidationCommandService {
 
     public StrategyValidationRun validate(
             UUID strategyId,
-            BasicStrategyCatalog catalog,
-            BacktestDataCoverage coverage) {
+            BasicStrategyCatalog catalog) {
         UUID accountId = principal.accountId();
         var strategy = strategyQueryPort.findOwnedById(strategyId, accountId)
                 .orElseThrow(() -> new NoSuchElementException("Strategy not found"));
@@ -94,7 +93,6 @@ public final class BasicStrategyValidationCommandService {
                 document.semanticHash(),
                 document.editSequence(),
                 catalog,
-                coverage,
                 true);
     }
 
@@ -106,7 +104,6 @@ public final class BasicStrategyValidationCommandService {
     public StrategyValidationRun preview(
             UUID strategyId,
             BasicStrategyCatalog catalog,
-            BacktestDataCoverage coverage,
             String semanticDocument,
             long clientRevision) {
         if (clientRevision < 0) {
@@ -126,7 +123,6 @@ public final class BasicStrategyValidationCommandService {
                 StrategyDocumentJson.sha256(canonicalSemantic),
                 clientRevision,
                 catalog,
-                coverage,
                 false);
     }
 
@@ -137,7 +133,6 @@ public final class BasicStrategyValidationCommandService {
             String semanticHash,
             long requestedEditSequence,
             BasicStrategyCatalog catalog,
-            BacktestDataCoverage coverage,
             boolean persist) {
 
         var findings = new ArrayList<StrategyValidationFinding>();
@@ -151,7 +146,7 @@ public final class BasicStrategyValidationCommandService {
                     issue.message(),
                     List.of())));
             if (assemblyResult.valid()) {
-                var backtestResult = backtestValidator.validate(assembly, catalog, coverage);
+                var backtestResult = backtestValidator.validate(assembly, catalog);
                 backtestResult.issues().forEach(issue -> findings.add(new StrategyValidationFinding(
                         backtestSeverity(issue.code()),
                         issue.code(),

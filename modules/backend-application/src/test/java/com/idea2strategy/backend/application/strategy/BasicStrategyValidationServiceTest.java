@@ -3,7 +3,6 @@ package com.idea2strategy.backend.application.strategy;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.idea2strategy.backend.application.strategy.BacktestDataCoverage.FeedResolution;
 import com.idea2strategy.backend.application.testing.FixedIdGenerator;
 import com.idea2strategy.backend.application.testing.TestPrincipal;
 import com.idea2strategy.backend.domain.strategy.ElementCatalogVersion;
@@ -43,8 +42,7 @@ class BasicStrategyValidationServiceTest {
 
         StrategyValidationRun run = service.validate(
                 STRATEGY_ID,
-                catalog(),
-                new BacktestDataCoverage("data/v1", Set.of(new FeedResolution("SIP_OHLCV", "1m")), Set.of()));
+                catalog());
 
         assertThat(run.id()).isEqualTo(RUN_ID);
         assertThat(run.requestedEditSequence()).isEqualTo(7);
@@ -55,10 +53,6 @@ class BasicStrategyValidationServiceTest {
                 .extracting(StrategyValidationFinding::severity, StrategyValidationFinding::code,
                         StrategyValidationFinding::location)
                 .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(
-                                StrategyValidationFinding.Severity.WARNING,
-                                "BACKTEST_FEATURE_UNAVAILABLE",
-                                "groups[0].blocks[1].elementCode"),
                         org.assertj.core.groups.Tuple.tuple(
                                 StrategyValidationFinding.Severity.INFORMATION,
                                 "BACKTEST_FEED_REQUIRED",
@@ -76,7 +70,7 @@ class BasicStrategyValidationServiceTest {
         var runs = new InMemoryValidationRunPort();
 
         StrategyValidationRun run = service(documents, runs, OWNER_ID).validate(
-                STRATEGY_ID, catalog(), exactCoverage());
+                STRATEGY_ID, catalog());
 
         assertThat(run.status()).isEqualTo(StrategyValidationStatus.INVALID);
         assertThat(run.findings()).singleElement().satisfies(finding -> {
@@ -93,7 +87,7 @@ class BasicStrategyValidationServiceTest {
         String currentEditorDocument = semanticDocument("UNKNOWN");
 
         StrategyValidationRun preview = service(documents, runs, OWNER_ID).preview(
-                STRATEGY_ID, catalog(), exactCoverage(), currentEditorDocument, 42);
+                STRATEGY_ID, catalog(), currentEditorDocument, 42);
 
         assertThat(preview.requestedEditSequence()).isEqualTo(42);
         assertThat(preview.semanticHash()).isEqualTo(StrategyDocumentJson.sha256(
@@ -109,7 +103,7 @@ class BasicStrategyValidationServiceTest {
         var documents = new StubDocumentPort(document(semanticDocument("RSI"), 4));
         var runs = new InMemoryValidationRunPort();
         StrategyValidationRun run = service(documents, runs, OWNER_ID).validate(
-                STRATEGY_ID, catalog(), exactCoverage());
+                STRATEGY_ID, catalog());
         var query = new StrategyValidationQueryService(runs, documents, new TestPrincipal(OWNER_ID));
 
         documents.document = documents.document.replace(
@@ -141,7 +135,7 @@ class BasicStrategyValidationServiceTest {
         var runs = new InMemoryValidationRunPort();
         var otherService = service(documents, runs, OTHER_OWNER_ID);
 
-        assertThatThrownBy(() -> otherService.validate(STRATEGY_ID, catalog(), exactCoverage()))
+        assertThatThrownBy(() -> otherService.validate(STRATEGY_ID, catalog()))
                 .isInstanceOf(java.util.NoSuchElementException.class)
                 .hasMessage("Strategy not found");
         assertThat(runs.saved).isNull();
@@ -191,11 +185,6 @@ class BasicStrategyValidationServiceTest {
                 + "\"toBlockId\":\"condition\",\"inputPort\":\"input\"},"
                 + "{\"fromBlockId\":\"condition\",\"outputPort\":\"result\","
                 + "\"toBlockId\":\"order\",\"inputPort\":\"input\"}]}]}";
-    }
-
-    private static BacktestDataCoverage exactCoverage() {
-        return new BacktestDataCoverage(
-                "data/v1", Set.of(new FeedResolution("SIP_OHLCV", "1m")), Set.of("RSI_14"));
     }
 
     private static BasicStrategyCatalog catalog() {
