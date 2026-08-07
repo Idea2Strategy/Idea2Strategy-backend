@@ -236,6 +236,10 @@ public final class BasicStrategyValidationCommandService {
                 for (JsonNode feedNode : backtest.path("feeds")) {
                     String feed = feedNode.path("feed").asText();
                     String resolution = feedNode.path("resolution").asText();
+                    if ("$resolution".equals(resolution)) {
+                        Object configuredResolution = block.parameters().get("resolution");
+                        resolution = configuredResolution instanceof String value ? value : "";
+                    }
                     String requirement = "feed:" + feed + "@" + resolution;
                     if (reportedFeeds.add(requirement)) {
                         findings.add(new StrategyValidationFinding(

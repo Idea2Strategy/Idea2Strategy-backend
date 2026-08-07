@@ -54,13 +54,15 @@ class SeededBasicElementCatalogTest {
                 "select catalog_version, language_version, data_requirement_version, retired_at "
                         + "from strategy.element_catalog_versions");
 
-        assertThat(versions).hasSize(2);
+        assertThat(versions).hasSize(3);
         assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
-            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-07");
+            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-08");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
         });
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-04"))
+                .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
+        assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-07"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
     }
 
@@ -151,7 +153,11 @@ class SeededBasicElementCatalogTest {
     void theComparisonThresholdIsAnExactDecimalString() {
         assertThat(jdbc.queryForObject("""
                 select parameter_schema -> 'properties' -> 'threshold' ->> 'type'
-                from strategy.element_definitions where element_code = 'BASIC_RSI_CROSS'
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where element_code = 'BASIC_RSI_CROSS'
+                  and version.retired_at is null
                 """, String.class)).isEqualTo("string");
     }
 
@@ -190,6 +196,39 @@ class SeededBasicElementCatalogTest {
                 """, String.class);
 
         assertThat(declared).isEmpty();
+    }
+
+    @Test
+    void publishesOnlyProductionResolutionsAndDynamicBacktestFeeds() {
+        List<String> resolutionEnums = jdbc.queryForList("""
+                select distinct jsonb_array_elements_text(parameter_schema #> '{properties,resolution,enum}')
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
+                  and parameter_schema #> '{properties,resolution,enum}' is not null
+                order by 1
+                """, String.class);
+        assertThat(resolutionEnums).containsExactly("1d", "1h", "30m", "4h");
+
+        List<String> feedResolutions = jdbc.queryForList("""
+                select distinct feed ->> 'resolution'
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                cross join lateral jsonb_array_elements(execution_contract #> '{backtest,feeds}') feed
+                where version.retired_at is null
+                """, String.class);
+        assertThat(feedResolutions).containsExactly("$resolution");
+
+        assertThat(jdbc.queryForList("""
+                select jsonb_array_elements_text(parameter_schema #> '{properties,executionMode,enum}')
+                from strategy.element_definitions
+                where element_catalog_version_id = '0f3a0000-0000-4000-8000-000000000001'::uuid
+                  and element_code = 'BASIC_EQUAL_ALLOCATION_ORDER'
+                order by 1
+                """, String.class)).containsExactly(
+                        "1회만", "대기 후 재실행", "대기 후 재진입", "주기마다");
     }
 
     private String portType(String elementCode, String column, String port) {

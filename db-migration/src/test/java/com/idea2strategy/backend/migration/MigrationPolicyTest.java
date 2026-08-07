@@ -100,7 +100,8 @@ class MigrationPolicyTest {
                         "V20260805130000__backtest_run_input_pins.sql",
                         "V20260806100000__backend_google_oidc_provider.sql",
                         "V20260807120000__backend_customer_refresh_token_families.sql",
-                        "V20260807130000__backend_publish_full_basic_element_catalog.sql"),
+                        "V20260807130000__backend_publish_full_basic_element_catalog.sql",
+                        "V20260808120000__backend_publish_production_backtest_resolutions.sql"),
                 plan.orderedFileNames());
     }
 

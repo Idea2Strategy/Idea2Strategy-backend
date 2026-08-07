@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 public final class BasicBacktestCapabilityValidator {
+    private static final Set<String> PRODUCTION_RESOLUTIONS = Set.of("30m", "1h", "4h", "1d");
     private static final Comparator<FeedResolution> FEED_ORDER = Comparator
             .comparing(FeedResolution::feed)
             .thenComparing(FeedResolution::resolution);
@@ -62,6 +63,7 @@ public final class BasicBacktestCapabilityValidator {
 
         var requiredFeeds = new TreeSet<>(FEED_ORDER);
         var requiredFeatures = new TreeSet<String>();
+        var resolvedResolutions = new TreeSet<String>();
         var issues = new ArrayList<BasicBacktestCapabilityIssue>();
 
         for (int groupIndex = 0; groupIndex < assembly.groups().size(); groupIndex++) {
@@ -70,14 +72,22 @@ public final class BasicBacktestCapabilityValidator {
                 var block = group.blocks().get(blockIndex);
                 String location = "groups[" + groupIndex + "].blocks[" + blockIndex + "].elementCode";
                 validateBlock(
+                        block,
                         elements.get(block.elementCode()),
                         location,
                         catalogFeatures,
                         coverage,
                         requiredFeeds,
                         requiredFeatures,
+                        resolvedResolutions,
                         issues);
             }
+        }
+
+        if (resolvedResolutions.size() > 1) {
+            add(issues, "BACKTEST_MULTIPLE_RESOLUTIONS", "groups",
+                    "A production backtest strategy must use one resolution across all blocks",
+                    resolvedResolutions.stream().map(value -> "resolution:" + value).toList());
         }
 
         return new BasicBacktestCapabilityResult(
@@ -87,12 +97,14 @@ public final class BasicBacktestCapabilityValidator {
     }
 
     private void validateBlock(
+            BasicBlockAssembly.BasicBlock block,
             StrategyElementDefinition definition,
             String location,
             Set<String> catalogFeatures,
             BacktestDataCoverage coverage,
             Set<FeedResolution> requiredFeeds,
             Set<String> requiredFeatures,
+            Set<String> resolvedResolutions,
             List<BasicBacktestCapabilityIssue> issues) {
         JsonNode contract;
         try {
@@ -131,6 +143,21 @@ public final class BasicBacktestCapabilityValidator {
         for (JsonNode feedNode : feeds) {
             String feed = textOrFallback(feedNode.get("feed"), "");
             String resolution = textOrFallback(feedNode.get("resolution"), "");
+            if ("$resolution".equals(resolution)) {
+                Object configuredResolution = block.parameters().get("resolution");
+                resolution = configuredResolution instanceof String value ? value : "";
+                if (!PRODUCTION_RESOLUTIONS.contains(resolution)) {
+                    add(issues, "BACKTEST_RESOLUTION_UNSUPPORTED", location,
+                            "Production backtests support only 30m, 1h, 4h, or 1d",
+                            List.of("resolution:" + resolution));
+                    continue;
+                }
+                resolvedResolutions.add(resolution);
+            } else if (resolution.startsWith("$")) {
+                add(issues, "BACKTEST_CONTRACT_INVALID", location,
+                        "Backtest feed declares an unknown dynamic resolution", List.of());
+                continue;
+            }
             if (feed.isBlank() || resolution.isBlank()) {
                 add(issues, "BACKTEST_CONTRACT_INVALID", location,
                         "Backtest feed must declare an exact feed and resolution", List.of());
