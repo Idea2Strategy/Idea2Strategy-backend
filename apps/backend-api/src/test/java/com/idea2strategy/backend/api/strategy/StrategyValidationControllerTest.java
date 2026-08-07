@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.idea2strategy.backend.application.strategy.BacktestDataCoverage;
+import com.idea2strategy.backend.application.strategy.BacktestDataCoverage.FeedResolution;
+import com.idea2strategy.backend.application.strategy.BacktestDataCoverageQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalog;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
@@ -19,6 +21,7 @@ import com.idea2strategy.backend.domain.strategy.StrategyValidationRun;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationStatus;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -59,8 +62,13 @@ class StrategyValidationControllerTest {
                         List.of("feed:ADJUSTED_BAR@1m"))),
                 NOW,
                 NOW));
+        var coverageService = mock(BacktestDataCoverageQueryService.class);
+        when(coverageService.coverageFor(catalog)).thenReturn(new BacktestDataCoverage(
+                "alpaca-sip/v1",
+                Set.of(new FeedResolution("ADJUSTED_BAR", "1m")),
+                Set.of("RSI_14")));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                        new StrategyValidationController(validationService, catalogService))
+                        new StrategyValidationController(validationService, catalogService, coverageService))
                 .setControllerAdvice(new StrategyAuthoringExceptionHandler())
                 .build();
 
@@ -76,8 +84,9 @@ class StrategyValidationControllerTest {
         verify(validationService).validate(org.mockito.ArgumentMatchers.eq(STRATEGY_ID),
                 org.mockito.ArgumentMatchers.same(catalog), coverage.capture());
         assertThat(coverage.getValue().dataRequirementVersion()).isEqualTo("alpaca-sip/v1");
-        assertThat(coverage.getValue().feeds()).isEmpty();
-        assertThat(coverage.getValue().features()).isEmpty();
+        assertThat(coverage.getValue().feeds()).containsExactly(new FeedResolution("ADJUSTED_BAR", "1m"));
+        assertThat(coverage.getValue().features()).containsExactly("RSI_14");
+        verify(coverageService).coverageFor(catalog);
     }
 
     @Test
@@ -98,8 +107,11 @@ class StrategyValidationControllerTest {
                                 "REQUIRED_PARAMETER_MISSING", "groups[0].blocks[0].parameters.threshold",
                                 "Required parameter is missing", List.of())),
                         NOW, NOW));
+        var coverageService = mock(BacktestDataCoverageQueryService.class);
+        when(coverageService.coverageFor(catalog)).thenReturn(new BacktestDataCoverage(
+                "alpaca-sip/v1", Set.of(), Set.of()));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
-                        new StrategyValidationController(validationService, catalogService))
+                        new StrategyValidationController(validationService, catalogService, coverageService))
                 .setControllerAdvice(new StrategyAuthoringExceptionHandler())
                 .build();
 

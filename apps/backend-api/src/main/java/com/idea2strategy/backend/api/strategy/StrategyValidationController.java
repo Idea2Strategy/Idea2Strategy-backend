@@ -2,14 +2,13 @@ package com.idea2strategy.backend.api.strategy;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.idea2strategy.backend.application.strategy.BacktestDataCoverage;
+import com.idea2strategy.backend.application.strategy.BacktestDataCoverageQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationFinding;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
@@ -22,17 +21,24 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/strategies/{strategyId}")
-@ConditionalOnBean({BasicStrategyValidationCommandService.class, BasicStrategyCatalogQueryService.class})
+@ConditionalOnBean({
+    BasicStrategyValidationCommandService.class,
+    BasicStrategyCatalogQueryService.class,
+    BacktestDataCoverageQueryService.class
+})
 public class StrategyValidationController {
     private final BasicStrategyValidationCommandService validationService;
     private final BasicStrategyCatalogQueryService catalogService;
+    private final BacktestDataCoverageQueryService coverageService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public StrategyValidationController(
             BasicStrategyValidationCommandService validationService,
-            BasicStrategyCatalogQueryService catalogService) {
+            BasicStrategyCatalogQueryService catalogService,
+            BacktestDataCoverageQueryService coverageService) {
         this.validationService = validationService;
         this.catalogService = catalogService;
+        this.coverageService = coverageService;
     }
 
     @PostMapping("/validations")
@@ -44,9 +50,7 @@ public class StrategyValidationController {
             throw new IllegalArgumentException("catalogId is required");
         }
         var catalog = catalogService.getPublished(request.catalogId());
-        var coverage = new BacktestDataCoverage(
-                catalog.version().dataRequirementVersion(), Set.of(), Set.of());
-        var run = validationService.validate(strategyId, catalog, coverage);
+        var run = validationService.validate(strategyId, catalog, coverageService.coverageFor(catalog));
         return response(run);
     }
 
@@ -61,12 +65,10 @@ public class StrategyValidationController {
             throw new IllegalArgumentException("clientRevision must not be negative");
         }
         var catalog = catalogService.getPublished(request.catalogId());
-        var coverage = new BacktestDataCoverage(
-                catalog.version().dataRequirementVersion(), Set.of(), Set.of());
         var run = validationService.preview(
                 strategyId,
                 catalog,
-                coverage,
+                coverageService.coverageFor(catalog),
                 writeJson(request.semanticDocument()),
                 request.clientRevision());
         return response(run);
