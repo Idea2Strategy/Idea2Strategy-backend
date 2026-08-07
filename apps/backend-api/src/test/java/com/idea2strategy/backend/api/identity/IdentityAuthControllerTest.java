@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
 import com.idea2strategy.backend.application.identity.EmailRegistrationService;
@@ -16,8 +18,29 @@ import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class IdentityAuthControllerTest {
+    @Test
+    void rejectsMissingVerificationTokenAsBadRequest() throws Exception {
+        var controller = new IdentityAuthController(
+                mock(EmailRegistrationService.class),
+                mock(EmailAuthenticationService.class),
+                mock(VerificationDeliveryPort.class),
+                jwt(),
+                cookies());
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new IdentityAuthExceptionHandler())
+                .build();
+
+        mvc.perform(post("/api/v1/auth/verify-email")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void signupDeliversVerificationSecretWithoutReturningItInTheApiBody() {
         var registration = mock(EmailRegistrationService.class);

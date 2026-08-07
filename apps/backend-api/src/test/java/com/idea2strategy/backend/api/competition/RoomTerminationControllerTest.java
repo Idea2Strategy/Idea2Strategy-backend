@@ -26,6 +26,18 @@ class RoomTerminationControllerTest {
     private static final Instant NOW = Instant.parse("2026-08-02T05:00:00Z");
 
     @Test
+    void rejectsMissingWithdrawalValuesAsBadRequest() throws Exception {
+        var service = mock(UserRoomTerminationService.class);
+        MockMvc mvc = mvc(new RoomTerminationController(service));
+
+        mvc.perform(post("/api/v1/competition/rooms/{roomId}/participations/{participationId}/withdrawal",
+                                ROOM_ID, PARTICIPATION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void acceptsAnExplicitWithdrawalOutcome() throws Exception {
         var service = mock(UserRoomTerminationService.class);
         when(service.withdraw(
