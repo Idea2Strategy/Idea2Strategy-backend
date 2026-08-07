@@ -9,7 +9,7 @@ import java.util.UUID;
 import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
 
 public final class OidcAuthenticationService {
-    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofHours(12);
+    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofDays(30);
 
     private final OidcIdentityQueryPort queryPort;
     private final IdentityCommandPort commandPort;

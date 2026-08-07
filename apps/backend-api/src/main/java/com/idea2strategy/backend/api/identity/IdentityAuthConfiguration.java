@@ -187,7 +187,7 @@ public class IdentityAuthConfiguration {
             AesGcmEmailProtector emailProtector,
             HmacSessionTokens sessionTokens,
             Clock identityClock,
-            @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime,
+            @Value("${identity.session.lifetime:PT720H}") Duration sessionLifetime,
             @Value("${identity.session.max-active-sessions:5}") int maxActiveSessions) {
         return new EmailAuthenticationService(
                 queries,
@@ -206,7 +206,7 @@ public class IdentityAuthConfiguration {
             IdentityJpaCommandAdapter commands,
             HmacSessionTokens sessionTokens,
             Clock identityClock,
-            @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime) {
+            @Value("${identity.session.lifetime:PT720H}") Duration sessionLifetime) {
         return new SessionManagementService(queries, commands, identityClock, sessionTokens, sessionLifetime);
     }
 
@@ -278,7 +278,7 @@ public class IdentityAuthConfiguration {
             HmacOidcSubjectProtector subjectProtector,
             HmacSessionTokens sessionTokens,
             Clock identityClock,
-            @Value("${identity.session.lifetime:PT12H}") Duration sessionLifetime,
+            @Value("${identity.session.lifetime:PT720H}") Duration sessionLifetime,
             @Value("${identity.session.max-active-sessions:5}") int maxActiveSessions,
             AesGcmEmailProtector emailProtector,
             @Value("${identity.preferences.default-language:ko}") String defaultLanguage,

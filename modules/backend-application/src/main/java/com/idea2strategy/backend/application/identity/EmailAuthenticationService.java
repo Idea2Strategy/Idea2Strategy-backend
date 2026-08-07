@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 public final class EmailAuthenticationService {
-    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofHours(12);
+    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofDays(30);
 
     private final IdentityQueryPort queryPort;
     private final IdentityCommandPort commandPort;

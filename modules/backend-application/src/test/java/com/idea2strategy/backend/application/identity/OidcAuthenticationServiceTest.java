@@ -87,6 +87,7 @@ class OidcAuthenticationServiceTest {
                 UUID.fromString("13000000-0000-4000-8000-000000000001")));
 
         assertThat(result.sessionToken()).isEqualTo("session-token");
+        assertThat(result.expiresAt()).isEqualTo(NOW.plus(Duration.ofDays(30)));
         assertThat(commands.sessions).singleElement().satisfies(session -> {
             assertThat(session.accountId()).isEqualTo(accountId);
             assertThat(session.loginIdentityId()).isEqualTo(loginIdentityId);

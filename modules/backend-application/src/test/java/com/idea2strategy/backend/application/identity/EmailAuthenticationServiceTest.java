@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -47,6 +48,38 @@ class EmailAuthenticationServiceTest {
                 .singleElement()
                 .extracting(LoginFailure::reasonCode)
                 .isEqualTo("EMAIL_NOT_VERIFIED");
+    }
+
+    @Test
+    void defaultLoginSessionRemainsRefreshableForThirtyDays() {
+        UUID accountId = UUID.fromString("10000000-0000-4000-8000-000000000002");
+        UUID loginIdentityId = UUID.fromString("11000000-0000-4000-8000-000000000002");
+        var query = new StubQueryPort(new PasswordLoginAccount(
+                accountId,
+                loginIdentityId,
+                AccountLifecycleStatus.ACTIVE,
+                EmailStatus.VERIFIED,
+                LoginIdentityStatus.ACTIVE,
+                "encoded-password",
+                1,
+                1));
+        var commands = new RecordingCommandPort();
+        var service = new EmailAuthenticationService(
+                query,
+                commands,
+                (raw, encoded) -> raw.equals("correct-password") && encoded.equals("encoded-password"),
+                rawEmail -> "lookup:" + rawEmail.trim().toLowerCase(),
+                () -> new SessionToken("session-token", "session-digest"),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+
+        LoginResult result = service.login(new LoginCommand(
+                "person@example.com", "correct-password", "Chrome", UUID.randomUUID()));
+
+        assertThat(result.expiresAt()).isEqualTo(NOW.plus(Duration.ofDays(30)));
+        assertThat(commands.sessions)
+                .singleElement()
+                .extracting(AuthenticationSession::expiresAt)
+                .isEqualTo(NOW.plus(Duration.ofDays(30)));
     }
 
     private record StubQueryPort(PasswordLoginAccount account) implements IdentityQueryPort {

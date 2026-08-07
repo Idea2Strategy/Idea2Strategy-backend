@@ -473,8 +473,43 @@ public class IdentityJpaCommandAdapter
                 .setParameter("accountId", session.accountId())
                 .setParameter("now", utc(session.issuedAt()))
                 .getSingleResult();
-        if (activeSessions.intValue() >= maxActiveSessions) {
-            throw new AuthenticationRejectedException("Active session limit reached");
+        int sessionsToReplace = activeSessions.intValue() - maxActiveSessions + 1;
+        if (sessionsToReplace > 0) {
+            List<?> oldestSessions = entityManager.createNativeQuery("""
+                            select id, authenticated_by_login_identity_id
+                            from identity.sessions
+                            where account_id = :accountId and revoked_at is null and expires_at > :now
+                            order by issued_at, id
+                            for update
+                            """)
+                    .setParameter("accountId", session.accountId())
+                    .setParameter("now", utc(session.issuedAt()))
+                    .setMaxResults(sessionsToReplace)
+                    .getResultList();
+            for (Object candidate : oldestSessions) {
+                Object[] row = (Object[]) candidate;
+                UUID replacedSessionId = (UUID) row[0];
+                UUID replacedLoginIdentityId = (UUID) row[1];
+                int revoked = entityManager.createNativeQuery("""
+                                update identity.sessions
+                                set revoked_at = :now, revoke_reason_code = 'SESSION_LIMIT_REPLACED'
+                                where id = :sessionId and account_id = :accountId and revoked_at is null
+                                """)
+                        .setParameter("now", utc(session.issuedAt()))
+                        .setParameter("sessionId", replacedSessionId)
+                        .setParameter("accountId", session.accountId())
+                        .executeUpdate();
+                if (revoked == 1) {
+                    insertSessionEvent(
+                            session.accountId(),
+                            replacedLoginIdentityId,
+                            replacedSessionId,
+                            "SESSION_REVOKED",
+                            "SESSION_LIMIT_REPLACED",
+                            success.correlationId(),
+                            utc(session.issuedAt()));
+                }
+            }
         }
         createSession(session);
         recordLoginSuccess(success);
