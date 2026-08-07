@@ -49,18 +49,21 @@ class SeededBasicElementCatalogTest {
     private BasicStrategyCatalogJooqQueryAdapter catalogAdapter;
 
     @Test
-    void publishesOneActiveFullCatalogAndRetiresTheRsiOnlyCatalog() {
+    void publishesOneActiveLiveTimeframeCatalogAndRetiresEarlierCatalogs() {
         List<Map<String, Object>> versions = jdbc.queryForList(
                 "select catalog_version, language_version, data_requirement_version, retired_at "
                         + "from strategy.element_catalog_versions");
 
-        assertThat(versions).hasSize(2);
+        assertThat(versions).hasSize(3);
         assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
-            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-07");
+            assertThat(version.get("catalog_version"))
+                    .isEqualTo("basic-elements:2026-08-08-live-timeframes");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
         });
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-04"))
+                .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
+        assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-07"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
     }
 
@@ -153,6 +156,21 @@ class SeededBasicElementCatalogTest {
                 select parameter_schema -> 'properties' -> 'threshold' ->> 'type'
                 from strategy.element_definitions where element_code = 'BASIC_RSI_CROSS'
                 """, String.class)).isEqualTo("string");
+    }
+
+    @Test
+    void exposesOnlyFinalizedStrategyResolutionsToTheEditor() {
+        List<String> resolutions = jdbc.queryForList("""
+                select distinct jsonb_array_elements_text(
+                    parameter_schema -> 'properties' -> 'resolution' -> 'enum')
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
+                  and parameter_schema #> '{properties,resolution}' is not null
+                """, String.class);
+
+        assertThat(resolutions).containsExactlyInAnyOrder("30m", "1h", "4h", "1d");
     }
 
     /**

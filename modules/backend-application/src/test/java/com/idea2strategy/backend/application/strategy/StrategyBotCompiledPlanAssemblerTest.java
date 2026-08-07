@@ -41,7 +41,7 @@ class StrategyBotCompiledPlanAssemblerTest {
         JsonNode steps = stepsOf(plan, 0);
         assertThat(steps).hasSize(3);
         assertThat(steps.get(0).path("operation").asText()).isEqualTo("LOAD_FEATURE");
-        assertThat(steps.get(0).path("arguments").path("resolution").asText()).isEqualTo("1m");
+        assertThat(steps.get(0).path("arguments").path("resolution").asText()).isEqualTo("30m");
         assertThat(steps.get(1).path("arguments").path("threshold").asText()).isEqualTo("30");
         assertThat(steps.get(2).path("operation").asText()).isEqualTo("EMIT_ORDER_CANDIDATE");
         assertThat(steps.get(2).path("arguments").path("side").asText())
@@ -58,7 +58,7 @@ class StrategyBotCompiledPlanAssemblerTest {
                         "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
                 .set("steps", objectMapper.createArrayNode()
                         .add(step(1, "BASIC_PRICE_COMPARE",
-                                "{\"resolution\":\"1m\",\"operator\":\"GT\","
+                                "{\"resolution\":\"30m\",\"operator\":\"GT\","
                                         + "\"reference\":\"PREVIOUS_CLOSE\"}"))
                         .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER", "{}")));
         BasicStrategyCatalog directCatalog = new BasicStrategyCatalog(
@@ -92,17 +92,31 @@ class StrategyBotCompiledPlanAssemblerTest {
 
         JsonNode features = parse(plan.planDocument()).path("requiredFeatures");
         assertThat(features).hasSize(1);
-        assertThat(features.get(0).path("requirementId").asText()).isEqualTo("rsi-14-pt1m");
+        assertThat(features.get(0).path("requirementId").asText()).isEqualTo("rsi-14-pt30m");
         assertThat(features.get(0).path("featureVersion").asText())
                 .as("rsi:1.0.0 names the calculator; the contract carries only the version")
                 .isEqualTo("1.0.0");
-        assertThat(features.get(0).path("resolution").asText()).isEqualTo("PT1M");
+        assertThat(features.get(0).path("resolution").asText()).isEqualTo("PT30M");
         assertThat(features.get(0).path("requiredObservations").asInt())
                 .as("a fifteen point window needs fourteen warm-up bars; the live bar is the fifteenth")
                 .isEqualTo(14);
         List<String> instruments = features.get(0).path("instruments").valueStream()
                 .map(JsonNode::asText).toList();
         assertThat(instruments).containsExactly(AAPL.toString(), MSFT.toString());
+    }
+
+    @Test
+    void keepsWarmupRequirementsSeparateWhenOneFeatureUsesTwoLiveResolutions() {
+        JsonNode thirtyMinutes = buyFlow("thirty", List.of(AAPL));
+        JsonNode oneHour = buyFlow("hour", List.of(MSFT));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) oneHour.path("steps").get(0))
+                .set("parameters", parse("{\"resolution\":\"1h\"}"));
+
+        ContractPlan plan = assemble(planWith(thirtyMinutes, oneHour));
+
+        assertThat(parse(plan.planDocument()).path("requiredFeatures"))
+                .extracting(node -> node.path("resolution").asText())
+                .containsExactly("PT1H", "PT30M");
     }
 
     /**
@@ -148,7 +162,7 @@ class StrategyBotCompiledPlanAssemblerTest {
                 .<com.fasterxml.jackson.databind.node.ObjectNode>set(
                         "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
                 .set("steps", objectMapper.createArrayNode()
-                        .add(step(1, "BASIC_RSI_READ", "{\"resolution\":\"1m\"}"))));
+                        .add(step(1, "BASIC_RSI_READ", "{\"resolution\":\"30m\"}"))));
 
         assertThatThrownBy(() -> assemble(plan))
                 .isInstanceOf(IllegalStateException.class)
@@ -168,7 +182,7 @@ class StrategyBotCompiledPlanAssemblerTest {
                 .<com.fasterxml.jackson.databind.node.ObjectNode>set(
                         "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
                 .set("steps", objectMapper.createArrayNode()
-                        .add(step(1, "BASIC_RSI_READ", "{\"resolution\":\"1m\"}"))
+                        .add(step(1, "BASIC_RSI_READ", "{\"resolution\":\"30m\"}"))
                         .add(step(2, "BASIC_VALUE_COMPARE", "{\"operator\":\"LT\"}"))
                         .add(step(3, "BASIC_EQUAL_ALLOCATION_ORDER", "{}"))));
 
@@ -193,11 +207,17 @@ class StrategyBotCompiledPlanAssemblerTest {
      */
     @Test
     void normalisesEveryResolutionTheCatalogCanPublish() {
-        assertThat(resolutionOf("1m")).isEqualTo("PT1M");
-        assertThat(resolutionOf("5m")).isEqualTo("PT5M");
+        assertThat(resolutionOf("30m")).isEqualTo("PT30M");
         assertThat(resolutionOf("1h")).isEqualTo("PT1H");
+        assertThat(resolutionOf("4h")).isEqualTo("PT4H");
         assertThat(resolutionOf("1d")).isEqualTo("PT24H");
-        assertThat(resolutionOf("PT15M")).isEqualTo("PT15M");
+    }
+
+    @Test
+    void refusesDisplayOnlyMinuteResolutionsInALivePlan() {
+        assertThatThrownBy(() -> resolutionOf("1m"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("30m, 1h, 4h, 1d");
     }
 
     /**
@@ -216,14 +236,17 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     private String resolutionOf(String catalogResolution) {
+        JsonNode flow = buyFlow("buy", List.of(AAPL));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) flow.path("steps").get(0))
+                .set("parameters", parse("{\"resolution\":\"" + catalogResolution + "\"}"));
         ContractPlan plan = assemble(
-                planWith(buyFlow("buy", List.of(AAPL))),
+                planWith(flow),
                 feature("RSI_14", "rsi:1.0.0", catalogResolution, 15));
         return parse(plan.planDocument()).path("requiredFeatures").get(0).path("resolution").asText();
     }
 
     private ContractPlan assemble(JsonNode planRoot) {
-        return assemble(planRoot, feature("RSI_14", "rsi:1.0.0", "1m", 15));
+        return assemble(planRoot, feature("RSI_14", "rsi:1.0.0", "30m", 15));
     }
 
     private ContractPlan assemble(JsonNode planRoot, StrategyFeatureDefinition feature) {
@@ -274,7 +297,7 @@ class StrategyBotCompiledPlanAssemblerTest {
         var ids = node.putArray("instrumentIds");
         instruments.stream().map(UUID::toString).sorted().forEach(ids::add);
         node.set("steps", objectMapper.createArrayNode()
-                .add(step(1, "BASIC_RSI_READ", "{\"resolution\":\"1m\"}"))
+                .add(step(1, "BASIC_RSI_READ", "{\"resolution\":\"30m\"}"))
                 .add(step(2, "BASIC_VALUE_COMPARE", "{\"operator\":\"LT\",\"threshold\":\"30\"}"))
                 .add(step(3, "BASIC_EQUAL_ALLOCATION_ORDER", "{}")));
         return node;
