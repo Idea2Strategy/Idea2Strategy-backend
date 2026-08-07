@@ -9,15 +9,14 @@ import java.util.UUID;
 import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
 
 public final class OidcAuthenticationService {
-    private static final Duration DEFAULT_SESSION_LIFETIME = Duration.ofDays(30);
+    private static final Duration DEFAULT_REFRESH_TOKEN_LIFETIME = Duration.ofDays(30);
 
     private final OidcIdentityQueryPort queryPort;
     private final IdentityCommandPort commandPort;
     private final OidcSubjectProtector subjectProtector;
-    private final SessionTokenIssuer tokenIssuer;
+    private final RefreshTokenSecretIssuer tokenIssuer;
     private final Clock clock;
-    private final Duration sessionLifetime;
-    private final int maxActiveSessions;
+    private final Duration refreshTokenLifetime;
     private final RegistrationQueryPort registrationQueries;
     private final OidcIdentityCommandPort oidcCommands;
     private final EmailProtector emailProtector;
@@ -27,32 +26,27 @@ public final class OidcAuthenticationService {
             OidcIdentityQueryPort queryPort,
             IdentityCommandPort commandPort,
             OidcSubjectProtector subjectProtector,
-            SessionTokenIssuer tokenIssuer,
+            RefreshTokenSecretIssuer tokenIssuer,
             Clock clock) {
-        this(queryPort, commandPort, subjectProtector, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME, 5);
+        this(queryPort, commandPort, subjectProtector, tokenIssuer, clock, DEFAULT_REFRESH_TOKEN_LIFETIME);
     }
 
     public OidcAuthenticationService(
             OidcIdentityQueryPort queryPort,
             IdentityCommandPort commandPort,
             OidcSubjectProtector subjectProtector,
-            SessionTokenIssuer tokenIssuer,
+            RefreshTokenSecretIssuer tokenIssuer,
             Clock clock,
-            Duration sessionLifetime,
-            int maxActiveSessions) {
+            Duration refreshTokenLifetime) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.subjectProtector = Objects.requireNonNull(subjectProtector, "subjectProtector");
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
-        if (sessionLifetime.isZero() || sessionLifetime.isNegative()) {
-            throw new IllegalArgumentException("sessionLifetime must be positive");
+        this.refreshTokenLifetime = Objects.requireNonNull(refreshTokenLifetime, "refreshTokenLifetime");
+        if (refreshTokenLifetime.isZero() || refreshTokenLifetime.isNegative()) {
+            throw new IllegalArgumentException("refreshTokenLifetime must be positive");
         }
-        if (maxActiveSessions < 1) {
-            throw new IllegalArgumentException("maxActiveSessions must be positive");
-        }
-        this.maxActiveSessions = maxActiveSessions;
         this.registrationQueries = null;
         this.oidcCommands = null;
         this.emailProtector = null;
@@ -63,10 +57,9 @@ public final class OidcAuthenticationService {
             OidcIdentityQueryPort queryPort,
             IdentityCommandPort commandPort,
             OidcSubjectProtector subjectProtector,
-            SessionTokenIssuer tokenIssuer,
+            RefreshTokenSecretIssuer tokenIssuer,
             Clock clock,
-            Duration sessionLifetime,
-            int maxActiveSessions,
+            Duration refreshTokenLifetime,
             RegistrationQueryPort registrationQueries,
             OidcIdentityCommandPort oidcCommands,
             EmailProtector emailProtector,
@@ -76,11 +69,10 @@ public final class OidcAuthenticationService {
         this.subjectProtector = Objects.requireNonNull(subjectProtector, "subjectProtector");
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
-        if (sessionLifetime.isZero() || sessionLifetime.isNegative() || maxActiveSessions < 1) {
-            throw new IllegalArgumentException("OIDC session configuration is invalid");
+        this.refreshTokenLifetime = Objects.requireNonNull(refreshTokenLifetime, "refreshTokenLifetime");
+        if (refreshTokenLifetime.isZero() || refreshTokenLifetime.isNegative()) {
+            throw new IllegalArgumentException("OIDC refresh-token configuration is invalid");
         }
-        this.maxActiveSessions = maxActiveSessions;
         this.registrationQueries = Objects.requireNonNull(registrationQueries, "registrationQueries");
         this.oidcCommands = Objects.requireNonNull(oidcCommands, "oidcCommands");
         this.emailProtector = Objects.requireNonNull(emailProtector, "emailProtector");
@@ -107,25 +99,25 @@ public final class OidcAuthenticationService {
         }
 
         var now = clock.instant();
-        var expiresAt = now.plus(sessionLifetime);
-        UUID sessionId = UUID.randomUUID();
-        SessionToken token = tokenIssuer.issue();
-        var session = new AuthenticationSession(
-                sessionId,
+        var expiresAt = now.plus(refreshTokenLifetime);
+        UUID familyId = UUID.randomUUID();
+        RefreshTokenSecret token = tokenIssuer.issue();
+        var family = new RefreshTokenFamily(
+                familyId,
                 account.accountId(),
                 account.loginIdentityId(),
                 account.authEpoch(),
                 null,
                 token.digest(),
-                command.deviceLabel(),
                 now,
                 expiresAt);
         commandPort.completeLogin(
-                session,
+                family,
                 new AuthenticationSuccess(
-                        account.accountId(), account.loginIdentityId(), command.correlationId(), now),
-                maxActiveSessions);
-        return new LoginResult(account.accountId(), sessionId, token.rawToken(), expiresAt);
+                        account.accountId(), account.loginIdentityId(), command.correlationId(), now));
+        return new LoginResult(
+                account.accountId(), account.loginIdentityId(), account.authEpoch(), null,
+                familyId, token.rawToken(), expiresAt);
     }
 
     private OidcLoginAccount registerNewAccount(

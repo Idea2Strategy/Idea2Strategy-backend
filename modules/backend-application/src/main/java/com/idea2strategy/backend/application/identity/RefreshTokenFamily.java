@@ -4,17 +4,16 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
-public record AuthenticationSession(
+public record RefreshTokenFamily(
         UUID id,
         UUID accountId,
         UUID loginIdentityId,
         long authEpoch,
         Long credentialVersion,
         String tokenDigest,
-        String deviceLabel,
         Instant issuedAt,
         Instant expiresAt) {
-    public AuthenticationSession {
+    public RefreshTokenFamily {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(accountId, "accountId");
         Objects.requireNonNull(loginIdentityId, "loginIdentityId");

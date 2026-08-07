@@ -16,7 +16,7 @@ import com.idea2strategy.backend.application.accountsanction.AccountSanctionStat
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
 import com.idea2strategy.backend.application.caseoperations.CaseResponseDeadlinePort;
 import com.idea2strategy.backend.application.delegation.DelegatedCredentialExpiryPort;
-import com.idea2strategy.backend.application.identity.SessionExpiryPort;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyExpiryPort;
 import com.idea2strategy.backend.persistence.notification.NotificationEmailWorker;
 import com.idea2strategy.backend.persistence.outbox.TransactionalOutboxStore;
 import java.time.Clock;
@@ -117,20 +117,20 @@ class DeadlineBatchBindingTest {
 
     @Test
     void sessionBindingDelegatesTheExactDueIdentityAndMapsReplay() {
-        SessionExpiryPort sessions = mock(SessionExpiryPort.class);
-        var identity = new SessionExpiryPort.Identity(id(30), id(31), NOW);
-        when(sessions.findDueSessions(20)).thenReturn(List.of(identity));
-        when(sessions.expire(any(), any())).thenReturn(SessionExpiryPort.Result.ALREADY_TRANSITIONED);
+        RefreshTokenFamilyExpiryPort sessions = mock(RefreshTokenFamilyExpiryPort.class);
+        var identity = new RefreshTokenFamilyExpiryPort.Identity(id(30), id(31), NOW);
+        when(sessions.findDueRefreshTokenFamilies(20)).thenReturn(List.of(identity));
+        when(sessions.expire(any(), any())).thenReturn(RefreshTokenFamilyExpiryPort.Result.ALREADY_TRANSITIONED);
         JdbcTemplate jdbc = databaseClock();
-        var port = new SessionExpiryBatchCategoryPort(sessions, jdbc);
+        var port = new RefreshTokenFamilyExpiryBatchCategoryPort(sessions, jdbc);
 
         var page = port.claimDue(request());
         var result = port.execute(page.items().getFirst(), id(32), id(33));
 
         assertThat(page.items()).singleElement().satisfies(item -> {
             assertThat(item.category()).isEqualTo(
-                    com.idea2strategy.backend.application.batch.BatchCategory.SESSION);
-            assertThat(item.idempotencyKey()).isEqualTo("session-expiry:" + id(31) + ":" + NOW);
+                    com.idea2strategy.backend.application.batch.BatchCategory.REFRESH_TOKEN_FAMILY);
+            assertThat(item.idempotencyKey()).isEqualTo("refresh-token-family-expiry:" + id(31) + ":" + NOW);
         });
         assertThat(result.status()).isEqualTo(BatchCategoryPort.ItemStatus.ALREADY_COMPLETED);
     }

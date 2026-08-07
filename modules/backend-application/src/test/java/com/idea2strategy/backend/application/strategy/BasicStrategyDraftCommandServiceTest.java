@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.testing.FixedIdGenerator;
 import com.idea2strategy.backend.application.testing.RecordingDomainEventPublisher;
-import com.idea2strategy.backend.application.testing.TestSessionPrincipal;
+import com.idea2strategy.backend.application.testing.TestCustomerAccessPrincipal;
 import com.idea2strategy.backend.domain.strategy.Strategy;
 import com.idea2strategy.backend.domain.strategy.StrategyCreated;
 import com.idea2strategy.backend.domain.strategy.StrategyDocument;
@@ -21,7 +21,6 @@ import org.junit.jupiter.api.Test;
 class BasicStrategyDraftCommandServiceTest {
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID STRATEGY_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
-    private static final UUID SESSION_ID = UUID.fromString("30000000-0000-4000-8000-000000000001");
     private static final Instant CREATED_AT = Instant.parse("2026-08-01T03:00:00Z");
     private static final String LEASE_TOKEN = "lease-token";
 
@@ -126,7 +125,7 @@ class BasicStrategyDraftCommandServiceTest {
                 repository,
                 repository,
                 repository,
-                new TestSessionPrincipal(OWNER_ID, SESSION_ID),
+                new TestCustomerAccessPrincipal(OWNER_ID),
                 new FixedIdGenerator(STRATEGY_ID),
                 java.time.Clock.fixed(CREATED_AT, ZoneOffset.UTC),
                 events);
@@ -136,7 +135,7 @@ class BasicStrategyDraftCommandServiceTest {
             implements BasicStrategyDraftCommandPort, StrategyQueryPort, StrategyDocumentQueryPort {
         private final Map<UUID, Strategy> strategies = new HashMap<>();
         private final Map<UUID, StrategyDocument> documents = new HashMap<>();
-        private UUID leaseSessionId;
+        private UUID leaseAccountId;
         private String leaseTokenDigest;
         private Instant leaseExpiresAt;
 
@@ -150,14 +149,14 @@ class BasicStrategyDraftCommandServiceTest {
         public StrategyDraftReplaceResult replaceDocument(
                 StrategyDocument document,
                 long expectedEditSequence,
-                UUID sessionId,
+                UUID accountId,
                 String tokenDigest,
                 Instant now) {
             StrategyDocument current = documents.get(document.strategyId());
             if (current == null || current.editSequence() != expectedEditSequence) {
                 return StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
             }
-            if (!sessionId.equals(leaseSessionId)
+            if (!accountId.equals(leaseAccountId)
                     || !tokenDigest.equals(leaseTokenDigest)
                     || leaseExpiresAt == null
                     || !leaseExpiresAt.isAfter(now)) {
@@ -179,13 +178,13 @@ class BasicStrategyDraftCommandServiceTest {
         }
 
         private void activateLease(String token) {
-            leaseSessionId = SESSION_ID;
+            leaseAccountId = OWNER_ID;
             leaseTokenDigest = StrategyEditLeaseTokens.sha256(token);
             leaseExpiresAt = CREATED_AT.plusSeconds(300);
         }
 
         private void releaseLease() {
-            leaseSessionId = null;
+            leaseAccountId = null;
             leaseTokenDigest = null;
             leaseExpiresAt = null;
         }

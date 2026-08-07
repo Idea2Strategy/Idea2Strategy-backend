@@ -3,6 +3,7 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.EmailAuthenticationService;
 import com.idea2strategy.backend.application.identity.EmailRegistrationService;
 import com.idea2strategy.backend.application.identity.LoginCommand;
+import com.idea2strategy.backend.application.identity.LoginResult;
 import com.idea2strategy.backend.application.identity.ResendVerificationCommand;
 import com.idea2strategy.backend.application.identity.SignupCommand;
 import com.idea2strategy.backend.application.identity.VerifyEmailCommand;
@@ -26,14 +27,14 @@ public class IdentityAuthController {
     private final EmailAuthenticationService authenticationService;
     private final VerificationDeliveryPort verificationDelivery;
     private final CustomerJwtCodec jwt;
-    private final RefreshSessionCookie refreshCookie;
+    private final RefreshTokenCookie refreshCookie;
 
     public IdentityAuthController(
             EmailRegistrationService registrationService,
             EmailAuthenticationService authenticationService,
             VerificationDeliveryPort verificationDelivery,
             CustomerJwtCodec jwt,
-            RefreshSessionCookie refreshCookie) {
+            RefreshTokenCookie refreshCookie) {
         this.registrationService = registrationService;
         this.authenticationService = authenticationService;
         this.verificationDelivery = verificationDelivery;
@@ -77,22 +78,28 @@ public class IdentityAuthController {
             @RequestBody LoginRequest request,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         var result = authenticationService.login(new LoginCommand(
-                request.email(), request.password(), request.deviceLabel(), correlation(correlationId)));
-        return tokenResponse(result.accountId(), result.sessionId(), result.sessionToken(), result.expiresAt());
+                request.email(), request.password(), correlation(correlationId)));
+        return tokenResponse(result);
     }
 
-    ResponseEntity<LoginResponse> tokenResponse(
-            UUID accountId, UUID sessionId, String sessionSecret, Instant refreshExpiresAt) {
-        String refreshJwt = jwt.issueRefresh(accountId, sessionId, sessionSecret, refreshExpiresAt);
+    ResponseEntity<LoginResponse> tokenResponse(LoginResult result) {
+        String refreshJwt = jwt.issueRefresh(
+                result.accountId(),
+                result.refreshTokenFamilyId(),
+                result.loginIdentityId(),
+                result.authEpoch(),
+                result.credentialVersion(),
+                result.refreshTokenSecret(),
+                result.expiresAt());
         var body = new LoginResponse(
-                accountId,
-                sessionId,
+                result.accountId(),
                 "Bearer",
-                jwt.issueAccess(accountId, sessionId),
+                jwt.issueAccess(
+                        result.accountId(), result.loginIdentityId(), result.authEpoch(), result.credentialVersion()),
                 jwt.accessExpiresAt(),
-                refreshExpiresAt);
+                result.expiresAt());
         return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, refreshCookie.issue(refreshJwt, refreshExpiresAt).toString())
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.issue(refreshJwt, result.expiresAt()).toString())
                 .body(body);
     }
 
@@ -135,7 +142,7 @@ public class IdentityAuthController {
 
     public record ResendVerificationResponse(boolean verificationRequired, Instant verificationExpiresAt) {}
 
-    public record LoginRequest(String email, String password, String deviceLabel) {
+    public record LoginRequest(String email, String password) {
         public LoginRequest {
             Objects.requireNonNull(email, "email");
             Objects.requireNonNull(password, "password");
@@ -143,20 +150,19 @@ public class IdentityAuthController {
 
         @Override
         public String toString() {
-            return "LoginRequest[credentials=REDACTED, deviceLabel=" + deviceLabel + "]";
+            return "LoginRequest[credentials=REDACTED]";
         }
     }
 
     public record LoginResponse(
             UUID accountId,
-            UUID sessionId,
             String tokenType,
             String accessToken,
             Instant accessExpiresAt,
             Instant refreshExpiresAt) {
         @Override
         public String toString() {
-            return "LoginResponse[accountId=" + accountId + ",sessionId=" + sessionId
+            return "LoginResponse[accountId=" + accountId
                     + ",tokenType=" + tokenType + ",accessToken=REDACTED"
                     + ",accessExpiresAt=" + accessExpiresAt + ",refreshExpiresAt=" + refreshExpiresAt + "]";
         }

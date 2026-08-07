@@ -11,7 +11,7 @@ public interface AccountAccessRevocationPort {
             UUID accountId,
             UUID sanctionId,
             boolean bumpAuthEpoch,
-            boolean revokeAllSessions,
+            boolean revokeAllCredentials,
             String reasonCode,
             UUID correlationId,
             Instant occurredAt) {

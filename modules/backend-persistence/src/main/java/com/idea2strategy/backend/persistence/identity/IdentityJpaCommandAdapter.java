@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.persistence.identity;
 
-import com.idea2strategy.backend.application.identity.AuthenticationSession;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamily;
 import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.ActivateOidcLink;
@@ -21,7 +21,7 @@ import com.idea2strategy.backend.application.identity.RecoveryCodeBatch;
 import com.idea2strategy.backend.application.identity.RecoveryCodeConsumption;
 import com.idea2strategy.backend.application.identity.RecoveryCodeOutcome;
 import com.idea2strategy.backend.application.identity.RegistrationCommandPort;
-import com.idea2strategy.backend.application.identity.SessionCommandPort;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyCommandPort;
 import com.idea2strategy.backend.application.identity.VerificationOutcome;
 import com.idea2strategy.backend.application.identity.VerificationReplacement;
 import jakarta.persistence.EntityManager;
@@ -39,7 +39,7 @@ public class IdentityJpaCommandAdapter
         implements RegistrationCommandPort,
                 IdentityCommandPort,
                 OidcIdentityCommandPort,
-                SessionCommandPort,
+                RefreshTokenFamilyCommandPort,
                 AccountRecoveryCommandPort {
     private final EntityManager entityManager;
 
@@ -344,24 +344,23 @@ public class IdentityJpaCommandAdapter
 
     @Override
     @Transactional
-    public void createSession(AuthenticationSession session) {
+    public void createRefreshTokenFamily(RefreshTokenFamily family) {
         entityManager.createNativeQuery("""
-                        insert into identity.sessions
+                        insert into identity.refresh_token_families
                             (id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue,
-                             credential_version_at_issue, token_digest, digest_key_version, device_label,
-                             issued_at, last_seen_at, expires_at)
+                             credential_version_at_issue, current_token_digest, digest_key_version,
+                             issued_at, last_rotated_at, expires_at)
                         values (:id, :accountId, :loginId, :authEpoch, :credentialVersion, :digest, 1,
-                                :deviceLabel, :issuedAt, :issuedAt, :expiresAt)
+                                :issuedAt, :issuedAt, :expiresAt)
                         """)
-                .setParameter("id", session.id())
-                .setParameter("accountId", session.accountId())
-                .setParameter("loginId", session.loginIdentityId())
-                .setParameter("authEpoch", session.authEpoch())
-                .setParameter("credentialVersion", session.credentialVersion())
-                .setParameter("digest", session.tokenDigest())
-                .setParameter("deviceLabel", session.deviceLabel())
-                .setParameter("issuedAt", utc(session.issuedAt()))
-                .setParameter("expiresAt", utc(session.expiresAt()))
+                .setParameter("id", family.id())
+                .setParameter("accountId", family.accountId())
+                .setParameter("loginId", family.loginIdentityId())
+                .setParameter("authEpoch", family.authEpoch())
+                .setParameter("credentialVersion", family.credentialVersion())
+                .setParameter("digest", family.tokenDigest())
+                .setParameter("issuedAt", utc(family.issuedAt()))
+                .setParameter("expiresAt", utc(family.expiresAt()))
                 .executeUpdate();
     }
 
@@ -453,65 +452,14 @@ public class IdentityJpaCommandAdapter
 
     @Override
     @Transactional
-    public void completeLogin(AuthenticationSession session, AuthenticationSuccess success) {
-        completeLogin(session, success, Integer.MAX_VALUE);
-    }
-
-    @Override
-    @Transactional
-    public void completeLogin(AuthenticationSession session, AuthenticationSuccess success, int maxActiveSessions) {
+    public void completeLogin(RefreshTokenFamily family, AuthenticationSuccess success) {
         entityManager.createNativeQuery("""
                         select account_id from identity.account_security_states
                         where account_id = :accountId for update
                         """)
-                .setParameter("accountId", session.accountId())
+                .setParameter("accountId", family.accountId())
                 .getSingleResult();
-        Number activeSessions = (Number) entityManager.createNativeQuery("""
-                        select count(*) from identity.sessions
-                        where account_id = :accountId and revoked_at is null and expires_at > :now
-                        """)
-                .setParameter("accountId", session.accountId())
-                .setParameter("now", utc(session.issuedAt()))
-                .getSingleResult();
-        int sessionsToReplace = activeSessions.intValue() - maxActiveSessions + 1;
-        if (sessionsToReplace > 0) {
-            List<?> oldestSessions = entityManager.createNativeQuery("""
-                            select id, authenticated_by_login_identity_id
-                            from identity.sessions
-                            where account_id = :accountId and revoked_at is null and expires_at > :now
-                            order by issued_at, id
-                            for update
-                            """)
-                    .setParameter("accountId", session.accountId())
-                    .setParameter("now", utc(session.issuedAt()))
-                    .setMaxResults(sessionsToReplace)
-                    .getResultList();
-            for (Object candidate : oldestSessions) {
-                Object[] row = (Object[]) candidate;
-                UUID replacedSessionId = (UUID) row[0];
-                UUID replacedLoginIdentityId = (UUID) row[1];
-                int revoked = entityManager.createNativeQuery("""
-                                update identity.sessions
-                                set revoked_at = :now, revoke_reason_code = 'SESSION_LIMIT_REPLACED'
-                                where id = :sessionId and account_id = :accountId and revoked_at is null
-                                """)
-                        .setParameter("now", utc(session.issuedAt()))
-                        .setParameter("sessionId", replacedSessionId)
-                        .setParameter("accountId", session.accountId())
-                        .executeUpdate();
-                if (revoked == 1) {
-                    insertSessionEvent(
-                            session.accountId(),
-                            replacedLoginIdentityId,
-                            replacedSessionId,
-                            "SESSION_REVOKED",
-                            "SESSION_LIMIT_REPLACED",
-                            success.correlationId(),
-                            utc(session.issuedAt()));
-                }
-            }
-        }
-        createSession(session);
+        createRefreshTokenFamily(family);
         recordLoginSuccess(success);
         Number activeSanctions = (Number) entityManager.createNativeQuery("""
                         select count(*) from identity.account_sanctions
@@ -519,7 +467,7 @@ public class IdentityJpaCommandAdapter
                           and status = cast('ACTIVE' as identity.sanction_status)
                           and sanction_type in ('SUSPENSION', 'PERMANENT')
                         """)
-                .setParameter("accountId", session.accountId())
+                .setParameter("accountId", family.accountId())
                 .getSingleResult();
         if (activeSanctions.longValue() > 0) {
             insertAuthenticationEvent(
@@ -536,17 +484,17 @@ public class IdentityJpaCommandAdapter
 
     @Override
     @Transactional
-    public boolean revoke(UUID accountId, UUID sessionId, String reason, UUID correlationId, Instant now) {
+    public boolean revoke(UUID accountId, UUID familyId, String reason, UUID correlationId, Instant now) {
         UUID loginIdentityId;
         try {
             loginIdentityId = (UUID) entityManager.createNativeQuery("""
                             select authenticated_by_login_identity_id
-                            from identity.sessions
-                            where id = :sessionId and account_id = :accountId
+                            from identity.refresh_token_families
+                            where id = :familyId and account_id = :accountId
                               and revoked_at is null and expires_at > :now
                             for update
                             """)
-                    .setParameter("sessionId", sessionId)
+                    .setParameter("familyId", familyId)
                     .setParameter("accountId", accountId)
                     .setParameter("now", utc(now))
                     .getSingleResult();
@@ -554,29 +502,29 @@ public class IdentityJpaCommandAdapter
             return false;
         }
         entityManager.createNativeQuery("""
-                        update identity.sessions
+                        update identity.refresh_token_families
                         set revoked_at = :now, revoke_reason_code = :reason
-                        where id = :sessionId and account_id = :accountId and revoked_at is null
+                        where id = :familyId and account_id = :accountId and revoked_at is null
                         """)
                 .setParameter("now", utc(now))
                 .setParameter("reason", reason)
-                .setParameter("sessionId", sessionId)
+                .setParameter("familyId", familyId)
                 .setParameter("accountId", accountId)
                 .executeUpdate();
-        insertSessionEvent(accountId, loginIdentityId, sessionId, "SESSION_REVOKED", reason, correlationId, utc(now));
+        insertRefreshTokenEvent(accountId, loginIdentityId, familyId, "REFRESH_TOKEN_REVOKED", reason, correlationId, utc(now));
         return true;
     }
 
     @Override
     @Transactional
-    public void touch(UUID accountId, UUID sessionId, Instant now) {
+    public void touch(UUID accountId, UUID familyId, Instant now) {
         entityManager.createNativeQuery("""
-                        update identity.sessions set last_seen_at = :now
-                        where id = :sessionId and account_id = :accountId
+                        update identity.refresh_token_families set last_rotated_at = :now
+                        where id = :familyId and account_id = :accountId
                           and revoked_at is null and expires_at > :now
                         """)
                 .setParameter("now", utc(now))
-                .setParameter("sessionId", sessionId)
+                .setParameter("familyId", familyId)
                 .setParameter("accountId", accountId)
                 .executeUpdate();
     }
@@ -586,42 +534,42 @@ public class IdentityJpaCommandAdapter
     public void recordEvent(
             UUID accountId,
             UUID loginIdentityId,
-            UUID sessionId,
+            UUID familyId,
             String eventType,
             String reason,
             UUID correlationId,
             Instant now) {
-        insertSessionEvent(accountId, loginIdentityId, sessionId, eventType, reason, correlationId, utc(now));
+        insertRefreshTokenEvent(accountId, loginIdentityId, familyId, eventType, reason, correlationId, utc(now));
     }
 
     @Override
     @Transactional
     public boolean rotate(
             UUID accountId,
-            UUID sessionId,
+            UUID familyId,
             String previousTokenDigest,
             String replacementTokenDigest,
             Instant expiresAt,
             UUID correlationId,
             Instant now) {
         int updated = entityManager.createNativeQuery("""
-                        update identity.sessions
-                        set token_digest = :replacementDigest, digest_key_version = 1,
-                            issued_at = :now, last_seen_at = :now, expires_at = :expiresAt
-                        where id = :sessionId and account_id = :accountId
-                          and token_digest = :previousDigest and revoked_at is null and expires_at > :now
+                        update identity.refresh_token_families
+                        set current_token_digest = :replacementDigest, digest_key_version = 1,
+                            last_rotated_at = :now, expires_at = :expiresAt
+                        where id = :familyId and account_id = :accountId
+                          and current_token_digest = :previousDigest and revoked_at is null and expires_at > :now
                         """)
                 .setParameter("replacementDigest", replacementTokenDigest)
                 .setParameter("previousDigest", previousTokenDigest)
                 .setParameter("now", utc(now))
                 .setParameter("expiresAt", utc(expiresAt))
-                .setParameter("sessionId", sessionId)
+                .setParameter("familyId", familyId)
                 .setParameter("accountId", accountId)
                 .executeUpdate();
         if (updated == 0) {
             return false;
         }
-        insertSessionEvent(accountId, null, sessionId, "SESSION_ROTATED", null, correlationId, utc(now));
+        insertRefreshTokenEvent(accountId, null, familyId, "REFRESH_TOKEN_ROTATED", null, correlationId, utc(now));
         return true;
     }
 
@@ -633,14 +581,14 @@ public class IdentityJpaCommandAdapter
                 .getSingleResult();
         entityManager.createNativeQuery("""
                         update identity.account_security_states
-                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        set auth_epoch = auth_epoch + 1, credentials_revoked_before = :now, updated_at = :now
                         where account_id = :accountId
                         """)
                 .setParameter("now", utc(now))
                 .setParameter("accountId", accountId)
                 .executeUpdate();
         int count = entityManager.createNativeQuery("""
-                        update identity.sessions
+                        update identity.refresh_token_families
                         set revoked_at = :now, revoke_reason_code = :reason
                         where account_id = :accountId and revoked_at is null and expires_at > :now
                         """)
@@ -648,7 +596,7 @@ public class IdentityJpaCommandAdapter
                 .setParameter("reason", reason)
                 .setParameter("accountId", accountId)
                 .executeUpdate();
-        insertSessionEvent(accountId, null, null, "SESSIONS_REVOKED", reason, correlationId, utc(now));
+        insertRefreshTokenEvent(accountId, null, null, "CREDENTIALS_REVOKED", reason, correlationId, utc(now));
         return count;
     }
 
@@ -762,14 +710,14 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
         entityManager.createNativeQuery("""
                         update identity.account_security_states
-                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        set auth_epoch = auth_epoch + 1, credentials_revoked_before = :now, updated_at = :now
                         where account_id = :accountId
                         """)
                 .setParameter("now", now)
                 .setParameter("accountId", command.accountId())
                 .executeUpdate();
         entityManager.createNativeQuery("""
-                        update identity.sessions
+                        update identity.refresh_token_families
                         set revoked_at = coalesce(revoked_at, :now),
                             revoke_reason_code = coalesce(revoke_reason_code, 'LOGIN_IDENTITY_REPLACED')
                         where account_id = :accountId and revoked_at is null
@@ -987,7 +935,7 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
         entityManager.createNativeQuery("""
                         update identity.account_security_states
-                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        set auth_epoch = auth_epoch + 1, credentials_revoked_before = :now, updated_at = :now
                         where account_id = :accountId
                         """)
                 .setParameter("now", now)
@@ -1007,7 +955,7 @@ public class IdentityJpaCommandAdapter
                 .setParameter("id", requestId)
                 .executeUpdate();
         entityManager.createNativeQuery("""
-                        update identity.sessions
+                        update identity.refresh_token_families
                         set revoked_at = :now, revoke_reason_code = 'PASSWORD_RESET'
                         where account_id = :accountId and revoked_at is null
                         """)
@@ -1127,14 +1075,14 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
         entityManager.createNativeQuery("""
                         update identity.account_security_states
-                        set auth_epoch = auth_epoch + 1, sessions_revoked_before = :now, updated_at = :now
+                        set auth_epoch = auth_epoch + 1, credentials_revoked_before = :now, updated_at = :now
                         where account_id = :accountId
                         """)
                 .setParameter("now", now)
                 .setParameter("accountId", consumption.accountId())
                 .executeUpdate();
         entityManager.createNativeQuery("""
-                        update identity.sessions set revoked_at = :now, revoke_reason_code = 'RECOVERY_CODE_USED'
+                        update identity.refresh_token_families set revoked_at = :now, revoke_reason_code = 'RECOVERY_CODE_USED'
                         where account_id = :accountId and revoked_at is null
                         """)
                 .setParameter("now", now)
@@ -1360,10 +1308,10 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
     }
 
-    private void insertSessionEvent(
+    private void insertRefreshTokenEvent(
             UUID accountId,
             UUID loginIdentityId,
-            UUID sessionId,
+            UUID familyId,
             String eventType,
             String reason,
             UUID correlationId,
@@ -1387,7 +1335,7 @@ public class IdentityJpaCommandAdapter
                 .setParameter("eventType", eventType)
                 .setParameter("reason", reason)
                 .setParameter("correlationId", correlationId)
-                .setParameter("idempotencyKey", "session:" + eventType + ":" + sessionId + ":" + correlationId)
+                .setParameter("idempotencyKey", "refresh-token-family:" + eventType + ":" + familyId + ":" + correlationId)
                 .setParameter("occurredAt", occurredAt)
                 .executeUpdate();
     }

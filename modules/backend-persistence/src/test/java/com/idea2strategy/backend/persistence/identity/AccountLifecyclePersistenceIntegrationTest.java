@@ -190,7 +190,7 @@ class AccountLifecyclePersistenceIntegrationTest {
                         "select auth_epoch from identity.account_security_states where account_id = ?",
                         Long.class, accountId))
                 .isEqualTo(2L);
-        assertThat(jdbc.queryForMap("select revoked_at, revoke_reason_code from identity.sessions where id = ?", sessionId))
+        assertThat(jdbc.queryForMap("select revoked_at, revoke_reason_code from identity.refresh_token_families where id = ?", sessionId))
                 .containsEntry("revoke_reason_code", "ACCOUNT_DORMANT")
                 .satisfies(row -> assertThat(row.get("revoked_at")).isNotNull());
     }
@@ -276,11 +276,12 @@ class AccountLifecyclePersistenceIntegrationTest {
                 values (?, ?, ?, cast('ACTIVE' as identity.login_identity_status), ?, ?)
                 """, loginId, accountId, providerId, utc(NOW.minusSeconds(600)), utc(NOW.minusSeconds(60)));
         jdbc.update("""
-                insert into identity.sessions
+                insert into identity.refresh_token_families
                     (id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue,
-                     token_digest, digest_key_version, last_seen_at, expires_at)
-                values (?, ?, ?, 1, ?, 1, ?, ?)
-                """, sessionId, accountId, loginId, "token:" + sessionId, utc(NOW), utc(NOW.plusSeconds(3600)));
+                     current_token_digest, digest_key_version, issued_at, last_rotated_at, expires_at)
+                values (?, ?, ?, 1, ?, 1, ?, ?, ?)
+                """, sessionId, accountId, loginId, "token:" + sessionId,
+                utc(NOW), utc(NOW), utc(NOW.plusSeconds(3600)));
         return sessionId;
     }
 

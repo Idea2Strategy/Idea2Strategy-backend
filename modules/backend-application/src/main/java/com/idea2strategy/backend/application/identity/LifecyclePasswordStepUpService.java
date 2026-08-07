@@ -4,7 +4,7 @@ import java.time.Clock;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Performs a credential check for account lifecycle commands without issuing a session. */
+/** Performs a credential check for account lifecycle commands without issuing access or refresh JWTs. */
 public final class LifecyclePasswordStepUpService {
     private static final String INVALID_CREDENTIALS = "Invalid email or password";
 

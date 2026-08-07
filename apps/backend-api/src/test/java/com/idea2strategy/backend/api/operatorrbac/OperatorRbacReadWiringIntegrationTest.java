@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.api.BackendApiApplication;
 import com.idea2strategy.backend.application.operatorrbac.CurrentOperatorRbacContext;
-import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
+import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.support.AopUtils;
@@ -54,10 +54,9 @@ class OperatorRbacReadWiringIntegrationTest {
             return Optional::empty;
         }
 
-        @Bean CurrentSessionPrincipal currentSessionPrincipal() {
-            return new CurrentSessionPrincipal() {
+        @Bean CurrentPrincipal currentPrincipal() {
+            return new CurrentPrincipal() {
                 @Override public java.util.UUID accountId() { return new java.util.UUID(0, 1); }
-                @Override public java.util.UUID sessionId() { return new java.util.UUID(0, 2); }
             };
         }
     }

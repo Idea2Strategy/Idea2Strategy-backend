@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.application.strategy;
 
-import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
+import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.common.DomainEventPublisher;
 import com.idea2strategy.backend.application.common.IdGenerator;
 import com.idea2strategy.backend.domain.strategy.Strategy;
@@ -23,7 +23,7 @@ public final class BasicStrategyDraftCommandService {
     private final BasicStrategyDraftCommandPort commandPort;
     private final StrategyQueryPort strategyQueryPort;
     private final StrategyDocumentQueryPort documentQueryPort;
-    private final CurrentSessionPrincipal principal;
+    private final CurrentPrincipal principal;
     private final IdGenerator idGenerator;
     private final Clock clock;
     private final DomainEventPublisher eventPublisher;
@@ -32,7 +32,7 @@ public final class BasicStrategyDraftCommandService {
             BasicStrategyDraftCommandPort commandPort,
             StrategyQueryPort strategyQueryPort,
             StrategyDocumentQueryPort documentQueryPort,
-            CurrentSessionPrincipal principal,
+            CurrentPrincipal principal,
             IdGenerator idGenerator,
             Clock clock,
             DomainEventPublisher eventPublisher) {
@@ -135,7 +135,7 @@ public final class BasicStrategyDraftCommandService {
         StrategyDraftReplaceResult result = commandPort.replaceDocument(
                 replacement,
                 expectedEditSequence,
-                principal.sessionId(),
+                principal.accountId(),
                 StrategyEditLeaseTokens.sha256(leaseToken),
                 now);
         if (result == StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE) {

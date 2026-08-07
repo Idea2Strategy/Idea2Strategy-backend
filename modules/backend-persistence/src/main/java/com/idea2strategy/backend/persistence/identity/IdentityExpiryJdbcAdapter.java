@@ -2,7 +2,7 @@ package com.idea2strategy.backend.persistence.identity;
 
 import com.idea2strategy.backend.application.delegation.DelegatedCredentialExpiryPort;
 import com.idea2strategy.backend.application.delegation.DelegatedCredentialExpiryPort.Kind;
-import com.idea2strategy.backend.application.identity.SessionExpiryPort;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyExpiryPort;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -13,8 +13,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** PostgreSQL DB-clock expiry transitions shared by backend-batch workers. */
-public class IdentityExpiryJdbcAdapter implements SessionExpiryPort, DelegatedCredentialExpiryPort {
-    private static final String SESSION_REASON = "SESSION_EXPIRED";
+public class IdentityExpiryJdbcAdapter implements RefreshTokenFamilyExpiryPort, DelegatedCredentialExpiryPort {
+    private static final String REFRESH_TOKEN_REASON = "REFRESH_TOKEN_EXPIRED";
     private static final String DELEGATED_REASON = "DELEGATED_CREDENTIAL_EXPIRED";
 
     private final JdbcTemplate jdbc;
@@ -26,26 +26,26 @@ public class IdentityExpiryJdbcAdapter implements SessionExpiryPort, DelegatedCr
     }
 
     @Override
-    public List<SessionExpiryPort.Identity> findDueSessions(int limit) {
+    public List<RefreshTokenFamilyExpiryPort.Identity> findDueRefreshTokenFamilies(int limit) {
         requireLimit(limit);
         return jdbc.query("""
                 select account_id, id, expires_at
-                  from identity.sessions
+                  from identity.refresh_token_families
                  where revoked_at is null
                    and expires_at <= clock_timestamp()
                  order by expires_at, id
                  limit ?
-                """, (rs, row) -> new SessionExpiryPort.Identity(
+                """, (rs, row) -> new RefreshTokenFamilyExpiryPort.Identity(
                 rs.getObject("account_id", UUID.class),
                 rs.getObject("id", UUID.class),
                 rs.getTimestamp("expires_at").toInstant()), limit);
     }
 
     @Override
-    public SessionExpiryPort.Result expire(SessionExpiryPort.Identity identity, UUID correlationId) {
+    public RefreshTokenFamilyExpiryPort.Result expire(RefreshTokenFamilyExpiryPort.Identity identity, UUID correlationId) {
         Objects.requireNonNull(identity, "identity");
         Objects.requireNonNull(correlationId, "correlationId");
-        return transactions.execute(status -> expireSession(identity, correlationId));
+        return transactions.execute(status -> expireRefreshTokenFamily(identity, correlationId));
     }
 
     @Override
@@ -88,21 +88,21 @@ public class IdentityExpiryJdbcAdapter implements SessionExpiryPort, DelegatedCr
         return transactions.execute(status -> expireDelegatedCredential(identity, correlationId));
     }
 
-    private SessionExpiryPort.Result expireSession(
-            SessionExpiryPort.Identity identity, UUID correlationId) {
+    private RefreshTokenFamilyExpiryPort.Result expireRefreshTokenFamily(
+            RefreshTokenFamilyExpiryPort.Identity identity, UUID correlationId) {
         jdbc.queryForObject("select id from identity.accounts where id = ? for update",
                 UUID.class, identity.accountId());
         Instant now = databaseNow();
         int updated = jdbc.update("""
-                update identity.sessions
+                update identity.refresh_token_families
                    set revoked_at = ?, revoke_reason_code = ?
                  where id = ? and account_id = ? and expires_at = ?
                    and revoked_at is null and expires_at <= ?
-                """, Timestamp.from(now), SESSION_REASON, identity.sessionId(), identity.accountId(),
+                """, Timestamp.from(now), REFRESH_TOKEN_REASON, identity.familyId(), identity.accountId(),
                 Timestamp.from(identity.expiresAt()), Timestamp.from(now));
-        if (updated == 0) return SessionExpiryPort.Result.ALREADY_TRANSITIONED;
+        if (updated == 0) return RefreshTokenFamilyExpiryPort.Result.ALREADY_TRANSITIONED;
 
-        String idempotencyKey = "session-expiry:" + identity.sessionId() + ":" + identity.expiresAt();
+        String idempotencyKey = "refresh-token-family-expiry:" + identity.familyId() + ":" + identity.expiresAt();
         jdbc.update("""
                 insert into identity.authentication_events
                     (id, account_id, event_sequence, event_type, actor_type, reason_code,
@@ -110,11 +110,11 @@ public class IdentityExpiryJdbcAdapter implements SessionExpiryPort, DelegatedCr
                 values (?, ?,
                     (select coalesce(max(event_sequence), 0) + 1
                        from identity.authentication_events where account_id = ?),
-                    'SESSION_EXPIRED', 'SYSTEM', ?, ?, ?, ?)
+                    'REFRESH_TOKEN_EXPIRED', 'SYSTEM', ?, ?, ?, ?)
                 on conflict (account_id, idempotency_key) do nothing
-                """, UUID.randomUUID(), identity.accountId(), identity.accountId(), SESSION_REASON,
+                """, UUID.randomUUID(), identity.accountId(), identity.accountId(), REFRESH_TOKEN_REASON,
                 correlationId, idempotencyKey, Timestamp.from(now));
-        return SessionExpiryPort.Result.APPLIED;
+        return RefreshTokenFamilyExpiryPort.Result.APPLIED;
     }
 
     private DelegatedCredentialExpiryPort.Result expireDelegatedCredential(

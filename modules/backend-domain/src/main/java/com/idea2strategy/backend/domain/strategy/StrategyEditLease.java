@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 
 public record StrategyEditLease(
         UUID strategyId,
-        UUID sessionId,
+        UUID accountId,
         String tokenDigest,
         short digestKeyVersion,
         Instant acquiredAt,
@@ -17,7 +17,7 @@ public record StrategyEditLease(
 
     public StrategyEditLease {
         Objects.requireNonNull(strategyId, "strategyId");
-        Objects.requireNonNull(sessionId, "sessionId");
+        Objects.requireNonNull(accountId, "accountId");
         Objects.requireNonNull(tokenDigest, "tokenDigest");
         Objects.requireNonNull(acquiredAt, "acquiredAt");
         Objects.requireNonNull(heartbeatAt, "heartbeatAt");
@@ -36,7 +36,7 @@ public record StrategyEditLease(
     public StrategyEditLease heartbeat(Instant nextHeartbeatAt, Instant nextExpiresAt) {
         return new StrategyEditLease(
                 strategyId,
-                sessionId,
+                accountId,
                 tokenDigest,
                 digestKeyVersion,
                 acquiredAt,

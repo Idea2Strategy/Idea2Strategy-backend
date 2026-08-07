@@ -36,7 +36,7 @@ class DeadlineBatchOrchestratorTest {
         sanction.results.put("completed", ItemResult.completed());
         sanction.results.put("retry", ItemResult.retryable("TEMPORARY_PROVIDER_FAILURE"));
         sanction.results.put("dead", ItemResult.permanent("UNSUPPORTED_PAYLOAD"));
-        var session = new FakePort(BatchCategory.SESSION, List.of());
+        var session = new FakePort(BatchCategory.REFRESH_TOKEN_FAMILY, List.of());
         session.claimFailure = new IllegalStateException("SESSION_QUERY_FAILED");
         var delegated = new FakePort(BatchCategory.DELEGATED_TOKEN,
                 List.of(item(BatchCategory.DELEGATED_TOKEN, "done-before", "k4")));
@@ -72,15 +72,15 @@ class DeadlineBatchOrchestratorTest {
 
     @Test
     void durableCategoryIdempotencyTurnsReplayIntoAlreadyCompleted() {
-        var port = new FakePort(BatchCategory.SESSION,
-                List.of(item(BatchCategory.SESSION, "session-1", "same-command")));
+        var port = new FakePort(BatchCategory.REFRESH_TOKEN_FAMILY,
+                List.of(item(BatchCategory.REFRESH_TOKEN_FAMILY, "session-1", "same-command")));
         port.durableIdempotency = true;
         var evidence = new ArrayList<DeadlineBatchOrchestrator.RunSummary>();
         var orchestrator = new DeadlineBatchOrchestrator(
                 List.of(port), ignored -> {}, evidence::add, 5);
 
-        var first = orchestrator.run(command(Set.of(BatchCategory.SESSION), 1));
-        var replay = orchestrator.run(command(Set.of(BatchCategory.SESSION), 1));
+        var first = orchestrator.run(command(Set.of(BatchCategory.REFRESH_TOKEN_FAMILY), 1));
+        var replay = orchestrator.run(command(Set.of(BatchCategory.REFRESH_TOKEN_FAMILY), 1));
 
         assertThat(first.completed()).isEqualTo(1);
         assertThat(replay.alreadyCompleted()).isEqualTo(1);

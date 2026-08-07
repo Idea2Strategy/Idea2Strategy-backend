@@ -150,7 +150,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
             createClosureArtifacts(accountId, eventId, retentionPolicyVersion, occurredAt);
         }
 
-        if (invalidatesSessions(applied.status())) {
+        if (invalidatesCredentials(applied.status())) {
             insertAccessRevokedOutbox(
                     accountId,
                     nextVersion,
@@ -159,7 +159,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                     applied.status(),
                     eventId,
                     occurredAt);
-            invalidateSessions(accountId, applied.reasonCode(), occurredAt);
+            invalidateCredentials(accountId, applied.reasonCode(), occurredAt);
         }
         AccountLifecycleResult result = AccountLifecycleResult.applied(applied.applyTo(account.snapshot()));
         insertReceipt(
@@ -280,11 +280,11 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
         }
     }
 
-    private void invalidateSessions(UUID accountId, String reasonCode, OffsetDateTime occurredAt) {
+    private void invalidateCredentials(UUID accountId, String reasonCode, OffsetDateTime occurredAt) {
         int securityUpdates = entityManager.createNativeQuery("""
                         update identity.account_security_states
                         set auth_epoch = auth_epoch + 1,
-                            sessions_revoked_before = :occurredAt,
+                            credentials_revoked_before = :occurredAt,
                             updated_at = :occurredAt
                         where account_id = :accountId
                         """)
@@ -295,7 +295,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
             throw new IllegalStateException("Account security state is missing");
         }
         entityManager.createNativeQuery("""
-                        update identity.sessions
+                        update identity.refresh_token_families
                         set revoked_at = :occurredAt, revoke_reason_code = :reasonCode
                         where account_id = :accountId and revoked_at is null
                         """)
@@ -340,7 +340,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
                 .executeUpdate();
     }
 
-    private static boolean invalidatesSessions(AccountLifecycleStatus status) {
+    private static boolean invalidatesCredentials(AccountLifecycleStatus status) {
         return status == AccountLifecycleStatus.CLOSING
                 || status == AccountLifecycleStatus.DORMANT
                 || status == AccountLifecycleStatus.CLOSED;

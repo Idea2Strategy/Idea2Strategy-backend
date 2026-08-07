@@ -101,17 +101,17 @@ public class AccountSanctionJdbcAdapter implements
         if (effect.bumpAuthEpoch()) {
             jdbc.update("""
                     insert into identity.account_security_states
-                        (account_id, auth_epoch, sessions_revoked_before, updated_at)
+                        (account_id, auth_epoch, credentials_revoked_before, updated_at)
                     values (?, 2, ?, ?)
                     on conflict (account_id) do update
                     set auth_epoch = identity.account_security_states.auth_epoch + 1,
-                        sessions_revoked_before = excluded.sessions_revoked_before,
+                        credentials_revoked_before = excluded.credentials_revoked_before,
                         updated_at = excluded.updated_at
                     """, effect.accountId(), Timestamp.from(effect.occurredAt()), Timestamp.from(effect.occurredAt()));
         }
-        if (effect.revokeAllSessions()) {
+        if (effect.revokeAllCredentials()) {
             jdbc.update("""
-                    update identity.sessions
+                    update identity.refresh_token_families
                     set revoked_at = ?, revoke_reason_code = ?
                     where account_id = ? and revoked_at is null
                     """, Timestamp.from(effect.occurredAt()), effect.reasonCode(), effect.accountId());

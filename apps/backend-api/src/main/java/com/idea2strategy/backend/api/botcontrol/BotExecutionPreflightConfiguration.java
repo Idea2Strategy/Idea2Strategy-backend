@@ -17,8 +17,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key",
-        "identity.crypto.customer-jwt-signing-key"})
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.customer-jwt-signing-key"})
 @Import({
     BotExecutionPreflightJooqQueryAdapter.class,
     BotContinuationJooqAdapter.class,

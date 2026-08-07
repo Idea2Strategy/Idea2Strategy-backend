@@ -38,7 +38,7 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
     public StrategyDraftReplaceResult replaceDocument(
             StrategyDocument document,
             long expectedEditSequence,
-            UUID sessionId,
+            UUID accountId,
             String leaseTokenDigest,
             Instant now) {
         int updated = jdbcTemplate.update(
@@ -58,7 +58,7 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                        select 1
                          from strategy.strategy_edit_leases lease
                         where lease.strategy_id = document.strategy_id
-                          and lease.session_id = ?
+                          and lease.account_id = ?
                           and lease.lease_token_digest = ?
                           and lease.expires_at > ?
                    )
@@ -73,7 +73,7 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                 document.updatedAt().atOffset(ZoneOffset.UTC),
                 document.strategyId(),
                 expectedEditSequence,
-                sessionId,
+                accountId,
                 leaseTokenDigest,
                 now.atOffset(ZoneOffset.UTC));
         if (updated == 1) {

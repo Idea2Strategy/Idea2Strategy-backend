@@ -3,7 +3,7 @@ package com.idea2strategy.backend.persistence.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.application.delegation.DelegatedCredentialExpiryPort;
-import com.idea2strategy.backend.application.identity.SessionExpiryPort;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyExpiryPort;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -60,7 +60,7 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
     @BeforeEach
     void prepare() {
         jdbc.update("delete from identity.authentication_events where account_id = ?", ACCOUNT);
-        jdbc.update("delete from identity.sessions where account_id = ?", ACCOUNT);
+        jdbc.update("delete from identity.refresh_token_families where account_id = ?", ACCOUNT);
         jdbc.update("delete from identity.login_identities where account_id = ?", ACCOUNT);
         jdbc.update("delete from identity.auth_providers where id = 21001");
         jdbc.update("delete from identity.delegated_authorization_events where authorization_id = ?", AUTHORIZATION);
@@ -76,9 +76,9 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
         jdbc.update("insert into identity.login_identities "
                 + "(id, account_id, provider_id, status, activated_at) values (?, ?, 21001, 'ACTIVE', ?)",
                 PROVIDER, ACCOUNT, at);
-        jdbc.update("insert into identity.sessions "
-                + "(id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue, token_digest, "
-                + "digest_key_version, issued_at, last_seen_at, expires_at) "
+        jdbc.update("insert into identity.refresh_token_families "
+                + "(id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue, current_token_digest, "
+                + "digest_key_version, issued_at, last_rotated_at, expires_at) "
                 + "values (?, ?, ?, 1, ?, 1, ?, ?, ?)",
                 SESSION, ACCOUNT, PROVIDER, "session-" + SESSION, at, at, EXPIRES_AT.atOffset(ZoneOffset.UTC));
 
@@ -105,22 +105,22 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
 
     @Test
     void concurrentSessionExpiryHasOneTransitionAndOneAuditEvent() throws Exception {
-        SessionExpiryPort.Identity due = adapter.findDueSessions(10).getFirst();
-        List<SessionExpiryPort.Result> results = concurrently(() ->
+        RefreshTokenFamilyExpiryPort.Identity due = adapter.findDueRefreshTokenFamilies(10).getFirst();
+        List<RefreshTokenFamilyExpiryPort.Result> results = concurrently(() ->
                 adapter.expire(due, UUID.randomUUID()));
 
         assertThat(results).containsExactlyInAnyOrder(
-                SessionExpiryPort.Result.APPLIED, SessionExpiryPort.Result.ALREADY_TRANSITIONED);
+                RefreshTokenFamilyExpiryPort.Result.APPLIED, RefreshTokenFamilyExpiryPort.Result.ALREADY_TRANSITIONED);
         assertThat(count("select count(*) from identity.authentication_events "
-                + "where account_id = ? and event_type = 'SESSION_EXPIRED'", ACCOUNT)).isOne();
-        assertThat(text("select revoke_reason_code from identity.sessions where id = ?", SESSION))
-                .isEqualTo("SESSION_EXPIRED");
-        assertThat(adapter.findDueSessions(10)).isEmpty();
+                + "where account_id = ? and event_type = 'REFRESH_TOKEN_EXPIRED'", ACCOUNT)).isOne();
+        assertThat(text("select revoke_reason_code from identity.refresh_token_families where id = ?", SESSION))
+                .isEqualTo("REFRESH_TOKEN_EXPIRED");
+        assertThat(adapter.findDueRefreshTokenFamilies(10)).isEmpty();
     }
 
     @Test
     void normalAuthenticationAndExpirySerializeTheSameAccountEventSequence() throws Exception {
-        SessionExpiryPort.Identity due = adapter.findDueSessions(10).getFirst();
+        RefreshTokenFamilyExpiryPort.Identity due = adapter.findDueRefreshTokenFamilies(10).getFirst();
         try (var executor = Executors.newFixedThreadPool(2)) {
             var futures = executor.invokeAll(List.of(
                     () -> adapter.expire(due, UUID.randomUUID()).name(),

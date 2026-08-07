@@ -63,36 +63,37 @@ class IdentityAuthControllerTest {
     }
 
     @Test
-    void loginReturnsSignedAccessAndRefreshJwtsWithoutExposingTheOpaqueSessionToken() {
+    void loginReturnsSignedAccessAndRefreshJwtsWithoutExposingTheRefreshSecret() {
         var registration = mock(EmailRegistrationService.class);
         var authentication = mock(EmailAuthenticationService.class);
         var delivery = mock(VerificationDeliveryPort.class);
         UUID accountId = UUID.randomUUID();
-        UUID sessionId = UUID.randomUUID();
+        UUID loginIdentityId = UUID.randomUUID();
+        UUID familyId = UUID.randomUUID();
         Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
         when(authentication.login(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(new LoginResult(accountId, sessionId, "opaque-session-token", expiresAt));
+                .thenReturn(new LoginResult(accountId, loginIdentityId, 2, 5L,
+                        familyId, "opaque-refresh-secret", expiresAt));
         var controller = new IdentityAuthController(registration, authentication, delivery, jwt(), cookies());
 
         var response = controller.login(
-                new IdentityAuthController.LoginRequest("person@example.com", "a sufficiently long passphrase", "Chrome"),
+                new IdentityAuthController.LoginRequest("person@example.com", "a sufficiently long passphrase"),
                 UUID.randomUUID().toString());
 
         var body = response.getBody();
         assertThat(body.accountId()).isEqualTo(accountId);
-        assertThat(body.sessionId()).isEqualTo(sessionId);
         assertThat(body.tokenType()).isEqualTo("Bearer");
         assertThat(body.accessToken()).hasSizeGreaterThan(100).contains(".");
-        assertThat(body.accessToken()).doesNotContain("opaque-session-token");
+        assertThat(body.accessToken()).doesNotContain("opaque-refresh-secret");
         assertThat(jwt().verifyAccess(body.accessToken()).accountId()).isEqualTo(accountId);
         assertThat(response.getHeaders().getFirst(org.springframework.http.HttpHeaders.SET_COOKIE))
                 .contains("i2s_refresh=")
                 .contains("HttpOnly")
                 .contains("Secure")
                 .contains("SameSite=Strict")
-                .doesNotContain("opaque-session-token");
+                .doesNotContain("opaque-refresh-secret");
         assertThat(body.toString()).doesNotContain("a sufficiently long passphrase");
-        assertThat(body.toString()).doesNotContain("opaque-session-token");
+        assertThat(body.toString()).doesNotContain("opaque-refresh-secret");
     }
 
     @Test
@@ -126,8 +127,8 @@ class IdentityAuthControllerTest {
                 Duration.ofMinutes(5));
     }
 
-    private static RefreshSessionCookie cookies() {
-        return new RefreshSessionCookie(
+    private static RefreshTokenCookie cookies() {
+        return new RefreshTokenCookie(
                 Clock.fixed(Instant.parse("2026-08-02T00:00:00Z"), ZoneOffset.UTC),
                 true,
                 "Strict");

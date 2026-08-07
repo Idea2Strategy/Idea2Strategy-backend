@@ -27,7 +27,7 @@ import com.idea2strategy.backend.application.testing.FakeTradingBotAdapter;
 import com.idea2strategy.backend.application.testing.FixedIdGenerator;
 import com.idea2strategy.backend.application.testing.RecordingDomainEventPublisher;
 import com.idea2strategy.backend.application.testing.TestPrincipal;
-import com.idea2strategy.backend.application.testing.TestSessionPrincipal;
+import com.idea2strategy.backend.application.testing.TestCustomerAccessPrincipal;
 import com.idea2strategy.backend.domain.botcontrol.BotLifecycleStatus;
 import com.idea2strategy.backend.domain.strategy.CompiledFlowPlan;
 import com.idea2strategy.backend.domain.strategy.ElementCatalogVersion;
@@ -53,7 +53,6 @@ import org.junit.jupiter.api.Test;
 
 class StrategyBotIndependentE2ETest {
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000027");
-    private static final UUID SESSION_ID = UUID.fromString("11000000-0000-4000-8000-000000000027");
     private static final UUID STRATEGY_ID = UUID.fromString("20000000-0000-4000-8000-000000000027");
     private static final UUID VALIDATION_ID = UUID.fromString("30000000-0000-4000-8000-000000000027");
     private static final UUID PLAN_ID = UUID.fromString("40000000-0000-4000-8000-000000000027");
@@ -79,7 +78,7 @@ class StrategyBotIndependentE2ETest {
                 repository,
                 repository,
                 repository,
-                new TestSessionPrincipal(OWNER_ID, SESSION_ID),
+                new TestCustomerAccessPrincipal(OWNER_ID),
                 new FixedIdGenerator(STRATEGY_ID),
                 clock,
                 new RecordingDomainEventPublisher());
@@ -255,14 +254,14 @@ class StrategyBotIndependentE2ETest {
         public StrategyDraftReplaceResult replaceDocument(
                 StrategyDocument document,
                 long expectedEditSequence,
-                UUID sessionId,
+                UUID accountId,
                 String tokenDigest,
                 Instant now) {
             StrategyDocument current = documents.get(document.strategyId());
             if (current.editSequence() != expectedEditSequence) {
                 return StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
             }
-            if (!SESSION_ID.equals(sessionId) || !leaseDigest.equals(tokenDigest)) {
+            if (!OWNER_ID.equals(accountId) || !leaseDigest.equals(tokenDigest)) {
                 return StrategyDraftReplaceResult.INVALID_LEASE;
             }
             documents.put(document.strategyId(), document);

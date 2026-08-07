@@ -1,32 +1,32 @@
 package com.idea2strategy.backend.api.identity;
 
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
-import com.idea2strategy.backend.application.identity.AuthenticatedSession;
+import com.idea2strategy.backend.application.identity.AuthenticatedCustomer;
 import com.idea2strategy.backend.application.identity.CustomerAccessScope;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.application.identity.CustomerAccessValidationService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.EnumMap;
 import java.util.Objects;
 import java.util.UUID;
 
 /** Resolves the current customer principal from a locally verified short-lived access JWT. */
-public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
+public class JwtCustomerAccessPrincipal implements CustomerAccessPrincipal {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final HttpServletRequest request;
     private final CustomerJwtCodec jwt;
-    private final SessionManagementService sessions;
-    private final EnumMap<CustomerAccessScope, AuthenticatedSession> authenticated =
+    private final CustomerAccessValidationService validation;
+    private final EnumMap<CustomerAccessScope, AuthenticatedCustomer> authenticated =
             new EnumMap<>(CustomerAccessScope.class);
     private CustomerJwtCodec.AccessClaims claims;
 
-    public BearerSessionCurrentPrincipal(
+    public JwtCustomerAccessPrincipal(
             HttpServletRequest request,
             CustomerJwtCodec jwt,
-            SessionManagementService sessions) {
+            CustomerAccessValidationService validation) {
         this.request = Objects.requireNonNull(request, "request");
         this.jwt = Objects.requireNonNull(jwt, "jwt");
-        this.sessions = Objects.requireNonNull(sessions, "sessions");
+        this.validation = Objects.requireNonNull(validation, "validation");
     }
 
     @Override
@@ -41,21 +41,20 @@ public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
     }
 
     @Override
-    public UUID sessionId() {
-        return authenticate(CustomerAccessScope.STANDARD).sessionId();
-    }
-
-    @Override
     public boolean activeSanction() {
         return authenticate(CustomerAccessScope.APPEAL).activeSanction();
     }
 
-    private AuthenticatedSession authenticate(CustomerAccessScope accessScope) {
+    private AuthenticatedCustomer authenticate(CustomerAccessScope accessScope) {
         Objects.requireNonNull(accessScope, "accessScope");
         return authenticated.computeIfAbsent(accessScope, ignored -> {
             var resolved = resolveClaims();
-            return sessions.authenticateAccess(
-                    resolved.accountId(), resolved.sessionId(), correlationId(), accessScope);
+            return validation.authenticate(
+                    resolved.accountId(),
+                    resolved.loginIdentityId(),
+                    resolved.authEpoch(),
+                    resolved.credentialVersion(),
+                    accessScope);
         });
     }
 
@@ -73,8 +72,4 @@ public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
         return claims;
     }
 
-    private UUID correlationId() {
-        String value = request.getHeader("X-Correlation-Id");
-        return value == null || value.isBlank() ? UUID.randomUUID() : UUID.fromString(value);
-    }
 }

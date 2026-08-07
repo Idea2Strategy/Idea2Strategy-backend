@@ -5,7 +5,7 @@ public enum CustomerAccessScope {
     STANDARD(false),
     APPEAL(true),
     DATA_RIGHTS(true),
-    SESSION_TEARDOWN(true);
+    TOKEN_TEARDOWN(true);
 
     private final boolean allowedDuringSanction;
 

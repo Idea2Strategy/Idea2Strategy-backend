@@ -3,7 +3,7 @@ package com.idea2strategy.backend.application.identity;
 import java.util.Objects;
 import java.util.UUID;
 
-public record LoginCommand(String email, String password, String deviceLabel, UUID correlationId) {
+public record LoginCommand(String email, String password, UUID correlationId) {
     public LoginCommand {
         if (Objects.requireNonNull(email, "email").isBlank()
                 || Objects.requireNonNull(password, "password").isBlank()) {
@@ -14,7 +14,6 @@ public record LoginCommand(String email, String password, String deviceLabel, UU
 
     @Override
     public String toString() {
-        return "LoginCommand[credentials=REDACTED, deviceLabel=" + deviceLabel
-                + ", correlationId=" + correlationId + "]";
+        return "LoginCommand[credentials=REDACTED, correlationId=" + correlationId + "]";
     }
 }

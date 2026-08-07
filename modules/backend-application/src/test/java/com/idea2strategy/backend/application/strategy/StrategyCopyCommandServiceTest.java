@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.testing.FixedIdGenerator;
 import com.idea2strategy.backend.application.testing.RecordingDomainEventPublisher;
-import com.idea2strategy.backend.application.testing.TestSessionPrincipal;
+import com.idea2strategy.backend.application.testing.TestCustomerAccessPrincipal;
 import com.idea2strategy.backend.domain.strategy.ElementCatalogVersion;
 import com.idea2strategy.backend.domain.strategy.Strategy;
 import com.idea2strategy.backend.domain.strategy.StrategyCreated;
@@ -167,7 +167,7 @@ class StrategyCopyCommandServiceTest {
                 repository,
                 repository,
                 structureService,
-                new TestSessionPrincipal(OWNER_ID, UUID.randomUUID()),
+                new TestCustomerAccessPrincipal(OWNER_ID),
                 new FixedIdGenerator(COPY_ID),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 events);

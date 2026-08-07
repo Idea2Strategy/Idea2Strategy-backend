@@ -85,7 +85,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         registry.add("identity.crypto.email-encryption-key", () -> key);
         registry.add("identity.crypto.lookup-hmac-key", () -> key);
         registry.add("identity.crypto.verification-hmac-key", () -> key);
-        registry.add("identity.crypto.session-hmac-key", () -> key);
+        registry.add("identity.crypto.refresh-token-hmac-key", () -> key);
         registry.add("identity.crypto.customer-jwt-signing-key", () -> jwtKey);
         registry.add("idea2strategy.operator-auth.enabled", () -> "true");
         registry.add("idea2strategy.operator-auth.issuer", () -> "https://operator.example");
@@ -138,7 +138,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Correlation-Id", CORRELATION)
                         .content("""
-                                {"email":"%s","password":"%s","deviceLabel":"a22-e2e"}
+                                {"email":"%s","password":"%s"}
                                 """.formatted(EMAIL, PASSWORD)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
@@ -147,15 +147,16 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         String login = loginResult.getResponse().getContentAsString();
         JsonNode loginBody = json.readTree(login);
         String accessToken = loginBody.get("accessToken").asText();
-        UUID sessionId = UUID.fromString(loginBody.get("sessionId").asText());
+        UUID loginIdentityId = jdbc.queryForObject(
+                "select id from identity.login_identities where account_id = ?", UUID.class, accountId);
         Cookie refreshCookie = loginResult.getResponse().getCookie("i2s_refresh");
         assertThat(refreshCookie).isNotNull();
         assertThat(refreshCookie.isHttpOnly()).isTrue();
         assertThat(refreshCookie.getSecure()).isTrue();
-        assertThat(refreshCookie.getPath()).isEqualTo("/api/v1/auth/sessions");
+        assertThat(refreshCookie.getPath()).isEqualTo("/api/v1/auth");
         assertThat(loginResult.getResponse().getHeader("Set-Cookie")).contains("SameSite=Strict");
 
-        var rotationResult = mvc.perform(post("/api/v1/auth/sessions/rotate")
+        var rotationResult = mvc.perform(post("/api/v1/auth/refresh")
                         .cookie(refreshCookie)
                         .header("X-Correlation-Id", CORRELATION))
                 .andExpect(status().isOk())
@@ -167,7 +168,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         assertThat(rotatedRefreshCookie).isNotNull();
         assertThat(rotatedRefreshCookie.getValue()).isNotEqualTo(refreshCookie.getValue());
 
-        String expiredAccess = expiredAccess(accountId, sessionId);
+        String expiredAccess = expiredAccess(accountId, loginIdentityId);
         mvc.perform(get("/api/v1/account/preferences")
                         .header("Authorization", "Bearer " + expiredAccess))
                 .andExpect(status().isUnauthorized())
@@ -215,16 +216,14 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTHENTICATION_REJECTED"));
 
-        assertThat(count("select count(*) from identity.sessions where account_id = ? and revoked_at is null", accountId))
+        assertThat(count("select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is null", accountId))
                 .isOne();
-        assertThat(count("select count(*) from identity.authentication_events where account_id = ? and event_type = 'SESSION_VALIDATED'", accountId))
-                .isGreaterThanOrEqualTo(2);
         assertThat(count("select count(*) from operations.cases where id = ?", caseId)).isOne();
         assertThat(count("select count(*) from operations.case_events where case_id = ?", caseId)).isOne();
         assertThat(count("select count(*) from operations.outbox_messages where aggregate_id = ? and event_type = 'USER_CASE_SUBMITTED'", caseId))
                 .isOne();
 
-        mvc.perform(delete("/api/v1/auth/sessions/current")
+        mvc.perform(post("/api/v1/auth/logout")
                         .cookie(rotatedRefreshCookie)
                         .header("X-Correlation-Id", CORRELATION))
                 .andExpect(status().isNoContent())
@@ -233,8 +232,8 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                         .contains("Max-Age=0"));
         mvc.perform(get("/api/v1/account/preferences")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isUnauthorized());
-        assertThat(count("select count(*) from identity.sessions where account_id = ? and revoked_at is null", accountId))
+                .andExpect(status().isOk());
+        assertThat(count("select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is null", accountId))
                 .isZero();
     }
 
@@ -337,7 +336,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
         return jdbc.queryForObject(sql, Long.class, args);
     }
 
-    private static String expiredAccess(UUID accountId, UUID sessionId) {
+    private static String expiredAccess(UUID accountId, UUID loginIdentityId) {
         return new CustomerJwtCodec(
                 JWT_KEY,
                 Clock.fixed(Instant.now().minus(Duration.ofMinutes(10)), ZoneOffset.UTC),
@@ -345,7 +344,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
                 "idea2strategy-api",
                 "idea2strategy-refresh",
                 Duration.ofMinutes(5))
-                .issueAccess(accountId, sessionId);
+                .issueAccess(accountId, loginIdentityId, 1, null);
     }
 
     private static UUID id(int suffix) {

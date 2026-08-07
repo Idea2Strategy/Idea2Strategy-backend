@@ -21,11 +21,11 @@ public class StrategyEditLeaseJpaCommandAdapter implements StrategyEditLeaseComm
         int updated = jdbcTemplate.update(
                 """
                 insert into strategy.strategy_edit_leases (
-                    strategy_id, session_id, delegated_credential_id, lease_token_digest,
+                    strategy_id, account_id, delegated_credential_id, lease_token_digest,
                     digest_key_version, acquired_at, heartbeat_at, expires_at
                 ) values (?, ?, null, ?, ?, ?, ?, ?)
                 on conflict (strategy_id) do update
-                    set session_id = excluded.session_id,
+                    set account_id = excluded.account_id,
                         delegated_credential_id = null,
                         lease_token_digest = excluded.lease_token_digest,
                         digest_key_version = excluded.digest_key_version,
@@ -35,7 +35,7 @@ public class StrategyEditLeaseJpaCommandAdapter implements StrategyEditLeaseComm
                   where strategy.strategy_edit_leases.expires_at <= ?
                 """,
                 lease.strategyId(),
-                lease.sessionId(),
+                lease.accountId(),
                 lease.tokenDigest(),
                 lease.digestKeyVersion(),
                 lease.acquiredAt().atOffset(ZoneOffset.UTC),
@@ -48,7 +48,7 @@ public class StrategyEditLeaseJpaCommandAdapter implements StrategyEditLeaseComm
     @Override
     public boolean heartbeat(
             UUID strategyId,
-            UUID sessionId,
+            UUID accountId,
             String tokenDigest,
             Instant heartbeatAt,
             Instant expiresAt) {
@@ -57,30 +57,30 @@ public class StrategyEditLeaseJpaCommandAdapter implements StrategyEditLeaseComm
                 update strategy.strategy_edit_leases
                    set heartbeat_at = ?, expires_at = ?
                  where strategy_id = ?
-                   and session_id = ?
+                   and account_id = ?
                    and lease_token_digest = ?
                    and expires_at > ?
                 """,
                 heartbeatAt.atOffset(ZoneOffset.UTC),
                 expiresAt.atOffset(ZoneOffset.UTC),
                 strategyId,
-                sessionId,
+                accountId,
                 tokenDigest,
                 heartbeatAt.atOffset(ZoneOffset.UTC));
         return updated == 1;
     }
 
     @Override
-    public boolean release(UUID strategyId, UUID sessionId, String tokenDigest) {
+    public boolean release(UUID strategyId, UUID accountId, String tokenDigest) {
         return jdbcTemplate.update(
                         """
                         delete from strategy.strategy_edit_leases
                          where strategy_id = ?
-                           and session_id = ?
+                           and account_id = ?
                            and lease_token_digest = ?
                         """,
                         strategyId,
-                        sessionId,
+                        accountId,
                         tokenDigest)
                 == 1;
     }

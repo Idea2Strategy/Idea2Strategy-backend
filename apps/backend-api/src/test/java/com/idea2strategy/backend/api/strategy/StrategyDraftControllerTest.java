@@ -9,7 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
+import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.strategy.BasicStrategyDraftCommandPort;
 import com.idea2strategy.backend.application.strategy.BasicStrategyDraftCommandService;
 import com.idea2strategy.backend.application.strategy.StrategyDocumentQueryPort;
@@ -39,16 +39,12 @@ class StrategyDraftControllerTest {
     @BeforeEach
     void setUp() {
         commandPort = mock(BasicStrategyDraftCommandPort.class);
-        CurrentSessionPrincipal principal = new CurrentSessionPrincipal() {
+        CurrentPrincipal principal = new CurrentPrincipal() {
             @Override
             public UUID accountId() {
                 return OWNER_ID;
             }
 
-            @Override
-            public UUID sessionId() {
-                return SESSION_ID;
-            }
         };
         var service = new BasicStrategyDraftCommandService(
                 commandPort,

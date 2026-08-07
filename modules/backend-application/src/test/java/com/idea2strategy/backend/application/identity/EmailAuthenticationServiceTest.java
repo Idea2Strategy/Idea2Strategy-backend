@@ -35,11 +35,11 @@ class EmailAuthenticationServiceTest {
                 commands,
                 (raw, encoded) -> raw.equals("correct-password") && encoded.equals("encoded-password"),
                 rawEmail -> "lookup:" + rawEmail.trim().toLowerCase(),
-                () -> new SessionToken("session-token", "session-digest"),
+                () -> new RefreshTokenSecret("session-token", "session-digest"),
                 Clock.fixed(NOW, ZoneOffset.UTC));
 
         assertThatThrownBy(() -> service.login(new LoginCommand(
-                        "person@example.com", "correct-password", "Chrome", UUID.randomUUID())))
+                        "person@example.com", "correct-password", UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessage("Email verification is required");
 
@@ -69,16 +69,16 @@ class EmailAuthenticationServiceTest {
                 commands,
                 (raw, encoded) -> raw.equals("correct-password") && encoded.equals("encoded-password"),
                 rawEmail -> "lookup:" + rawEmail.trim().toLowerCase(),
-                () -> new SessionToken("session-token", "session-digest"),
+                () -> new RefreshTokenSecret("session-token", "session-digest"),
                 Clock.fixed(NOW, ZoneOffset.UTC));
 
         LoginResult result = service.login(new LoginCommand(
-                "person@example.com", "correct-password", "Chrome", UUID.randomUUID()));
+                "person@example.com", "correct-password", UUID.randomUUID()));
 
         assertThat(result.expiresAt()).isEqualTo(NOW.plus(Duration.ofDays(30)));
         assertThat(commands.sessions)
                 .singleElement()
-                .extracting(AuthenticationSession::expiresAt)
+                .extracting(RefreshTokenFamily::expiresAt)
                 .isEqualTo(NOW.plus(Duration.ofDays(30)));
     }
 
@@ -90,11 +90,11 @@ class EmailAuthenticationServiceTest {
     }
 
     private static final class RecordingCommandPort implements IdentityCommandPort {
-        private final List<AuthenticationSession> sessions = new ArrayList<>();
+        private final List<RefreshTokenFamily> sessions = new ArrayList<>();
         private final List<LoginFailure> failures = new ArrayList<>();
 
         @Override
-        public void createSession(AuthenticationSession session) {
+        public void createRefreshTokenFamily(RefreshTokenFamily session) {
             sessions.add(session);
         }
 

@@ -51,13 +51,13 @@ class DeadlineBatchRunnerTest {
     @Test
     void requestsOnlyRegisteredCategoriesSoOptionalNotificationIsNotAFalseFailure() {
         var requests = new ArrayList<ClaimRequest>();
-        var session = new EmptyPort(BatchCategory.SESSION, requests);
+        var session = new EmptyPort(BatchCategory.REFRESH_TOKEN_FAMILY, requests);
         var summaries = new ArrayList<DeadlineBatchOrchestrator.RunSummary>();
         var orchestrator = new DeadlineBatchOrchestrator(
                 List.of(session), ignored -> {}, summaries::add, 10);
         var runner = new DeadlineBatchRunner(
                 orchestrator, "worker", "policy-v1", Duration.ofMinutes(1), 10,
-                java.util.Set.of(BatchCategory.SESSION));
+                java.util.Set.of(BatchCategory.REFRESH_TOKEN_FAMILY));
 
         runner.run();
 
@@ -65,7 +65,7 @@ class DeadlineBatchRunnerTest {
         assertThat(summaries).singleElement().satisfies(summary -> {
             assertThat(summary.categoryFailures()).isZero();
             assertThat(summary.categories()).extracting(DeadlineBatchOrchestrator.CategorySummary::category)
-                    .containsExactly(BatchCategory.SESSION);
+                    .containsExactly(BatchCategory.REFRESH_TOKEN_FAMILY);
         });
     }
 

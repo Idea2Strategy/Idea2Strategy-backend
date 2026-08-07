@@ -31,7 +31,6 @@ class OidcAuthenticationServiceTest {
                         "https://issuer.example",
                         "raw-provider-subject",
                         "same-as-existing@example.com",
-                        "Chrome",
                         UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessage("OIDC identity is not linked");
@@ -55,7 +54,6 @@ class OidcAuthenticationServiceTest {
                         "https://attacker.example",
                         "raw-provider-subject",
                         "person@example.com",
-                        null,
                         UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessage("OIDC provider is not trusted");
@@ -83,10 +81,9 @@ class OidcAuthenticationServiceTest {
                 "https://issuer.example",
                 "raw-provider-subject",
                 "person@example.com",
-                "Chrome",
                 UUID.fromString("13000000-0000-4000-8000-000000000001")));
 
-        assertThat(result.sessionToken()).isEqualTo("session-token");
+        assertThat(result.refreshTokenSecret()).isEqualTo("session-token");
         assertThat(result.expiresAt()).isEqualTo(NOW.plus(Duration.ofDays(30)));
         assertThat(commands.sessions).singleElement().satisfies(session -> {
             assertThat(session.accountId()).isEqualTo(accountId);
@@ -108,18 +105,16 @@ class OidcAuthenticationServiceTest {
                 queries,
                 sessions,
                 principal -> new ProtectedOidcSubject("subject-hmac", (short) 1),
-                () -> new SessionToken("session-token", "session-digest"),
+                () -> new RefreshTokenSecret("session-token", "session-digest"),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Duration.ofHours(12),
-                5,
                 lookup -> false,
                 registrations,
                 raw -> protectedEmail,
                 new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
 
         LoginResult result = service.login(new OidcLoginCommand(
-                "EXAMPLE", "https://issuer.example", "new-subject", "person@example.com",
-                "Chrome", UUID.randomUUID()));
+                "EXAMPLE", "https://issuer.example", "new-subject", "person@example.com", UUID.randomUUID()));
 
         assertThat(registrations.registration).isNotNull();
         assertThat(registrations.registration.accountId()).isEqualTo(result.accountId());
@@ -129,17 +124,15 @@ class OidcAuthenticationServiceTest {
                 queries,
                 sessions,
                 principal -> new ProtectedOidcSubject("another-subject", (short) 1),
-                () -> new SessionToken("session-token-2", "session-digest-2"),
+                () -> new RefreshTokenSecret("session-token-2", "session-digest-2"),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Duration.ofHours(12),
-                5,
                 lookup -> true,
                 new RecordingOidcCommands(),
                 raw -> protectedEmail,
                 new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
         assertThatThrownBy(() -> existingEmailService.login(new OidcLoginCommand(
-                        "EXAMPLE", "https://issuer.example", "other-subject", "person@example.com",
-                        "Chrome", UUID.randomUUID())))
+                        "EXAMPLE", "https://issuer.example", "other-subject", "person@example.com", UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessageContaining("explicit linking is required");
     }
@@ -152,7 +145,7 @@ class OidcAuthenticationServiceTest {
                 queries,
                 commands,
                 subjectProtector,
-                () -> new SessionToken("session-token", "session-digest"),
+                () -> new RefreshTokenSecret("session-token", "session-digest"),
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
@@ -179,10 +172,10 @@ class OidcAuthenticationServiceTest {
     }
 
     private static final class RecordingCommands implements IdentityCommandPort {
-        private final List<AuthenticationSession> sessions = new ArrayList<>();
+        private final List<RefreshTokenFamily> sessions = new ArrayList<>();
 
         @Override
-        public void createSession(AuthenticationSession session) {
+        public void createRefreshTokenFamily(RefreshTokenFamily session) {
             sessions.add(session);
         }
 

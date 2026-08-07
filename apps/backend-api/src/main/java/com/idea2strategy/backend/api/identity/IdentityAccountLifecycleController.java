@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/account")
 @ConditionalOnProperty(prefix = "identity.crypto", name = {
-        "email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key",
+        "email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "refresh-token-hmac-key",
         "customer-jwt-signing-key"})
 public class IdentityAccountLifecycleController {
     private static final String REQUEST_WITHDRAWAL = "REQUEST_WITHDRAWAL";

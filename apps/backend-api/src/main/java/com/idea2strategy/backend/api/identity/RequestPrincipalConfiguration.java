@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.api.identity;
 
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.application.identity.CustomerAccessValidationService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
@@ -13,10 +13,10 @@ import org.springframework.web.context.annotation.RequestScope;
 public class RequestPrincipalConfiguration {
     @Bean
     @RequestScope(proxyMode = ScopedProxyMode.TARGET_CLASS)
-    BearerSessionCurrentPrincipal bearerSessionCurrentPrincipal(
+    JwtCustomerAccessPrincipal jwtCustomerAccessPrincipal(
             HttpServletRequest request,
             CustomerJwtCodec jwt,
-            SessionManagementService sessions) {
-        return new BearerSessionCurrentPrincipal(request, jwt, sessions);
+            CustomerAccessValidationService validation) {
+        return new JwtCustomerAccessPrincipal(request, jwt, validation);
     }
 }

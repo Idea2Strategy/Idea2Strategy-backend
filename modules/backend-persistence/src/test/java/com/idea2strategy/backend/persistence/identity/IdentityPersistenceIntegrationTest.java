@@ -24,7 +24,7 @@ import com.idea2strategy.backend.application.identity.ResendVerificationCommand;
 import com.idea2strategy.backend.application.identity.RequestPasswordResetCommand;
 import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
 import com.idea2strategy.backend.application.identity.ResetPasswordCommand;
-import com.idea2strategy.backend.application.identity.SessionToken;
+import com.idea2strategy.backend.application.identity.RefreshTokenSecret;
 import com.idea2strategy.backend.application.identity.SignupCommand;
 import com.idea2strategy.backend.application.identity.StartOidcLinkCommand;
 import com.idea2strategy.backend.application.identity.VerificationToken;
@@ -117,11 +117,11 @@ class IdentityPersistenceIntegrationTest {
                 " Person@Example.com ", "a sufficiently long passphrase", UUID.randomUUID(), "192.0.2.0/24"));
 
         assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
-                        "person@example.com", "a sufficiently long passphrase", "Chrome", UUID.randomUUID())))
+                        "person@example.com", "a sufficiently long passphrase", UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessage("Email verification is required");
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ?",
+                        "select count(*) from identity.refresh_token_families where account_id = ?",
                         Integer.class,
                         signup.accountId()))
                 .isZero();
@@ -138,12 +138,12 @@ class IdentityPersistenceIntegrationTest {
                 .hasMessage("Verification token is no longer valid");
         registration.verify(new VerifyEmailCommand(replacement.verificationToken(), UUID.randomUUID()));
         var login = authenticationService().login(new LoginCommand(
-                "person@example.com", "a sufficiently long passphrase", "Chrome", UUID.randomUUID()));
+                "person@example.com", "a sufficiently long passphrase", UUID.randomUUID()));
 
         assertThat(login.accountId()).isEqualTo(signup.accountId());
-        assertThat(login.sessionToken()).startsWith("raw-session-token-");
+        assertThat(login.refreshTokenSecret()).startsWith("raw-session-token-");
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ?",
+                        "select count(*) from identity.refresh_token_families where account_id = ?",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -205,7 +205,7 @@ class IdentityPersistenceIntegrationTest {
                 signup.accountId(), loginId, correlationId, NOW.plusSeconds(30)));
 
         assertThat(jdbcTemplate.queryForObject(
-                "select count(*) from identity.sessions where account_id = ?", Integer.class, signup.accountId()))
+                "select count(*) from identity.refresh_token_families where account_id = ?", Integer.class, signup.accountId()))
                 .isZero();
         assertThat(jdbcTemplate.queryForObject("""
                         select count(*) from identity.authentication_events
@@ -242,7 +242,6 @@ class IdentityPersistenceIntegrationTest {
         authenticationService().login(new LoginCommand(
                 "oidc-person@example.com",
                 "a sufficiently long passphrase",
-                "Before switch",
                 UUID.randomUUID()));
         UUID passwordLoginId = jdbcTemplate.queryForObject(
                 "select id from identity.login_identities where account_id = ? and status = 'ACTIVE'",
@@ -314,7 +313,7 @@ class IdentityPersistenceIntegrationTest {
                         pendingId))
                 .isEqualTo("ACTIVE");
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is not null",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -333,21 +332,20 @@ class IdentityPersistenceIntegrationTest {
                 queryAdapter,
                 commandAdapter,
                 ignored -> protectedExternalSubject(),
-                () -> new SessionToken("raw-oidc-session", "digest:raw-oidc-session"),
+                () -> new RefreshTokenSecret("raw-oidc-session", "digest:raw-oidc-session"),
                 Clock.fixed(NOW.plusSeconds(180), ZoneOffset.UTC));
         var result = oidcAuthentication.login(new OidcLoginCommand(
                 "EXAMPLE",
                 "https://issuer.example",
                 "raw-external-subject",
                 "oidc-person@example.com",
-                "After switch",
                 UUID.randomUUID()));
 
         assertThat(result.accountId()).isEqualTo(signup.accountId());
         assertThat(jdbcTemplate.queryForObject(
-                        "select credential_version_at_issue from identity.sessions where id = ?",
+                        "select credential_version_at_issue from identity.refresh_token_families where id = ?",
                         Long.class,
-                        result.sessionId()))
+                        result.refreshTokenFamilyId()))
                 .isNull();
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_IDENTITY_REPLACED'",
@@ -364,7 +362,7 @@ class IdentityPersistenceIntegrationTest {
                         signup.accountId()))
                 .isEqualTo(2L);
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is not null",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -392,7 +390,6 @@ class IdentityPersistenceIntegrationTest {
         authenticationService().login(new LoginCommand(
                 "recover-person@example.com",
                 "the original sufficiently long passphrase",
-                "Before recovery",
                 UUID.randomUUID()));
 
         var recovery = passwordRecoveryService();
@@ -423,7 +420,7 @@ class IdentityPersistenceIntegrationTest {
                         signup.accountId()))
                 .isEqualTo(2L);
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is not null",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -435,7 +432,6 @@ class IdentityPersistenceIntegrationTest {
         assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
                         "recover-person@example.com",
                         "the original sufficiently long passphrase",
-                        "After recovery",
                         UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class);
     }
@@ -452,7 +448,6 @@ class IdentityPersistenceIntegrationTest {
         authenticationService().login(new LoginCommand(
                 "codes-person@example.com",
                 "the original sufficiently long passphrase",
-                "Before recovery",
                 UUID.randomUUID()));
 
         var recovery = passwordRecoveryService();
@@ -622,7 +617,7 @@ class IdentityPersistenceIntegrationTest {
                 commandAdapter,
                 (raw, encoded) -> encoded.equals("hash:" + raw),
                 raw -> "lookup:" + raw.trim().toLowerCase(),
-                () -> new SessionToken(token, "digest:" + token),
+                () -> new RefreshTokenSecret(token, "digest:" + token),
                 Clock.fixed(NOW.plusSeconds(60), ZoneOffset.UTC));
     }
 

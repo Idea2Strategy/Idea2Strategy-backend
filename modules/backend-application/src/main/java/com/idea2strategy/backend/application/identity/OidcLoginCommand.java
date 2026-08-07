@@ -8,7 +8,6 @@ public record OidcLoginCommand(
         String issuer,
         String subject,
         String email,
-        String deviceLabel,
         UUID correlationId) {
     public OidcLoginCommand {
         Objects.requireNonNull(providerCode, "providerCode");
