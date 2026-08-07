@@ -20,7 +20,8 @@ class StrategyAuthoringControllerRegistrationTest {
                     StrategyAuthoringDependencies.class)
             .withPropertyValues(
                     "spring.datasource.url=jdbc:postgresql://unused/test",
-                    "identity.crypto.refresh-token-hmac-key=test-refresh-token-hmac-key");
+                    "identity.crypto.refresh-token-hmac-key=test-refresh-token-hmac-key",
+                    "identity.crypto.customer-jwt-signing-key=test-customer-jwt-signing-key");
 
     @Test
     void registersAuthoringControllersWhenTheStrategyDraftModuleIsEnabled() {

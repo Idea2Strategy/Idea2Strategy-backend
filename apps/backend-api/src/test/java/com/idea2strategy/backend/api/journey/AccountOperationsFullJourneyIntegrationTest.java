@@ -289,7 +289,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 select count(*) from identity.authentication_events
                 where account_id = ? and event_type = 'REFRESH_TOKEN_REJECTED'
                   and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
-                """, accountId)).isGreaterThanOrEqualTo(2);
+                """, accountId)).isOne();
         String appealBody = """
                 {"type":"APPEAL","subject":"Appeal the suspension",
                  "description":"The sanction was applied to the wrong account.","evidence":[]}
