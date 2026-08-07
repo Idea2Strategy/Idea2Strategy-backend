@@ -57,7 +57,7 @@ class SeededBasicElementCatalogTest {
         assertThat(versions).hasSize(3);
         assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
             assertThat(version.get("catalog_version"))
-                    .isEqualTo("basic-elements:2026-08-08-live-timeframes");
+                    .isEqualTo("basic-elements:2026-08-08-live-bars");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
         });

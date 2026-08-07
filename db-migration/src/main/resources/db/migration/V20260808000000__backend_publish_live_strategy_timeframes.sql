@@ -14,7 +14,7 @@ VALUES (
     '0f3a0000-0000-4000-8000-000000000001',
     'basic/v1',
     'basic-semantic/v1',
-    'basic-elements:2026-08-08-live-timeframes',
+    'basic-elements:2026-08-08-live-bars',
     'alpaca-sip/v1',
     'sha256:30a8aa1db1ec89acd824d270df6df53f652f58ad75a7688f59efb20bf86b4301',
     '2026-08-08T00:00:00+00');
