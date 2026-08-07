@@ -10,7 +10,7 @@ import com.idea2strategy.backend.domain.strategy.StrategyDocument;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -24,11 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/strategies/{strategyId}")
-@ConditionalOnBean({
-    StrategyDocumentQueryService.class,
-    BasicStrategyDraftCommandService.class,
-    StrategyEditLeaseService.class
-})
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
 public class StrategyDocumentController {
     private final StrategyDocumentQueryService queryService;
     private final BasicStrategyDraftCommandService commandService;

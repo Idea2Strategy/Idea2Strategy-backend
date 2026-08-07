@@ -3,7 +3,7 @@ package com.idea2strategy.backend.api.strategy;
 import com.idea2strategy.backend.application.strategy.StrategyCopyCommandService;
 import java.net.URI;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/strategies/{strategyId}/copies")
-@ConditionalOnBean(StrategyCopyCommandService.class)
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
 public class StrategyCopyController {
     private final StrategyCopyCommandService commandService;
 
