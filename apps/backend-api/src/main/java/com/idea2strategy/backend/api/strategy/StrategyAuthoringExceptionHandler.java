@@ -11,7 +11,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice(assignableTypes = {
     StrategyDraftController.class,
-    StrategyDocumentController.class
+    StrategyDocumentController.class,
+    StrategyCopyController.class,
+    StrategyValidationController.class
 })
 public class StrategyAuthoringExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)

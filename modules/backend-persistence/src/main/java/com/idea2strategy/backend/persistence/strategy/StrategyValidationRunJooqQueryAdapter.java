@@ -79,6 +79,7 @@ public class StrategyValidationRunJooqQueryAdapter
         var runs = table(name("strategy", "validation_runs")).as("run");
         var strategies = table(name("strategy", "strategies")).as("strategy");
         var documents = table(name("strategy", "strategy_documents")).as("document");
+        var catalogs = table(name("strategy", "element_catalog_versions")).as("catalog");
         var id = field(name("run", "id"), UUID.class);
         var strategyId = field(name("run", "strategy_id"), UUID.class);
         var strategyRowId = field(name("strategy", "id"), UUID.class);
@@ -90,6 +91,10 @@ public class StrategyValidationRunJooqQueryAdapter
         var requestedEditSequence = field(name("run", "requested_edit_sequence"), Long.class);
         var semanticHash = field(name("run", "semantic_hash"), String.class);
         var catalogVersionId = field(name("run", "element_catalog_version_id"), UUID.class);
+        var catalogRowId = field(name("catalog", "id"), UUID.class);
+        var languageVersion = field(name("catalog", "language_version"), String.class);
+        var schemaVersion = field(name("catalog", "schema_version"), String.class);
+        var catalogVersion = field(name("catalog", "catalog_version"), String.class);
         var status = field(name("run", "status"), String.class);
         var completedAt = field(name("run", "completed_at"), OffsetDateTime.class);
 
@@ -100,12 +105,17 @@ public class StrategyValidationRunJooqQueryAdapter
                         requestedEditSequence,
                         semanticHash,
                         catalogVersionId,
+                        languageVersion,
+                        schemaVersion,
+                        catalogVersion,
                         completedAt)
                 .from(runs)
                 .join(strategies)
                 .on(strategyId.eq(strategyRowId))
                 .join(documents)
                 .on(strategyId.eq(documentStrategyId))
+                .join(catalogs)
+                .on(catalogVersionId.eq(catalogRowId))
                 .where(strategyOwner.eq(ownerAccountId))
                 .and(status.eq(StrategyValidationStatus.VALID.name()))
                 .and(semanticHash.eq(documentSemanticHash))
@@ -118,6 +128,9 @@ public class StrategyValidationRunJooqQueryAdapter
                         record.get(requestedEditSequence),
                         record.get(semanticHash),
                         record.get(catalogVersionId),
+                        record.get(languageVersion),
+                        record.get(schemaVersion),
+                        record.get(catalogVersion),
                         record.get(completedAt).toInstant()));
     }
 }

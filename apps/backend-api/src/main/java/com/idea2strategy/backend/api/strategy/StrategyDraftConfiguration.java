@@ -2,10 +2,16 @@ package com.idea2strategy.backend.api.strategy;
 
 import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
 import com.idea2strategy.backend.application.strategy.BasicStrategyDraftCommandService;
+import com.idea2strategy.backend.application.strategy.BasicStructureCatalogQueryService;
+import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
 import com.idea2strategy.backend.application.strategy.SecureStrategyEditLeaseTokenGenerator;
+import com.idea2strategy.backend.application.strategy.StrategyCopyCommandService;
 import com.idea2strategy.backend.application.strategy.StrategyDocumentQueryService;
 import com.idea2strategy.backend.application.strategy.StrategyEditLeaseService;
+import com.idea2strategy.backend.application.strategy.StrategyValidationQueryService;
+import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalogQueryService;
 import com.idea2strategy.backend.persistence.strategy.BasicStrategyDraftJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.strategy.BasicStructureCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJpaEntity;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentSpringDataRepository;
@@ -13,6 +19,11 @@ import com.idea2strategy.backend.persistence.strategy.StrategyEditLeaseJpaComman
 import com.idea2strategy.backend.persistence.strategy.StrategyJpaEntity;
 import com.idea2strategy.backend.persistence.strategy.StrategyJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategySpringDataRepository;
+import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJpaEntity;
+import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunSpringDataRepository;
+import com.idea2strategy.backend.persistence.strategy.StrategyReleaseInputCatalogJooqQueryAdapter;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
@@ -28,16 +39,25 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
-@EntityScan(basePackageClasses = {StrategyJpaEntity.class, StrategyDocumentJpaEntity.class})
+@EntityScan(basePackageClasses = {
+    StrategyJpaEntity.class,
+    StrategyDocumentJpaEntity.class,
+    StrategyValidationRunJpaEntity.class
+})
 @EnableJpaRepositories(basePackageClasses = {
     StrategySpringDataRepository.class,
-    StrategyDocumentSpringDataRepository.class
+    StrategyDocumentSpringDataRepository.class,
+    StrategyValidationRunSpringDataRepository.class
 })
 @Import({
     BasicStrategyDraftJpaCommandAdapter.class,
+    BasicStructureCatalogJooqQueryAdapter.class,
     StrategyJooqQueryAdapter.class,
     StrategyDocumentJooqQueryAdapter.class,
-    StrategyEditLeaseJpaCommandAdapter.class
+    StrategyEditLeaseJpaCommandAdapter.class,
+    StrategyValidationRunJpaCommandAdapter.class,
+    StrategyValidationRunJooqQueryAdapter.class,
+    StrategyReleaseInputCatalogJooqQueryAdapter.class
 })
 public class StrategyDraftConfiguration {
     @Bean
@@ -77,5 +97,59 @@ public class StrategyDraftConfiguration {
                 new SecureStrategyEditLeaseTokenGenerator(),
                 Clock.systemUTC(),
                 leaseDuration);
+    }
+
+    @Bean
+    BasicStructureCatalogQueryService basicStructureCatalogQueryService(
+            BasicStructureCatalogJooqQueryAdapter queryAdapter) {
+        return new BasicStructureCatalogQueryService(queryAdapter, Clock.systemUTC());
+    }
+
+    @Bean
+    StrategyCopyCommandService strategyCopyCommandService(
+            BasicStrategyDraftJpaCommandAdapter commandAdapter,
+            StrategyJooqQueryAdapter strategyQueryAdapter,
+            StrategyDocumentJooqQueryAdapter documentQueryAdapter,
+            BasicStructureCatalogQueryService structureCatalogService,
+            CurrentSessionPrincipal principal,
+            ApplicationEventPublisher eventPublisher) {
+        return new StrategyCopyCommandService(
+                commandAdapter,
+                strategyQueryAdapter,
+                documentQueryAdapter,
+                structureCatalogService,
+                principal,
+                UUID::randomUUID,
+                Clock.systemUTC(),
+                eventPublisher::publishEvent);
+    }
+
+    @Bean
+    BasicStrategyValidationCommandService basicStrategyValidationCommandService(
+            StrategyValidationRunJpaCommandAdapter validationCommandAdapter,
+            StrategyJooqQueryAdapter strategyQueryAdapter,
+            StrategyDocumentJooqQueryAdapter documentQueryAdapter,
+            CurrentSessionPrincipal principal) {
+        return new BasicStrategyValidationCommandService(
+                validationCommandAdapter,
+                strategyQueryAdapter,
+                documentQueryAdapter,
+                principal,
+                UUID::randomUUID,
+                Clock.systemUTC());
+    }
+
+    @Bean
+    StrategyValidationQueryService strategyValidationQueryService(
+            StrategyValidationRunJooqQueryAdapter validationQueryAdapter,
+            StrategyDocumentJooqQueryAdapter documentQueryAdapter,
+            CurrentSessionPrincipal principal) {
+        return new StrategyValidationQueryService(validationQueryAdapter, documentQueryAdapter, principal);
+    }
+
+    @Bean
+    StrategyReleaseInputCatalogQueryService strategyReleaseInputCatalogQueryService(
+            StrategyReleaseInputCatalogJooqQueryAdapter queryAdapter) {
+        return new StrategyReleaseInputCatalogQueryService(queryAdapter, Clock.systemUTC());
     }
 }

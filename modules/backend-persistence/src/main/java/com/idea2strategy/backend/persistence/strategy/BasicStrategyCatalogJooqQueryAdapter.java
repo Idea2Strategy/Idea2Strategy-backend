@@ -29,6 +29,32 @@ public class BasicStrategyCatalogJooqQueryAdapter implements BasicStrategyCatalo
     }
 
     @Override
+    public Optional<ElementCatalogVersion> findLatestPublishedCatalog(Instant at) {
+        var catalogs = table(name("strategy", "element_catalog_versions"));
+        var id = field(name("id"), UUID.class);
+        var language = field(name("language_version"), String.class);
+        var schema = field(name("schema_version"), String.class);
+        var catalog = field(name("catalog_version"), String.class);
+        var dataRequirements = field(name("data_requirement_version"), String.class);
+        var definitionHash = field(name("definition_hash"), String.class);
+        var publishedAt = field(name("published_at"), OffsetDateTime.class);
+        var retiredAt = field(name("retired_at"), OffsetDateTime.class);
+        OffsetDateTime observedAt = at.atOffset(ZoneOffset.UTC);
+
+        return dsl.select(id, language, schema, catalog, dataRequirements, definitionHash, publishedAt, retiredAt)
+                .from(catalogs)
+                .where(publishedAt.le(observedAt)
+                        .and(retiredAt.isNull().or(retiredAt.gt(observedAt))))
+                .orderBy(publishedAt.desc(), id.desc())
+                .limit(1)
+                .fetchOptional(record -> new ElementCatalogVersion(
+                        record.get(id), record.get(language), record.get(schema), record.get(catalog),
+                        record.get(dataRequirements), record.get(definitionHash),
+                        record.get(publishedAt).toInstant(),
+                        record.get(retiredAt) == null ? null : record.get(retiredAt).toInstant()));
+    }
+
+    @Override
     public Optional<ElementCatalogVersion> findPublishedCatalog(UUID catalogId, Instant at) {
         var catalogs = table(name("strategy", "element_catalog_versions"));
         var id = field(name("id"), UUID.class);

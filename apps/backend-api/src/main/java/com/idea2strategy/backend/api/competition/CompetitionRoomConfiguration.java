@@ -7,6 +7,7 @@ import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQue
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
 import com.idea2strategy.backend.application.competition.OperatorRoomManagementService;
 import com.idea2strategy.backend.application.competition.OwnedBotComparisonQueryService;
+import com.idea2strategy.backend.application.competition.OwnedRoomManagementQueryService;
 import com.idea2strategy.backend.application.competition.PlatformRoomInvalidationService;
 import com.idea2strategy.backend.application.competition.PublicRoomDiscoveryService;
 import com.idea2strategy.backend.application.competition.RoomInvitationSecretIssuer;
@@ -29,6 +30,7 @@ import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapte
 import com.idea2strategy.backend.persistence.competition.AnonymousLeaderboardJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.competition.OperatorRoomJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.OwnedRoomManagementJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PublicRoomSearchJooqAdapter;
@@ -59,6 +61,7 @@ import org.springframework.context.annotation.Import;
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
     OperatorRoomJooqAdapter.class,
+    OwnedRoomManagementJooqAdapter.class,
     AnonymousLeaderboardJooqAdapter.class,
     RoomConfigurationJooqAdapter.class,
     RoomExecutionPolicyCatalogJooqQueryAdapter.class,
@@ -96,6 +99,13 @@ public class CompetitionRoomConfiguration {
             CurrentPrincipal principal = principalProvider.getIfAvailable();
             return principal == null ? null : principal.accountId();
         });
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    OwnedRoomManagementQueryService ownedRoomManagementQueryService(
+            OwnedRoomManagementJooqAdapter adapter, CurrentPrincipal principal) {
+        return new OwnedRoomManagementQueryService(adapter, principal);
     }
 
     @Bean

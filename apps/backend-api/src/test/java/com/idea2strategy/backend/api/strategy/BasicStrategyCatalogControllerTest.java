@@ -60,6 +60,13 @@ class BasicStrategyCatalogControllerTest {
     }
 
     @Test
+    void exposesTheLatestPublishedCatalogWithoutHardCodedClientSelectors() throws Exception {
+        mvc.perform(get("/api/v1/strategy-catalogs/basic"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version.id").value(CATALOG_ID.toString()));
+    }
+
+    @Test
     void exposesSupportedInstrumentsWithoutAUserSelectedCatalogVersion() throws Exception {
         port.catalog = Optional.empty();
 
@@ -96,6 +103,11 @@ class BasicStrategyCatalogControllerTest {
         private Optional<ElementCatalogVersion> catalog = Optional.of(new ElementCatalogVersion(
                 CATALOG_ID, "basic/v1", "schema/v1", "catalog/v1", "data/v1", "a".repeat(64),
                 NOW.minusSeconds(60), null));
+
+        @Override
+        public Optional<ElementCatalogVersion> findLatestPublishedCatalog(Instant at) {
+            return catalog;
+        }
 
         @Override
         public Optional<ElementCatalogVersion> findPublishedCatalog(UUID catalogId, Instant at) {

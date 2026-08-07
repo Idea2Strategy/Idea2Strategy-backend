@@ -97,6 +97,8 @@ class StrategyLibraryQueryServiceTest {
                 kind == StrategyLibraryItemKind.RELEASED ? "SUCCEEDED" : null,
                 kind == StrategyLibraryItemKind.DRAFT,
                 updatedAt,
-                null);
+                null,
+                2,
+                List.of("AAPL"));
     }
 }

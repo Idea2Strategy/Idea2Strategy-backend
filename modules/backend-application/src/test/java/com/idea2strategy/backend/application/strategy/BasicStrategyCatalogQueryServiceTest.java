@@ -39,6 +39,15 @@ class BasicStrategyCatalogQueryServiceTest {
     }
 
     @Test
+    void returnsTheLatestCurrentlyPublishedCatalogWithoutClientSideVersionKnowledge() {
+        var port = new StubCatalogPort();
+        var service = new BasicStrategyCatalogQueryService(
+                port, Clock.fixed(NOW, ZoneId.of("UTC")), ZoneId.of("America/New_York"));
+
+        assertThat(service.getLatestPublished().version().id()).isEqualTo(CATALOG_ID);
+    }
+
+    @Test
     void returnsSupportedInstrumentsWithoutLoadingAPublishedCatalog() {
         var port = new StubCatalogPort();
         port.catalog = Optional.empty();
@@ -86,6 +95,11 @@ class BasicStrategyCatalogQueryServiceTest {
                 NOW.minusSeconds(60),
                 null));
         private java.time.LocalDate marketDate;
+
+        @Override
+        public Optional<ElementCatalogVersion> findLatestPublishedCatalog(Instant at) {
+            return catalog;
+        }
 
         @Override
         public Optional<ElementCatalogVersion> findPublishedCatalog(UUID catalogId, Instant at) {

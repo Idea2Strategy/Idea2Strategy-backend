@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.application.botoperations;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public record BotOperationsView(
@@ -10,4 +11,5 @@ public record BotOperationsView(
         Instant lifecycleChangedAt,
         Instant executionBlockedAt,
         String executionBlockReasonCode,
-        long lastEventSequence) {}
+        long lastEventSequence,
+        List<BotOperationsInstrument> instruments) {}

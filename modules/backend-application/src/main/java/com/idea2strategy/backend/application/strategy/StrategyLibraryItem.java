@@ -2,6 +2,7 @@ package com.idea2strategy.backend.application.strategy;
 
 import com.idea2strategy.backend.domain.strategy.StrategyMode;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -16,7 +17,9 @@ public record StrategyLibraryItem(
         String backtestStatus,
         boolean editable,
         Instant updatedAt,
-        String version) {
+        String version,
+        int blockCount,
+        List<String> symbols) {
 
     public StrategyLibraryItem {
         Objects.requireNonNull(id, "id");
@@ -25,6 +28,10 @@ public record StrategyLibraryItem(
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(status, "status");
         Objects.requireNonNull(updatedAt, "updatedAt");
+        if (blockCount < 0) {
+            throw new IllegalArgumentException("blockCount must not be negative");
+        }
+        symbols = List.copyOf(Objects.requireNonNull(symbols, "symbols"));
     }
 
     public StrategyLibraryPosition position() {

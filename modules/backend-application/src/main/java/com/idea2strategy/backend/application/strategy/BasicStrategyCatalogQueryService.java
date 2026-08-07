@@ -34,6 +34,14 @@ public final class BasicStrategyCatalogQueryService {
         return catalog(version, now);
     }
 
+    public BasicStrategyCatalog getLatestPublished() {
+        Instant now = clock.instant();
+        ElementCatalogVersion version = queryPort
+                .findLatestPublishedCatalog(now)
+                .orElseThrow(StrategyCatalogNotFoundException::new);
+        return catalog(version, now);
+    }
+
     public BasicStrategyCatalog getPublished(UUID catalogId) {
         Objects.requireNonNull(catalogId, "catalogId");
         Instant now = clock.instant();
