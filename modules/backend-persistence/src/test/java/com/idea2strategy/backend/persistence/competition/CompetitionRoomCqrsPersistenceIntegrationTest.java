@@ -3,6 +3,7 @@ package com.idea2strategy.backend.persistence.competition;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.competition.RoomInvitationIssueRequest;
 import com.idea2strategy.backend.application.competition.RoomConfigurationUpdate;
 import com.idea2strategy.backend.application.competition.RoomConfigurationUpdateOutcome;
@@ -595,7 +596,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
         RoomInvitationJooqAdapter.class,
         RoomConfigurationJooqAdapter.class,
         OwnedRoomManagementJooqAdapter.class,
-        RoomScheduleTransitionJooqAdapter.class
+        RoomScheduleTransitionJooqAdapter.class,
+        ObjectMapper.class
     })
     static class TestApplication {}
 }
