@@ -49,17 +49,19 @@ class SeededBasicElementCatalogTest {
     private BasicStrategyCatalogJooqQueryAdapter catalogAdapter;
 
     @Test
-    void publishesExactlyOneCatalogVersion() {
+    void publishesOneActiveFullCatalogAndRetiresTheRsiOnlyCatalog() {
         List<Map<String, Object>> versions = jdbc.queryForList(
                 "select catalog_version, language_version, data_requirement_version, retired_at "
                         + "from strategy.element_catalog_versions");
 
-        assertThat(versions).singleElement().satisfies(version -> {
-            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-04");
+        assertThat(versions).hasSize(2);
+        assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
+            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-07");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
-            assertThat(version.get("retired_at")).isNull();
         });
+        assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-04"))
+                .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
     }
 
     @Test
@@ -74,23 +76,32 @@ class SeededBasicElementCatalogTest {
                 .isEqualTo(catalogId);
     }
 
-    /** Exactly the three operations both runtimes implement, and nothing a runtime would refuse. */
+    /** Every block exposed by the Basic editor has one executable operation in the active catalog. */
     @Test
-    void publishesTheThreeExecutableOperations() {
+    void publishesTheCompleteExecutableEditorCatalog() {
         List<Map<String, Object>> elements = jdbc.queryForList("""
                 select element_code, element_kind,
                        execution_contract -> 'runtime' ->> 'operation' as operation,
                        execution_contract -> 'backtest' ->> 'supported' as backtest_supported,
                        execution_contract -> 'reviewTemplates' ->> 'ko-KR' as review
-                from strategy.element_definitions
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
                 order by element_code
                 """);
 
-        assertThat(elements).hasSize(3);
+        assertThat(elements).hasSize(14);
         assertThat(elements).extracting(row -> row.get("element_code"))
-                .containsExactly("BASIC_EQUAL_ALLOCATION_ORDER", "BASIC_RSI_READ", "BASIC_VALUE_COMPARE");
+                .containsExactly(
+                        "BASIC_BOLLINGER_REVERSAL", "BASIC_DRAWDOWN_FROM_PEAK",
+                        "BASIC_EQUAL_ALLOCATION_ORDER", "BASIC_HOLDING_PERIOD", "BASIC_MACD_CROSS",
+                        "BASIC_PEAK_RETURN", "BASIC_POSITION_RETURN", "BASIC_PRICE_CHANGE_PERCENT",
+                        "BASIC_PRICE_COMPARE", "BASIC_RSI_CROSS", "BASIC_SCHEDULE", "BASIC_SMA_CROSS",
+                        "BASIC_STREAK", "BASIC_VOLUME_COMPARE");
         assertThat(elements).extracting(row -> row.get("operation"))
-                .containsExactly("EMIT_ORDER_CANDIDATE", "LOAD_FEATURE", "COMPARE");
+                .contains("PRICE_COMPARE", "RSI_CROSS", "MACD_CROSS", "BOLLINGER_REVERSAL",
+                        "POSITION_RETURN", "HOLDING_PERIOD", "SCHEDULE", "EMIT_ORDER_CANDIDATE");
         // B08 renders these to users; a missing template is a validation issue, not a blank sentence.
         assertThat(elements).allSatisfy(row -> {
             assertThat(row.get("review")).asString().isNotBlank();
@@ -98,18 +109,25 @@ class SeededBasicElementCatalogTest {
         });
     }
 
-    /** Every element may sit in either container, so one catalog serves buy and sell flows. */
+    /** Position conditions stay sell-only, schedules stay buy-only, and market conditions work on both sides. */
     @Test
-    void everyElementDeclaresBothTradeContainers() {
+    void declaresSafeTradeContainers() {
         List<Map<String, Object>> containers = jdbc.queryForList("""
                 select element_code,
                        execution_contract -> 'containers' as containers
-                from strategy.element_definitions
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
                 """);
 
-        assertThat(containers).hasSize(3);
-        assertThat(containers).allSatisfy(row ->
-                assertThat(row.get("containers").toString()).contains("BUY").contains("SELL"));
+        assertThat(containers).hasSize(14);
+        assertThat(containers).filteredOn(row -> row.get("element_code").equals("BASIC_SCHEDULE"))
+                .singleElement().satisfies(row -> assertThat(row.get("containers").toString()).contains("BUY").doesNotContain("SELL"));
+        assertThat(containers).filteredOn(row -> row.get("element_code").equals("BASIC_POSITION_RETURN"))
+                .singleElement().satisfies(row -> assertThat(row.get("containers").toString()).contains("SELL").doesNotContain("BUY"));
+        assertThat(containers).filteredOn(row -> row.get("element_code").equals("BASIC_PRICE_COMPARE"))
+                .singleElement().satisfies(row -> assertThat(row.get("containers").toString()).contains("BUY").contains("SELL"));
     }
 
     /**
@@ -119,10 +137,8 @@ class SeededBasicElementCatalogTest {
      */
     @Test
     void thePortTypesFormAnExecutableChain() {
-        assertThat(portType("BASIC_RSI_READ", "output_port_schema", "value"))
-                .isEqualTo(portType("BASIC_VALUE_COMPARE", "input_port_schema", "value"))
-                .isEqualTo("number");
-        assertThat(portType("BASIC_VALUE_COMPARE", "output_port_schema", "passed"))
+        assertThat(portType("BASIC_PRICE_COMPARE", "output_port_schema", "passed"))
+                .isEqualTo(portType("BASIC_RSI_CROSS", "input_port_schema", "passed"))
                 .isEqualTo(portType("BASIC_EQUAL_ALLOCATION_ORDER", "input_port_schema", "passed"))
                 .isEqualTo("boolean");
     }
@@ -135,7 +151,7 @@ class SeededBasicElementCatalogTest {
     void theComparisonThresholdIsAnExactDecimalString() {
         assertThat(jdbc.queryForObject("""
                 select parameter_schema -> 'properties' -> 'threshold' ->> 'type'
-                from strategy.element_definitions where element_code = 'BASIC_VALUE_COMPARE'
+                from strategy.element_definitions where element_code = 'BASIC_RSI_CROSS'
                 """, String.class)).isEqualTo("string");
     }
 
@@ -162,21 +178,25 @@ class SeededBasicElementCatalogTest {
                 });
     }
 
-    /** The only feature any element declares is the one both runtimes implement. */
+    /** The full catalog evaluates its rolling event state directly and declares no fake feature dependency. */
     @Test
-    void declaresOnlyTheImplementedFeature() {
+    void doesNotDeclareUnrelatedFeatureDependencies() {
         List<String> declared = jdbc.queryForList("""
                 select jsonb_array_elements_text(execution_contract -> 'backtest' -> 'features')
-                from strategy.element_definitions
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
                 """, String.class);
 
-        assertThat(declared).containsExactly("RSI_14");
+        assertThat(declared).isEmpty();
     }
 
     private String portType(String elementCode, String column, String port) {
         return jdbc.queryForObject(
-                "select " + column + " -> ? ->> 'type' from strategy.element_definitions "
-                        + "where element_code = ?",
+                "select element." + column + " -> ? ->> 'type' from strategy.element_definitions element "
+                        + "join strategy.element_catalog_versions version on version.id = element.element_catalog_version_id "
+                        + "where version.retired_at is null and element.element_code = ?",
                 String.class, port, elementCode);
     }
 

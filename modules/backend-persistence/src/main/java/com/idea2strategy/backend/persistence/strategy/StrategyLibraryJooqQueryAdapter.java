@@ -74,25 +74,36 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
         Field<OffsetDateTime> deletedAt = field(name("s", "deleted_at"), OffsetDateTime.class);
         Field<UUID> documentStrategyId = field(name("d", "strategy_id"), UUID.class);
         Field<JSONB> semanticDocument = field(name("d", "semantic_document"), JSONB.class);
+        Field<Long> documentEditSequence = field(name("d", "edit_sequence"), Long.class);
+        Field<String> documentSemanticHash = field(name("d", "semantic_hash"), String.class);
         Field<Integer> blockCount = blockCount(semanticDocument);
         Field<String[]> symbols = symbols(semanticDocument, snapshot);
         Field<UUID> validationStrategyId = field(name("v", "strategy_id"), UUID.class);
         Field<String> validationState = field(name("v", "status"), String.class);
+        Field<Long> validationEditSequence = field(name("v", "requested_edit_sequence"), Long.class);
+        Field<String> validationSemanticHash = field(name("v", "semantic_hash"), String.class);
         Field<OffsetDateTime> validationRequestedAt = field(name("v", "requested_at"), OffsetDateTime.class);
         Field<String> latestValidation = select(validationState)
                 .from(validations)
-                .where(validationStrategyId.eq(id).and(validationRequestedAt.le(snapshot)))
+                .where(validationStrategyId.eq(id)
+                        .and(validationRequestedAt.le(snapshot))
+                        .and(validationEditSequence.eq(documentEditSequence))
+                        .and(validationSemanticHash.eq(documentSemanticHash)))
                 .orderBy(validationRequestedAt.desc())
                 .limit(1)
                 .asField("validation_status");
+        Field<String> normalizedValidation = when(latestValidation.eq("PASSED"), inline("VALID"))
+                .otherwise(latestValidation);
+        Field<String> draftStatus = when(latestValidation.in("VALID", "PASSED"), inline("READY"))
+                .otherwise(inline("INCOMPLETE"));
 
         return dsl.select(
                         id,
                         mode,
                         strategyName,
                         description,
-                        when(archivedAt.isNull(), inline("DRAFT")).otherwise(inline("ARCHIVED")),
-                        latestValidation,
+                        when(archivedAt.isNull(), draftStatus).otherwise(inline("ARCHIVED")),
+                        normalizedValidation,
                         updatedAt,
                         archivedAt,
                         blockCount,
@@ -112,8 +123,8 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                         StrategyMode.valueOf(record.get(mode)),
                         record.get(strategyName),
                         record.get(description),
-                        record.get(archivedAt) == null ? "DRAFT" : "ARCHIVED",
-                        record.get(latestValidation),
+                        record.get(archivedAt) == null ? record.get(draftStatus) : "ARCHIVED",
+                        record.get(normalizedValidation),
                         null,
                         record.get(archivedAt) == null,
                         record.get(updatedAt).toInstant(),

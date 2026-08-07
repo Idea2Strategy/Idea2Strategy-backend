@@ -10,6 +10,7 @@ import com.idea2strategy.backend.application.strategy.BasicBlockAssembly.Allocat
 import com.idea2strategy.backend.application.strategy.BasicBlockAssembly.EvaluationMode;
 import com.idea2strategy.backend.domain.strategy.StrategyElementDefinition;
 import java.util.ArrayList;
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -40,6 +41,7 @@ public final class BasicBlockAssemblyValidator {
         }
         Set<UUID> supportedInstruments = new HashSet<>();
         catalog.instruments().forEach(instrument -> supportedInstruments.add(instrument.id()));
+        boolean terminalStructurePublished = catalog.elements().stream().anyMatch(this::isTerminal);
 
         for (int groupIndex = 0; groupIndex < assembly.groups().size(); groupIndex++) {
             validateGroup(
@@ -47,6 +49,7 @@ public final class BasicBlockAssemblyValidator {
                     groupIndex,
                     elements,
                     supportedInstruments,
+                    terminalStructurePublished,
                     issues);
         }
         return new BasicBlockAssemblyValidationResult(issues);
@@ -57,6 +60,7 @@ public final class BasicBlockAssemblyValidator {
             int groupIndex,
             Map<String, StrategyElementDefinition> elements,
             Set<UUID> supportedInstruments,
+            boolean terminalStructurePublished,
             List<BasicBlockAssemblyIssue> issues) {
         String groupPath = "groups[" + groupIndex + "]";
         if (group.evaluationMode() != EvaluationMode.INDEPENDENT) {
@@ -86,7 +90,12 @@ public final class BasicBlockAssemblyValidator {
             }
             blockDefinitions.put(block.id(), definition);
             validateParameters(block, definition, blockPath, issues);
+            validateKnownSemantics(block, blockPath, issues);
             validateContainer(group, definition, blockPath, issues);
+        }
+
+        if (terminalStructurePublished) {
+            validateTerminalStructure(group, groupIndex, blockDefinitions, issues);
         }
 
         if (!isSequential(group)) {
@@ -95,6 +104,110 @@ public final class BasicBlockAssemblyValidator {
             return;
         }
         validatePortTypes(group, groupIndex, blockDefinitions, issues);
+    }
+
+    private void validateTerminalStructure(
+            BasicBlockGroup group,
+            int groupIndex,
+            Map<String, StrategyElementDefinition> definitions,
+            List<BasicBlockAssemblyIssue> issues) {
+        String groupPath = "groups[" + groupIndex + "]";
+        if (group.blocks().size() < 2) {
+            add(issues, "CONDITION_REQUIRED", groupPath + ".blocks",
+                    "A Basic flow needs a trigger or condition before its order action");
+        }
+        int terminalCount = 0;
+        int triggerCount = 0;
+        for (int index = 0; index < group.blocks().size(); index++) {
+            StrategyElementDefinition definition = definitions.get(group.blocks().get(index).id());
+            if (definition != null && "TRIGGER".equals(definition.elementKind())) {
+                triggerCount++;
+            }
+            if (definition == null || !isTerminal(definition)) {
+                continue;
+            }
+            terminalCount++;
+            if (index != group.blocks().size() - 1) {
+                add(issues, "TERMINAL_ELEMENT_POSITION", groupPath + ".blocks[" + index + "].elementCode",
+                        "An order action must be the final block in its flow");
+            }
+        }
+        if (terminalCount == 0) {
+            add(issues, "TERMINAL_ELEMENT_REQUIRED", groupPath + ".blocks",
+                    "A Basic flow must end with one order action");
+        } else if (terminalCount > 1) {
+            add(issues, "MULTIPLE_TERMINAL_ELEMENTS", groupPath + ".blocks",
+                    "A Basic flow may contain exactly one order action");
+        }
+        if (triggerCount > 1) {
+            add(issues, "MULTIPLE_TRIGGER_ELEMENTS", groupPath + ".blocks",
+                    "A Basic flow may contain only one schedule trigger");
+        }
+    }
+
+    private static void validateKnownSemantics(
+            BasicBlock block, String blockPath, List<BasicBlockAssemblyIssue> issues) {
+        if ("BASIC_SMA_CROSS".equals(block.elementCode())) {
+            BigDecimal shortPeriod = decimal(block.parameters().get("shortPeriod"));
+            BigDecimal longPeriod = decimal(block.parameters().get("longPeriod"));
+            if (shortPeriod != null && longPeriod != null
+                    && shortPeriod.compareTo(longPeriod) >= 0) {
+                add(issues, "IMPOSSIBLE_PERIOD_COMBINATION", blockPath + ".parameters",
+                        "The short moving average period must be smaller than the long period");
+            }
+        }
+        for (String name : List.of(
+                "threshold", "thresholdPercent", "orderPercent", "waitInterval",
+                "maxExecutions", "interval")) {
+            if (!block.parameters().containsKey(name)) {
+                continue;
+            }
+            BigDecimal value = decimal(block.parameters().get(name));
+            String location = blockPath + ".parameters." + name;
+            if (value == null) {
+                add(issues, "INVALID_PARAMETER_VALUE", location,
+                        "Parameter must be a decimal number");
+                continue;
+            }
+            if ((name.equals("thresholdPercent") || name.equals("waitInterval"))
+                    && value.signum() < 0) {
+                add(issues, "INVALID_PARAMETER_VALUE", location,
+                        "Parameter must not be negative");
+            }
+            if ((name.equals("orderPercent") || name.equals("maxExecutions")
+                    || name.equals("interval")) && value.signum() <= 0) {
+                add(issues, "INVALID_PARAMETER_VALUE", location,
+                        "Parameter must be greater than zero");
+            }
+            if (name.equals("orderPercent") && value.compareTo(BigDecimal.valueOf(100)) > 0) {
+                add(issues, "INVALID_PARAMETER_VALUE", location,
+                        "Order percent must not exceed 100");
+            }
+        }
+    }
+
+    private static BigDecimal decimal(Object value) {
+        String text = value instanceof Number number
+                ? number.toString()
+                : value instanceof String string ? string : null;
+        if (text == null || text.isBlank()) return null;
+        try {
+            return new BigDecimal(text);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private boolean isTerminal(StrategyElementDefinition definition) {
+        JsonNode contract = parse(definition.executionContract(), "elementCode", new ArrayList<>());
+        if (contract != null && "EMIT_ORDER_CANDIDATE".equals(
+                contract.path("runtime").path("operation").asText())) {
+            return true;
+        }
+        if ("ORDER".equals(definition.elementKind()) || "ACTION".equals(definition.elementKind())) {
+            return contract == null || !contract.has("terminal") || contract.path("terminal").asBoolean();
+        }
+        return contract != null && contract.path("terminal").asBoolean(false);
     }
 
     private void validateParameters(
@@ -114,10 +227,16 @@ public final class BasicBlockAssemblyValidator {
             }
         }
         schema.path("properties").properties().forEach(property -> {
-            if (block.parameters().containsKey(property.getKey())
-                    && !matchesType(block.parameters().get(property.getKey()), property.getValue().path("type").asText())) {
-                add(issues, "INVALID_PARAMETER_TYPE", blockPath + ".parameters." + property.getKey(),
-                        "Parameter does not match the catalog type");
+            if (block.parameters().containsKey(property.getKey())) {
+                Object value = block.parameters().get(property.getKey());
+                String location = blockPath + ".parameters." + property.getKey();
+                if (!matchesType(value, property.getValue().path("type").asText())) {
+                    add(issues, "INVALID_PARAMETER_TYPE", location,
+                            "Parameter does not match the catalog type");
+                } else if (!matchesValueConstraints(value, property.getValue())) {
+                    add(issues, "INVALID_PARAMETER_VALUE", location,
+                            "Parameter is outside the values published by the catalog");
+                }
             }
         });
         block.parameters().keySet().stream()
@@ -128,6 +247,23 @@ public final class BasicBlockAssemblyValidator {
                         "UNDECLARED_PARAMETER",
                         blockPath + ".parameters." + name,
                         "Parameter is not declared by the published catalog"));
+    }
+
+    private boolean matchesValueConstraints(Object value, JsonNode schema) {
+        JsonNode actual = objectMapper.valueToTree(value);
+        if (schema.has("minLength") && actual.isTextual()
+                && actual.textValue().length() < schema.path("minLength").asInt()) {
+            return false;
+        }
+        if (schema.path("enum").isArray()) {
+            for (JsonNode permitted : schema.path("enum")) {
+                if (permitted.equals(actual)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return true;
     }
 
     private void validateContainer(

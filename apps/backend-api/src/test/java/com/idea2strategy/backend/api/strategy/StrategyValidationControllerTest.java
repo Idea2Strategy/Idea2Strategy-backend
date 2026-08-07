@@ -79,4 +79,46 @@ class StrategyValidationControllerTest {
         assertThat(coverage.getValue().feeds()).isEmpty();
         assertThat(coverage.getValue().features()).isEmpty();
     }
+
+    @Test
+    void previewsAnUnsavedEditorRevisionAndEchoesItsRevisionForStaleResponseProtection() throws Exception {
+        var validationService = mock(BasicStrategyValidationCommandService.class);
+        var catalogService = mock(BasicStrategyCatalogQueryService.class);
+        var catalog = mock(BasicStrategyCatalog.class);
+        var version = mock(ElementCatalogVersion.class);
+        when(version.dataRequirementVersion()).thenReturn("alpaca-sip/v1");
+        when(catalog.version()).thenReturn(version);
+        when(catalogService.getPublished(CATALOG_ID)).thenReturn(catalog);
+        when(validationService.preview(any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq(9L)))
+                .thenReturn(new StrategyValidationRun(
+                        VALIDATION_ID, STRATEGY_ID, OWNER_ID, null, 9, "b".repeat(64), CATALOG_ID,
+                        StrategyValidationStatus.INVALID,
+                        List.of(new StrategyValidationFinding(
+                                StrategyValidationFinding.Severity.BLOCKING_ERROR,
+                                "REQUIRED_PARAMETER_MISSING", "groups[0].blocks[0].parameters.threshold",
+                                "Required parameter is missing", List.of())),
+                        NOW, NOW));
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(
+                        new StrategyValidationController(validationService, catalogService))
+                .setControllerAdvice(new StrategyAuthoringExceptionHandler())
+                .build();
+
+        mvc.perform(post("/api/v1/strategies/{strategyId}/validation-previews", STRATEGY_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"catalogId":"%s","clientRevision":9,
+                                 "semanticDocument":{"mode":"BASIC","catalogId":"%s","groups":[]}}
+                                """.formatted(CATALOG_ID, CATALOG_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestedEditSequence").value(9))
+                .andExpect(jsonPath("$.status").value("INVALID"))
+                .andExpect(jsonPath("$.findings[0].code").value("REQUIRED_PARAMETER_MISSING"));
+
+        verify(validationService).preview(
+                org.mockito.ArgumentMatchers.eq(STRATEGY_ID),
+                org.mockito.ArgumentMatchers.same(catalog),
+                any(BacktestDataCoverage.class),
+                any(String.class),
+                org.mockito.ArgumentMatchers.eq(9L));
+    }
 }
