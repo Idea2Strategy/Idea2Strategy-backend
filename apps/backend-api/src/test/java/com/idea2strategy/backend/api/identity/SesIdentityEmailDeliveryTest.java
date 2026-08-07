@@ -45,8 +45,12 @@ class SesIdentityEmailDeliveryTest {
         verify(ses, org.mockito.Mockito.times(3)).sendEmail(captor.capture());
         var messages = captor.getAllValues();
         assertThat(messages.get(0).content().simple().body().text().data())
-                .contains("https://ideatostrategy.com/account?verificationToken=verification%20secret%2F%2B")
+                .contains("https://ideatostrategy.com/api/v1/auth/verify-email?token=verification%20secret%2F%2B")
                 .contains(EXPIRES_AT.toString());
+        assertThat(messages.get(0).content().simple().body().html().data())
+                .contains("Idea2Strategy 이메일 인증")
+                .contains("https://ideatostrategy.com/api/v1/auth/verify-email?token=verification%20secret%2F%2B")
+                .contains("본인이 요청하지 않았다면");
         assertThat(messages.get(1).destination().toAddresses()).containsExactly("person@example.com");
         assertThat(messages.get(2).content().simple().body().text().data())
                 .contains("https://ideatostrategy.com/account?resetToken=reset-secret");

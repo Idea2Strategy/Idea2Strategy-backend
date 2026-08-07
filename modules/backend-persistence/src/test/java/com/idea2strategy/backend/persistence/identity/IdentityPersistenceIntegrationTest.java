@@ -20,7 +20,6 @@ import com.idea2strategy.backend.application.identity.PasswordResetRejectedExcep
 import com.idea2strategy.backend.application.identity.ProtectedEmail;
 import com.idea2strategy.backend.application.identity.ProtectedOidcSubject;
 import com.idea2strategy.backend.application.identity.IdentifierFingerprint;
-import com.idea2strategy.backend.application.identity.ResendVerificationCommand;
 import com.idea2strategy.backend.application.identity.RequestPasswordResetCommand;
 import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
 import com.idea2strategy.backend.application.identity.ResetPasswordCommand;
@@ -131,8 +130,10 @@ class IdentityPersistenceIntegrationTest {
                         signup.accountId()))
                 .isEqualTo(1);
 
-        var replacement = registration.resendVerification(
-                new ResendVerificationCommand(signup.accountId(), UUID.randomUUID(), "192.0.2.0/24"));
+        var replacement = registration.signup(new SignupCommand(
+                "person@example.com", "a different sufficiently long passphrase",
+                UUID.randomUUID(), "192.0.2.0/24"));
+        assertThat(replacement.accountId()).isEqualTo(signup.accountId());
         assertThatThrownBy(() -> registration.verify(
                         new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID())))
                 .hasMessage("Verification token is no longer valid");
