@@ -40,7 +40,16 @@ public class RoomTerminationController {
         return response(service.expel(roomId, participationId));
     }
 
-    public record WithdrawalRequest(ParticipationExitAction action, String reasonCode) {}
+    public record WithdrawalRequest(ParticipationExitAction action, String reasonCode) {
+        public WithdrawalRequest {
+            if (action == null) {
+                throw new IllegalArgumentException("Withdrawal action is required");
+            }
+            if (reasonCode == null || reasonCode.isBlank() || reasonCode.length() > 80) {
+                throw new IllegalArgumentException("reasonCode must contain 1 to 80 characters");
+            }
+        }
+    }
     public record ReasonRequest(String reasonCode) {}
     public record TerminationResponse(UUID roomId, int participationsTerminated, Instant occurredAt) {}
 

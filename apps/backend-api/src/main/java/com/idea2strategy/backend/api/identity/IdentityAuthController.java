@@ -115,6 +115,12 @@ public class IdentityAuthController {
     public record SignupResponse(UUID accountId, boolean verificationRequired, Instant verificationExpiresAt) {}
 
     public record VerifyEmailRequest(String verificationToken) {
+        public VerifyEmailRequest {
+            if (verificationToken == null || verificationToken.isBlank()) {
+                throw new IllegalArgumentException("Verification token is required");
+            }
+        }
+
         @Override
         public String toString() {
             return "VerifyEmailRequest[token=REDACTED]";
