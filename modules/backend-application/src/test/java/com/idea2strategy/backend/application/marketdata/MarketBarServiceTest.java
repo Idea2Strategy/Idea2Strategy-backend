@@ -27,7 +27,7 @@ class MarketBarServiceTest {
         when(principal.accountId()).thenReturn(ACCOUNT_ID);
         when(catalog.getSupportedInstruments()).thenReturn(List.of(
                 new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
-        when(port.findRecent(AAPL_ID, 300)).thenReturn(List.of(bar()));
+        when(port.findRecent(AAPL_ID, MarketBarTimeframe.THIRTY_MINUTES, 300)).thenReturn(List.of(bar()));
         var service = new MarketBarService(port, catalog, principal);
 
         List<MarketBarView> result = service.findRecent(AAPL_ID, 300);

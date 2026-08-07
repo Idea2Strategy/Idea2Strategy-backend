@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.idea2strategy.backend.application.marketdata.MarketBarPort;
 import com.idea2strategy.backend.application.marketdata.MarketBarService;
+import com.idea2strategy.backend.application.marketdata.MarketBarTimeframe;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
 import java.math.BigDecimal;
@@ -26,7 +27,7 @@ class MarketBarControllerTest {
         MarketBarPort port = new MarketBarPort() {
             @Override
             public List<com.idea2strategy.backend.application.marketdata.MarketBar> findRecent(
-                    UUID instrumentId, int limit) {
+                    UUID instrumentId, MarketBarTimeframe timeframe, int limit) {
                 return List.of(new com.idea2strategy.backend.application.marketdata.MarketBar(
                         "event-1", AAPL_ID, "ALPACA", "SIP",
                         Instant.parse("2026-08-06T14:30:00Z"), 1, 0,
@@ -34,29 +35,25 @@ class MarketBarControllerTest {
                         new BigDecimal("209.90"), new BigDecimal("210.12"),
                         new BigDecimal("2500")));
             }
-
-            @Override
-            public AutoCloseable subscribe(UUID instrumentId, java.util.function.Consumer<com.idea2strategy.backend.application.marketdata.MarketBar> listener) {
-                return () -> {};
-            }
         };
         BasicStrategyCatalogQueryService catalog = org.mockito.Mockito.mock(BasicStrategyCatalogQueryService.class);
         org.mockito.Mockito.when(catalog.getSupportedInstruments()).thenReturn(List.of(
                 new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
         var service = new MarketBarService(port, catalog, () -> UUID.randomUUID());
-        mvc = MockMvcBuilders.standaloneSetup(new MarketBarController(service, new MarketBarSseHub(service)))
+        mvc = MockMvcBuilders.standaloneSetup(new MarketBarController(service))
                 .setControllerAdvice(new MarketBarExceptionHandler())
                 .build();
     }
 
     @Test
-    void returnsChronologicalOneMinuteBars() throws Exception {
+    void returnsChronologicalStrategyBarsForTheRequestedTimeframe() throws Exception {
         mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
+                        .queryParam("timeframe", "4h")
                         .queryParam("limit", "300"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.instrumentId").value(AAPL_ID.toString()))
                 .andExpect(jsonPath("$.symbol").value("AAPL"))
-                .andExpect(jsonPath("$.timeframe").value("1m"))
+                .andExpect(jsonPath("$.timeframe").value("4h"))
                 .andExpect(jsonPath("$.bars[0].close").value(210.12));
     }
 
