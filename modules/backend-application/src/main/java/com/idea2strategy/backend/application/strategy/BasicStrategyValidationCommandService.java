@@ -87,8 +87,61 @@ public final class BasicStrategyValidationCommandService {
         var document = documentQueryPort.findOwnedByStrategyId(strategyId, accountId)
                 .orElseThrow(() -> new NoSuchElementException("Strategy document not found"));
 
+        return validateDocument(
+                strategyId,
+                accountId,
+                document.semanticDocument(),
+                document.semanticHash(),
+                document.editSequence(),
+                catalog,
+                coverage,
+                true);
+    }
+
+    /**
+     * Validates the editor's current unsaved document without creating a durable validation run.
+     * The client revision is echoed as {@code requestedEditSequence}, allowing the UI to discard a
+     * response that arrives after a newer block edit.
+     */
+    public StrategyValidationRun preview(
+            UUID strategyId,
+            BasicStrategyCatalog catalog,
+            BacktestDataCoverage coverage,
+            String semanticDocument,
+            long clientRevision) {
+        if (clientRevision < 0) {
+            throw new IllegalArgumentException("clientRevision must not be negative");
+        }
+        UUID accountId = principal.accountId();
+        var strategy = strategyQueryPort.findOwnedById(strategyId, accountId)
+                .orElseThrow(() -> new NoSuchElementException("Strategy not found"));
+        if (strategy.mode() != StrategyMode.BASIC) {
+            throw new IllegalArgumentException("Strategy must use BASIC mode");
+        }
+        String canonicalSemantic = StrategyDocumentJson.canonicalize(semanticDocument);
+        return validateDocument(
+                strategyId,
+                accountId,
+                canonicalSemantic,
+                StrategyDocumentJson.sha256(canonicalSemantic),
+                clientRevision,
+                catalog,
+                coverage,
+                false);
+    }
+
+    private StrategyValidationRun validateDocument(
+            UUID strategyId,
+            UUID accountId,
+            String semanticDocument,
+            String semanticHash,
+            long requestedEditSequence,
+            BasicStrategyCatalog catalog,
+            BacktestDataCoverage coverage,
+            boolean persist) {
+
         var findings = new ArrayList<StrategyValidationFinding>();
-        BasicBlockAssembly assembly = parseAssembly(document.semanticDocument(), findings);
+        BasicBlockAssembly assembly = parseAssembly(semanticDocument, findings);
         if (assembly != null) {
             var assemblyResult = assemblyValidator.validate(assembly, catalog);
             assemblyResult.issues().forEach(issue -> findings.add(new StrategyValidationFinding(
@@ -119,14 +172,16 @@ public final class BasicStrategyValidationCommandService {
                 strategyId,
                 accountId,
                 null,
-                document.editSequence(),
-                document.semanticHash(),
+                requestedEditSequence,
+                semanticHash,
                 catalog.version().id(),
                 status,
                 findings,
                 now,
                 now);
-        validationCommandPort.save(run);
+        if (persist) {
+            validationCommandPort.save(run);
+        }
         return run;
     }
 

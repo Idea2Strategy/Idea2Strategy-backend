@@ -87,6 +87,24 @@ class BasicStrategyValidationServiceTest {
     }
 
     @Test
+    void previewsTheCurrentClientRevisionWithoutPersistingOrReadingTheSavedDocument() {
+        var documents = new StubDocumentPort(document(semanticDocument("RSI"), 2));
+        var runs = new InMemoryValidationRunPort();
+        String currentEditorDocument = semanticDocument("UNKNOWN");
+
+        StrategyValidationRun preview = service(documents, runs, OWNER_ID).preview(
+                STRATEGY_ID, catalog(), exactCoverage(), currentEditorDocument, 42);
+
+        assertThat(preview.requestedEditSequence()).isEqualTo(42);
+        assertThat(preview.semanticHash()).isEqualTo(StrategyDocumentJson.sha256(
+                StrategyDocumentJson.canonicalize(currentEditorDocument)));
+        assertThat(preview.status()).isEqualTo(StrategyValidationStatus.INVALID);
+        assertThat(preview.findings()).extracting(StrategyValidationFinding::code)
+                .containsExactly("UNSUPPORTED_ELEMENT");
+        assertThat(runs.saved).isNull();
+    }
+
+    @Test
     void reportsRevalidationOnlyAfterTheSavedSemanticMeaningChanges() {
         var documents = new StubDocumentPort(document(semanticDocument("RSI"), 4));
         var runs = new InMemoryValidationRunPort();
@@ -200,7 +218,9 @@ class BasicStrategyValidationServiceTest {
     private static StrategyElementDefinition element(String code, String inputs, String outputs, String contract) {
         return new StrategyElementDefinition(
                 UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                CATALOG_ID, code, "BLOCK", "{}", inputs, outputs, contract,
+                CATALOG_ID, code,
+                code.endsWith("ORDER") ? "ACTION" : code.equals("MARKET_OPEN") ? "TRIGGER" : "CONDITION",
+                "{}", inputs, outputs, contract,
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     }
 
@@ -216,7 +236,7 @@ class BasicStrategyValidationServiceTest {
     }
 
     private static String noDataContract() {
-        return "{\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[]}}";
+        return "{\"terminal\":true,\"containers\":[\"BUY\"],\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[]}}";
     }
 
     private static final class StubDocumentPort implements StrategyDocumentQueryPort {
