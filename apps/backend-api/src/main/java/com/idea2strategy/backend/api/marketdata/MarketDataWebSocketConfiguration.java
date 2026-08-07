@@ -3,7 +3,11 @@ package com.idea2strategy.backend.api.marketdata;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.messaging.marketdata.RedisDisplayPriceAdapter;
+import com.idea2strategy.backend.messaging.marketdata.RedisSingleUseTicketStore;
 import java.time.Clock;
+import java.util.Arrays;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -25,10 +29,21 @@ public class MarketDataWebSocketConfiguration implements WebSocketConfigurer {
             BasicStrategyCatalogQueryService catalog,
             ObjectMapper mapper,
             MarketDataWebSocketTicketService ticketService,
-            @Value("${market-data.websocket.allowed-origin-patterns:*}") String origins) {
-        this.handler = new MarketDataPriceWebSocketHandler(prices, catalog, mapper);
+            MeterRegistry meterRegistry,
+            @Value("${market-data.websocket.allowed-origin-patterns}") String origins,
+            @Value("${market-data.websocket.maximum-connections-per-account:5}") int maximumConnections,
+            @Value("${market-data.websocket.maximum-subscriptions-per-connection:20}") int maximumSubscriptions) {
+        this.handler = new MarketDataPriceWebSocketHandler(
+                prices, catalog, mapper, maximumConnections, maximumSubscriptions, meterRegistry);
         this.tickets = new MarketDataTicketHandshakeInterceptor(ticketService);
-        this.allowedOrigins = origins.split(",");
+        this.allowedOrigins = Arrays.stream(origins.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isBlank())
+                .toArray(String[]::new);
+        if (allowedOrigins.length == 0) {
+            throw new IllegalArgumentException(
+                    "market-data.websocket.allowed-origin-patterns must not be blank");
+        }
     }
 
     @Bean(destroyMethod = "close")
@@ -38,9 +53,17 @@ public class MarketDataWebSocketConfiguration implements WebSocketConfigurer {
         return RedisDisplayPriceAdapter.connect(redisUri, keyPrefix);
     }
 
+    @Bean(destroyMethod = "close")
+    static RedisSingleUseTicketStore redisSingleUseTicketStore(
+            @Value("${market-data.redis-uri}") String redisUri,
+            @Value("${market-data.redis-key-prefix:i2s}") String keyPrefix) {
+        return RedisSingleUseTicketStore.connect(redisUri, keyPrefix);
+    }
+
     @Bean
-    static MarketDataWebSocketTicketService marketDataWebSocketTicketService() {
-        return new MarketDataWebSocketTicketService(Clock.systemUTC());
+    static MarketDataWebSocketTicketService marketDataWebSocketTicketService(
+            RedisSingleUseTicketStore store) {
+        return new MarketDataWebSocketTicketService(Clock.systemUTC(), store);
     }
 
     @Override
@@ -48,5 +71,10 @@ public class MarketDataWebSocketConfiguration implements WebSocketConfigurer {
         registry.addHandler(handler, "/ws/v1/market-data/prices")
                 .addInterceptors(tickets)
                 .setAllowedOriginPatterns(allowedOrigins);
+    }
+
+    @PreDestroy
+    void closeHandler() {
+        handler.close();
     }
 }

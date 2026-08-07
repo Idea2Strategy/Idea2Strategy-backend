@@ -188,7 +188,7 @@ class StrategyBotIndependentE2ETest {
                                 "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\",\"side\":\"$container\"}",
                                 "[]")),
                 List.of(new StrategyFeatureDefinition(
-                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "1m", "{\"period\":14}",
+                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "30m", "{\"period\":14}",
                         "NUMBER", 15, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")),
                 List.of(new SupportedInstrument(INSTRUMENT_ID, "STOCK", "XNAS", "USD", "AAPL")));
     }
@@ -221,7 +221,7 @@ class StrategyBotIndependentE2ETest {
                 + "\"allocationMode\":\"EQUAL\",\"instrumentIds\":[\"" + INSTRUMENT_ID + "\"],"
                 + "\"blocks\":["
                 + "{\"id\":\"trigger\",\"elementCode\":\"BASIC_RSI_READ\","
-                + "\"parameters\":{\"resolution\":\"1m\"}},"
+                + "\"parameters\":{\"resolution\":\"30m\"}},"
                 + "{\"id\":\"condition\",\"elementCode\":\"BASIC_VALUE_COMPARE\","
                 + "\"parameters\":{\"operator\":\"LT\",\"threshold\":\"30\"}},"
                 + "{\"id\":\"order\",\"elementCode\":\"BASIC_EQUAL_ALLOCATION_ORDER\",\"parameters\":{}}],"

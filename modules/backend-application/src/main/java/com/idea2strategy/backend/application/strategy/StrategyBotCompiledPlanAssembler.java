@@ -95,6 +95,7 @@ public final class StrategyBotCompiledPlanAssembler {
     private static final Pattern SHORTHAND_RESOLUTION =
             Pattern.compile("^(?<amount>[1-9][0-9]*)(?<unit>[smhd])$");
     private static final String CONTAINER_PLACEHOLDER = "container";
+    private static final Set<String> LIVE_RESOLUTIONS = Set.of("30m", "1h", "4h", "1d");
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
@@ -292,7 +293,8 @@ public final class StrategyBotCompiledPlanAssembler {
             throw new IllegalStateException(
                     "Element " + elementCode + " needs parameter " + name + ", which the validated block omits");
         }
-        return value.asText();
+        String resolved = value.asText();
+        return "resolution".equals(argument) ? liveResolution(resolved) : resolved;
     }
 
     /**
@@ -306,35 +308,48 @@ public final class StrategyBotCompiledPlanAssembler {
             JsonNode planRoot,
             Map<String, StrategyElementDefinition> elements,
             Map<String, StrategyFeatureDefinition> features) {
-        Map<String, Set<String>> instrumentsByFeatureCode = new LinkedHashMap<>();
+        Map<FeatureRequirementKey, Set<String>> instrumentsByFeature = new LinkedHashMap<>();
         for (JsonNode flow : planRoot.path("flows")) {
             Set<String> instruments = new LinkedHashSet<>();
             flow.path("instrumentIds").forEach(node -> instruments.add(node.asText()));
-            Set<String> codes = new LinkedHashSet<>();
+            Set<FeatureRequirementKey> requirements = new LinkedHashSet<>();
             flow.path("steps").forEach(step -> {
                 StrategyElementDefinition element = elements.get(step.path("elementCode").asText());
                 if (element != null) {
                     parse(element.executionContract()).path("backtest").path("features")
-                            .forEach(feature -> codes.add(feature.asText()));
+                            .forEach(feature -> {
+                                StrategyFeatureDefinition definition = features.get(feature.asText());
+                                if (definition == null) {
+                                    throw new IllegalStateException(
+                                            "Validated feature is missing from its catalog: " + feature.asText());
+                                }
+                                String requested = step.path("parameters").path("resolution")
+                                        .asText(definition.resolution());
+                                requirements.add(new FeatureRequirementKey(
+                                        feature.asText(), normalizedResolution(liveResolution(requested))));
+                            });
                 }
             });
-            codes.forEach(code -> instrumentsByFeatureCode
-                    .computeIfAbsent(code, ignored -> new TreeSet<>())
+            requirements.forEach(requirement -> instrumentsByFeature
+                    .computeIfAbsent(requirement, ignored -> new TreeSet<>())
                     .addAll(instruments));
         }
         List<RequiredFeature> requirements = new ArrayList<>();
-        new TreeSet<>(instrumentsByFeatureCode.keySet()).forEach(code -> {
-            StrategyFeatureDefinition definition = features.get(code);
+        instrumentsByFeature.keySet().stream()
+                .sorted(java.util.Comparator.comparing(FeatureRequirementKey::featureCode)
+                        .thenComparing(FeatureRequirementKey::resolution))
+                .forEach(requirement -> {
+            StrategyFeatureDefinition definition = features.get(requirement.featureCode());
             if (definition == null) {
-                throw new IllegalStateException("Validated feature is missing from its catalog: " + code);
+                throw new IllegalStateException(
+                        "Validated feature is missing from its catalog: " + requirement.featureCode());
             }
-            String resolution = normalizedResolution(definition.resolution());
             requirements.add(new RequiredFeature(
-                    requirementId(code, resolution),
+                    requirementId(requirement.featureCode(), requirement.resolution()),
                     definition.id().toString(),
                     featureVersion(definition.calculatorVersion()),
-                    List.copyOf(instrumentsByFeatureCode.get(code)),
-                    resolution,
+                    List.copyOf(instrumentsByFeature.get(requirement)),
+                    requirement.resolution(),
                     requiredObservations(definition)));
         });
         return List.copyOf(requirements);
@@ -398,6 +413,15 @@ public final class StrategyBotCompiledPlanAssembler {
             throw new IllegalStateException("Feature resolution must be positive, got " + resolution);
         }
         return duration.toString();
+    }
+
+    private static String liveResolution(String resolution) {
+        String normalized = resolution.trim().toLowerCase(Locale.ROOT);
+        if (!LIVE_RESOLUTIONS.contains(normalized)) {
+            throw new IllegalStateException(
+                    "Live strategy resolution must be one of 30m, 1h, 4h, 1d, got " + resolution);
+        }
+        return normalized;
     }
 
     private static String instrumentCatalogVersion(Instant releasedAt) {
@@ -503,6 +527,8 @@ public final class StrategyBotCompiledPlanAssembler {
     }
 
     private record PlanStep(int sequence, String operation, Map<String, String> arguments) {}
+
+    private record FeatureRequirementKey(String featureCode, String resolution) {}
 
     private record RequiredFeature(
             String requirementId,

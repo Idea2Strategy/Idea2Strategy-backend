@@ -96,7 +96,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
      * wrong without the release itself being wrong: the element catalog's runtime operations replace its
      * element codes, the block parameters fill the placeholders, the trade container becomes the order
      * side, and the feature catalog's own vocabulary becomes the consumer's — {@code rsi:1.0.0} to an
-     * exact version, {@code 1m} to a normalised duration, and a fifteen-point window to the fourteen
+     * exact version, {@code 30m} to a normalised duration, and a fifteen-point window to the fourteen
      * observations warm-up has to supply before the live bar completes it.
      */
     @Test
@@ -117,8 +117,8 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 .contains("\"threshold\":\"30\"")
                 .contains("\"side\":\"BUY\"")
                 .contains("\"featureVersion\":\"1.0.0\"")
-                .contains("\"resolution\":\"PT1M\"")
-                .contains("\"requirementId\":\"rsi-14-pt1m\"")
+                .contains("\"resolution\":\"PT30M\"")
+                .contains("\"requirementId\":\"rsi-14-pt30m\"")
                 .contains("\"requiredObservations\":14")
                 .contains("\"key\":\"" + release.partition().id() + "\"")
                 .contains("\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-01\"");
@@ -213,7 +213,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 + "\"allocationMode\":\"EQUAL\",\"instrumentIds\":[\"" + AAPL_ID + "\"],"
                 + "\"blocks\":["
                 + "{\"id\":\"trigger\",\"elementCode\":\"BASIC_RSI_READ\","
-                + "\"parameters\":{\"resolution\":\"1m\"}},"
+                + "\"parameters\":{\"resolution\":\"30m\"}},"
                 + "{\"id\":\"condition\",\"elementCode\":\"BASIC_VALUE_COMPARE\","
                 + "\"parameters\":{\"operator\":\"LT\",\"threshold\":\"30\"}},"
                 + "{\"id\":\"order\",\"elementCode\":\"BASIC_EQUAL_ALLOCATION_ORDER\",\"parameters\":{}}],"
@@ -256,7 +256,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
                                         "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\",\"side\":\"$container\"}",
                                         "[]"))),
                 List.of(new StrategyFeatureDefinition(
-                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "1m", "{\"period\":14}",
+                        FEATURE_ID, CATALOG_ID, "RSI_14", "rsi:1.0.0", "30m", "{\"period\":14}",
                         "NUMBER", 15, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")),
                 List.of(new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
     }

@@ -10,11 +10,12 @@ import java.util.UUID;
 final class MarketBarJsonCodec {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    MarketBar decode(String encoded) {
+    MarketBar decode(String encoded, com.idea2strategy.backend.application.marketdata.MarketBarTimeframe timeframe) {
         try {
             JsonNode root = objectMapper.readTree(encoded);
-            if (!"BAR_1M".equals(root.path("eventType").asText())) {
-                throw new IllegalArgumentException("Redis payload is not a one-minute bar");
+            String expectedType = "BAR_" + timeframe.value().toUpperCase(java.util.Locale.ROOT);
+            if (!expectedType.equals(root.path("eventType").asText())) {
+                throw new IllegalArgumentException("Redis payload is not a " + timeframe.value() + " bar");
             }
             JsonNode values = root.has("values") ? root.path("values") : root;
             return new MarketBar(
