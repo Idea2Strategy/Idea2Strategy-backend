@@ -10,7 +10,7 @@ import com.idea2strategy.backend.application.strategy.StrategyEditLeaseInvalidEx
 import com.idea2strategy.backend.application.strategy.StrategyEditLeaseTokens;
 import com.idea2strategy.backend.application.testing.FixedIdGenerator;
 import com.idea2strategy.backend.application.testing.RecordingDomainEventPublisher;
-import com.idea2strategy.backend.application.testing.TestSessionPrincipal;
+import com.idea2strategy.backend.application.testing.TestCustomerAccessPrincipal;
 import com.idea2strategy.backend.domain.strategy.StrategyEditLease;
 import com.idea2strategy.backend.domain.strategy.StrategyCreated;
 import com.idea2strategy.backend.domain.strategy.StrategyMode;
@@ -104,7 +104,7 @@ class BasicStrategyDraftPersistenceIntegrationTest {
 
     @Test
     void createsDraftRowsAndRejectsAStaleConditionalUpdate() {
-        var principal = new TestSessionPrincipal(OWNER_ID);
+        var principal = new TestCustomerAccessPrincipal(OWNER_ID);
         var events = new RecordingDomainEventPublisher();
         var service = new BasicStrategyDraftCommandService(
                 draftCommandAdapter,
@@ -176,7 +176,7 @@ class BasicStrategyDraftPersistenceIntegrationTest {
 
     @Test
     void leasePersistenceBlocksCompetingSessionsAndAllowsRecoveryAfterRelease() {
-        var principal = new TestSessionPrincipal(OWNER_ID);
+        var principal = new TestCustomerAccessPrincipal(OWNER_ID);
         var service = new BasicStrategyDraftCommandService(
                 draftCommandAdapter,
                 strategyQueryAdapter,

@@ -19,7 +19,7 @@ final class CredentialStore {
     void save(String token) {
         try {
             Files.createDirectories(file.getParent());
-            ObjectNode value = JSON.createObjectNode().put("sessionToken", token);
+            ObjectNode value = JSON.createObjectNode().put("accessToken", token);
             Files.writeString(file, JSON.writeValueAsString(value));
             try {
                 Files.setPosixFilePermissions(file, Set.of(
@@ -38,7 +38,11 @@ final class CredentialStore {
             if (!Files.exists(file)) {
                 throw new CliFailure(3, "AUTHENTICATION_REQUIRED", "Run login before this command");
             }
-            String token = JSON.readTree(Files.readString(file)).path("sessionToken").asText();
+            var stored = JSON.readTree(Files.readString(file));
+            String token = stored.path("accessToken").asText();
+            if (token.isBlank()) {
+                token = stored.path("sessionToken").asText();
+            }
             if (token.isBlank()) {
                 throw new CliFailure(3, "AUTHENTICATION_REQUIRED", "Stored credentials are invalid; login again");
             }

@@ -49,6 +49,37 @@ class StrategyBotCompiledPlanAssemblerTest {
                 .isEqualTo("BUY");
     }
 
+    @Test
+    void publishesADirectMarketBlockWithoutInventingAWarmupFeature() {
+        JsonNode directFlow = objectMapper.createObjectNode()
+                .put("key", "buy")
+                .put("container", "BUY")
+                .<com.fasterxml.jackson.databind.node.ObjectNode>set(
+                        "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
+                .set("steps", objectMapper.createArrayNode()
+                        .add(step(1, "BASIC_PRICE_COMPARE",
+                                "{\"resolution\":\"1m\",\"operator\":\"GT\","
+                                        + "\"reference\":\"PREVIOUS_CLOSE\"}"))
+                        .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER", "{}")));
+        BasicStrategyCatalog directCatalog = new BasicStrategyCatalog(
+                catalog(feature("RSI_14", "rsi:1.0.0", "1m", 15)).version(),
+                List.of(
+                        element("BASIC_PRICE_COMPARE", "PRICE_COMPARE",
+                                "{\"resolution\":\"$resolution\",\"operator\":\"$operator\","
+                                        + "\"reference\":\"$reference\"}", "[]"),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", "EMIT_ORDER_CANDIDATE",
+                                "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\","
+                                        + "\"side\":\"$container\"}", "[]")),
+                List.of(),
+                catalog(feature("RSI_14", "rsi:1.0.0", "1m", 15)).instruments());
+
+        ContractPlan plan = assembleWithCatalog(planWith(directFlow), directCatalog);
+
+        assertThat(parse(plan.planDocument()).path("requiredFeatures")).isEmpty();
+        assertThat(stepsOf(plan, 0).get(0).path("operation").asText())
+                .isEqualTo("PRICE_COMPARE");
+    }
+
     /**
      * Two flows over different instruments requiring the same feature become one requirement, because
      * the contract forbids a duplicate feature-and-instruments key and the consumer warms one window
@@ -196,6 +227,10 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     private ContractPlan assemble(JsonNode planRoot, StrategyFeatureDefinition feature) {
+        return assembleWithCatalog(planRoot, catalog(feature));
+    }
+
+    private ContractPlan assembleWithCatalog(JsonNode planRoot, BasicStrategyCatalog selectedCatalog) {
         List<Flow> flows = new java.util.ArrayList<>();
         int order = 0;
         for (JsonNode flowNode : planRoot.path("flows")) {
@@ -208,7 +243,7 @@ class StrategyBotCompiledPlanAssemblerTest {
                     HASH_A, HASH_B, HASH_A, instruments, List.of(), order++));
         }
         return assembler.assemble(
-                planRoot, catalog(feature), PARTITION_ID, 10_000, new BigDecimal("100000.00"), flows,
+                planRoot, selectedCatalog, PARTITION_ID, 10_000, new BigDecimal("100000.00"), flows,
                 HASH_A, HASH_B, "basic-launch-snapshot.v1", RELEASED_AT);
     }
 

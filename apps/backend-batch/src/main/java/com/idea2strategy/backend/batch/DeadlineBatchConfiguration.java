@@ -90,9 +90,9 @@ public class DeadlineBatchConfiguration {
 
     @Bean
     @ConditionalOnBean(IdentityExpiryJdbcAdapter.class)
-    SessionExpiryBatchCategoryPort sessionExpiryBatchCategoryPort(
+    RefreshTokenFamilyExpiryBatchCategoryPort refreshTokenFamilyExpiryBatchCategoryPort(
             IdentityExpiryJdbcAdapter expiry, JdbcTemplate jdbc) {
-        return new SessionExpiryBatchCategoryPort(expiry, jdbc);
+        return new RefreshTokenFamilyExpiryBatchCategoryPort(expiry, jdbc);
     }
 
     @Bean

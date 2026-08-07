@@ -7,12 +7,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-class SessionManagementServiceTest {
+class RefreshTokenServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-02T03:00:00Z");
     private static final UUID ACCOUNT_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID LOGIN_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
@@ -23,7 +22,7 @@ class SessionManagementServiceTest {
         var repository = new Repository(session(null, false));
         var service = service(repository);
 
-        RotatedSession rotated = service.rotate(FAMILY_ID, "current-digest", UUID.randomUUID());
+        RotatedRefreshToken rotated = service.rotate(FAMILY_ID, "current-digest", UUID.randomUUID());
 
         assertThat(rotated.accountId()).isEqualTo(ACCOUNT_ID);
         assertThat(rotated.loginIdentityId()).isEqualTo(LOGIN_ID);
@@ -70,25 +69,25 @@ class SessionManagementServiceTest {
         assertThat(repository.revocationReason).isEqualTo("LOGOUT_ALL");
     }
 
-    private static SessionManagementService service(Repository repository) {
-        return new SessionManagementService(
+    private static RefreshTokenService service(Repository repository) {
+        return new RefreshTokenService(
                 repository,
                 repository,
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                () -> new SessionToken("replacement-secret", "replacement-digest"),
+                () -> new RefreshTokenSecret("replacement-secret", "replacement-digest"),
                 Duration.ofDays(30));
     }
 
-    private static StoredSession session(Instant revokedAt, boolean activeSanction) {
-        return new StoredSession(
+    private static StoredRefreshTokenFamily session(Instant revokedAt, boolean activeSanction) {
+        return new StoredRefreshTokenFamily(
                 FAMILY_ID, ACCOUNT_ID, LOGIN_ID, 3, 3, 4L, 4L,
                 AccountLifecycleStatus.ACTIVE, LoginIdentityStatus.ACTIVE,
-                null, NOW.minusSeconds(120), NOW.minusSeconds(10), NOW.plusSeconds(3600),
+                NOW.minusSeconds(120), NOW.minusSeconds(10), NOW.plusSeconds(3600),
                 revokedAt, activeSanction);
     }
 
-    private static final class Repository implements SessionQueryPort, SessionCommandPort {
-        private final StoredSession current;
+    private static final class Repository implements RefreshTokenFamilyQueryPort, RefreshTokenFamilyCommandPort {
+        private final StoredRefreshTokenFamily current;
         private boolean rotationSucceeds = true;
         private int revokeAllCount;
         private UUID revokedFamilyId;
@@ -97,17 +96,16 @@ class SessionManagementServiceTest {
         private String previousDigest;
         private String replacementDigest;
 
-        private Repository(StoredSession current) {
+        private Repository(StoredRefreshTokenFamily current) {
             this.current = current;
         }
 
-        @Override public Optional<StoredSession> findByTokenDigest(String digest) {
+        @Override public Optional<StoredRefreshTokenFamily> findByTokenDigest(String digest) {
             return "current-digest".equals(digest) ? Optional.of(current) : Optional.empty();
         }
-        @Override public Optional<StoredSession> findById(UUID id) {
+        @Override public Optional<StoredRefreshTokenFamily> findById(UUID id) {
             return current.id().equals(id) ? Optional.of(current) : Optional.empty();
         }
-        @Override public List<ActiveSession> findActiveByAccountId(UUID accountId, Instant now) { return List.of(); }
         @Override public boolean revoke(UUID accountId, UUID id, String reason, UUID correlationId, Instant now) {
             revokedFamilyId = id;
             revocationReason = reason;

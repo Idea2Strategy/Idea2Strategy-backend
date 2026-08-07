@@ -77,7 +77,7 @@ class IdentityAuthControllerTest {
         var controller = new IdentityAuthController(registration, authentication, delivery, jwt(), cookies());
 
         var response = controller.login(
-                new IdentityAuthController.LoginRequest("person@example.com", "a sufficiently long passphrase", "Chrome"),
+                new IdentityAuthController.LoginRequest("person@example.com", "a sufficiently long passphrase"),
                 UUID.randomUUID().toString());
 
         var body = response.getBody();
@@ -127,8 +127,8 @@ class IdentityAuthControllerTest {
                 Duration.ofMinutes(5));
     }
 
-    private static RefreshSessionCookie cookies() {
-        return new RefreshSessionCookie(
+    private static RefreshTokenCookie cookies() {
+        return new RefreshTokenCookie(
                 Clock.fixed(Instant.parse("2026-08-02T00:00:00Z"), ZoneOffset.UTC),
                 true,
                 "Strict");

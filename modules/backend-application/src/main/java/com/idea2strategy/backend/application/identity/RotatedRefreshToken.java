@@ -3,7 +3,7 @@ package com.idea2strategy.backend.application.identity;
 import java.time.Instant;
 import java.util.UUID;
 
-public record RotatedSession(
+public record RotatedRefreshToken(
         UUID accountId,
         UUID loginIdentityId,
         long authEpoch,
@@ -13,7 +13,7 @@ public record RotatedSession(
         Instant expiresAt) {
     @Override
     public String toString() {
-        return "RotatedSession[accountId=" + accountId + ",familyId=" + familyId
+        return "RotatedRefreshToken[accountId=" + accountId + ",familyId=" + familyId
                 + ",tokenSecret=REDACTED,expiresAt=" + expiresAt + "]";
     }
 }

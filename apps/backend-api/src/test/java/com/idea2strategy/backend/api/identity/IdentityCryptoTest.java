@@ -54,7 +54,7 @@ class IdentityCryptoTest {
     @Test
     void opaqueTokensExposeRawValueOnceAndPersistOnlyHmacDigest() {
         var verification = new HmacVerificationTokens(HMAC_KEY);
-        var session = new HmacSessionTokens(HMAC_KEY);
+        var session = new HmacRefreshTokenSecrets(HMAC_KEY);
 
         var verificationToken = verification.issue();
         var sessionToken = session.issue();

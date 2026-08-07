@@ -91,6 +91,65 @@ class BasicBlockAssemblyValidatorTest {
                         org.assertj.core.groups.Tuple.tuple("PORT_TYPE_MISMATCH", "groups[0].connections[0]"));
     }
 
+    @Test
+    void rejectsAnOrderOnlyFlowAndAFlowWhoseTerminalOrderIsNotLast() {
+        var orderOnly = new BasicBlockGroup(
+                "order-only", TradeContainer.BUY, EvaluationMode.INDEPENDENT, AllocationMode.EQUAL,
+                List.of(AAPL_ID), List.of(new BasicBlock("order", "BUY_ORDER", Map.of())), List.of());
+        var terminalInMiddle = new BasicBlockGroup(
+                "terminal-middle", TradeContainer.BUY, EvaluationMode.INDEPENDENT, AllocationMode.EQUAL,
+                List.of(AAPL_ID),
+                List.of(
+                        new BasicBlock("trigger", "MARKET_OPEN", Map.of()),
+                        new BasicBlock("order", "BUY_ORDER", Map.of()),
+                        new BasicBlock("condition", "RSI", Map.of("period", 14))),
+                List.of(
+                        new BasicBlockConnection("trigger", "signal", "order", "input"),
+                        new BasicBlockConnection("order", "signal", "condition", "input")));
+
+        var result = validator.validate(new BasicBlockAssembly(
+                CATALOG_ID, List.of(orderOnly, terminalInMiddle)), catalog());
+
+        assertThat(result.issues()).extracting(BasicBlockAssemblyIssue::code, BasicBlockAssemblyIssue::location)
+                .contains(
+                        org.assertj.core.groups.Tuple.tuple("CONDITION_REQUIRED", "groups[0].blocks"),
+                        org.assertj.core.groups.Tuple.tuple("TERMINAL_ELEMENT_POSITION", "groups[1].blocks[1].elementCode"));
+    }
+
+    @Test
+    void rejectsImpossiblePeriodsAndNonNumericThresholdsBeforeRelease() {
+        BasicStrategyCatalog semanticCatalog = new BasicStrategyCatalog(
+                catalog().version(),
+                List.of(
+                        element("BASIC_SMA_CROSS", "CONDITION",
+                                "{\"properties\":{\"resolution\":{\"type\":\"string\"},"
+                                        + "\"direction\":{\"type\":\"string\"},"
+                                        + "\"shortPeriod\":{\"type\":\"string\"},"
+                                        + "\"longPeriod\":{\"type\":\"string\"},"
+                                        + "\"thresholdPercent\":{\"type\":\"string\"}}}",
+                                "{\"passed\":{\"type\":\"boolean\"}}",
+                                "{\"passed\":{\"type\":\"boolean\"}}",
+                                "{\"containers\":[\"BUY\",\"SELL\"]}"),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", "ACTION", "{}",
+                                "{\"passed\":{\"type\":\"boolean\"}}", "{}",
+                                "{\"terminal\":true,\"containers\":[\"BUY\",\"SELL\"]}")),
+                List.of(), catalog().instruments());
+        BasicBlockAssembly assembly = new BasicBlockAssembly(CATALOG_ID, List.of(new BasicBlockGroup(
+                "buy", TradeContainer.BUY, EvaluationMode.INDEPENDENT, AllocationMode.EQUAL,
+                List.of(AAPL_ID),
+                List.of(
+                        new BasicBlock("cross", "BASIC_SMA_CROSS", Map.of(
+                                "resolution", "1m", "direction", "UP", "shortPeriod", "60",
+                                "longPeriod", "20", "thresholdPercent", "not-a-number")),
+                        new BasicBlock("order", "BASIC_EQUAL_ALLOCATION_ORDER", Map.of())),
+                List.of(new BasicBlockConnection("cross", "passed", "order", "passed")))));
+
+        BasicBlockAssemblyValidationResult result = validator.validate(assembly, semanticCatalog);
+
+        assertThat(result.issues()).extracting(BasicBlockAssemblyIssue::code)
+                .contains("IMPOSSIBLE_PERIOD_COMBINATION", "INVALID_PARAMETER_VALUE");
+    }
+
     private static BasicBlockGroup group(String id, TradeContainer container, String orderElement) {
         return new BasicBlockGroup(
                 id,

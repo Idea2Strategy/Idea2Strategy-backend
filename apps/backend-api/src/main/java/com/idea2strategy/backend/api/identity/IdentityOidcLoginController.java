@@ -43,7 +43,6 @@ public class IdentityOidcLoginController {
                 verified.issuer(),
                 verified.subject(),
                 verified.email(),
-                request.deviceLabel(),
                 correlation(correlationId)));
         return tokenResponses.tokenResponse(result);
     }
@@ -53,7 +52,7 @@ public class IdentityOidcLoginController {
     }
 
     public record OidcLoginRequest(
-            String providerCode, String idToken, String expectedNonce, String deviceLabel) {
+            String providerCode, String idToken, String expectedNonce) {
         public OidcLoginRequest {
             Objects.requireNonNull(providerCode, "providerCode");
             Objects.requireNonNull(idToken, "idToken");
@@ -66,7 +65,7 @@ public class IdentityOidcLoginController {
         @Override
         public String toString() {
             return "OidcLoginRequest[providerCode=" + providerCode
-                    + ", idToken=<redacted>, expectedNonce=<redacted>, deviceLabel=" + deviceLabel + "]";
+                    + ", idToken=<redacted>, expectedNonce=<redacted>]";
         }
     }
 }

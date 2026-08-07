@@ -9,7 +9,7 @@ import com.idea2strategy.backend.application.strategy.StrategyCopyCommandService
 import com.idea2strategy.backend.application.strategy.StrategyDocumentJson;
 import com.idea2strategy.backend.application.testing.FixedIdGenerator;
 import com.idea2strategy.backend.application.testing.RecordingDomainEventPublisher;
-import com.idea2strategy.backend.application.testing.TestSessionPrincipal;
+import com.idea2strategy.backend.application.testing.TestCustomerAccessPrincipal;
 import com.idea2strategy.backend.domain.strategy.ElementCatalogVersion;
 import com.idea2strategy.backend.domain.strategy.Strategy;
 import com.idea2strategy.backend.domain.strategy.StrategyDocument;
@@ -140,7 +140,7 @@ class StrategyCopyPersistenceIntegrationTest {
                 new BasicStructureCatalogQueryService(
                         (catalogId, publishedAt) -> structures,
                         Clock.fixed(NOW, ZoneOffset.UTC)),
-                new TestSessionPrincipal(OWNER_ID),
+                new TestCustomerAccessPrincipal(OWNER_ID),
                 new FixedIdGenerator(generatedId),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 new RecordingDomainEventPublisher());

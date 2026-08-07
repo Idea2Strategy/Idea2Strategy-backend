@@ -13,10 +13,10 @@ import org.springframework.web.context.annotation.RequestScope;
 public class RequestPrincipalConfiguration {
     @Bean
     @RequestScope(proxyMode = ScopedProxyMode.TARGET_CLASS)
-    BearerSessionCurrentPrincipal bearerSessionCurrentPrincipal(
+    JwtCustomerAccessPrincipal jwtCustomerAccessPrincipal(
             HttpServletRequest request,
             CustomerJwtCodec jwt,
             CustomerAccessValidationService validation) {
-        return new BearerSessionCurrentPrincipal(request, jwt, validation);
+        return new JwtCustomerAccessPrincipal(request, jwt, validation);
     }
 }

@@ -3,7 +3,7 @@ package com.idea2strategy.backend.persistence.identity;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.application.delegation.DelegatedCredentialExpiryPort;
-import com.idea2strategy.backend.application.identity.SessionExpiryPort;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyExpiryPort;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -105,22 +105,22 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
 
     @Test
     void concurrentSessionExpiryHasOneTransitionAndOneAuditEvent() throws Exception {
-        SessionExpiryPort.Identity due = adapter.findDueSessions(10).getFirst();
-        List<SessionExpiryPort.Result> results = concurrently(() ->
+        RefreshTokenFamilyExpiryPort.Identity due = adapter.findDueRefreshTokenFamilies(10).getFirst();
+        List<RefreshTokenFamilyExpiryPort.Result> results = concurrently(() ->
                 adapter.expire(due, UUID.randomUUID()));
 
         assertThat(results).containsExactlyInAnyOrder(
-                SessionExpiryPort.Result.APPLIED, SessionExpiryPort.Result.ALREADY_TRANSITIONED);
+                RefreshTokenFamilyExpiryPort.Result.APPLIED, RefreshTokenFamilyExpiryPort.Result.ALREADY_TRANSITIONED);
         assertThat(count("select count(*) from identity.authentication_events "
-                + "where account_id = ? and event_type = 'SESSION_EXPIRED'", ACCOUNT)).isOne();
+                + "where account_id = ? and event_type = 'REFRESH_TOKEN_EXPIRED'", ACCOUNT)).isOne();
         assertThat(text("select revoke_reason_code from identity.refresh_token_families where id = ?", SESSION))
-                .isEqualTo("SESSION_EXPIRED");
-        assertThat(adapter.findDueSessions(10)).isEmpty();
+                .isEqualTo("REFRESH_TOKEN_EXPIRED");
+        assertThat(adapter.findDueRefreshTokenFamilies(10)).isEmpty();
     }
 
     @Test
     void normalAuthenticationAndExpirySerializeTheSameAccountEventSequence() throws Exception {
-        SessionExpiryPort.Identity due = adapter.findDueSessions(10).getFirst();
+        RefreshTokenFamilyExpiryPort.Identity due = adapter.findDueRefreshTokenFamilies(10).getFirst();
         try (var executor = Executors.newFixedThreadPool(2)) {
             var futures = executor.invokeAll(List.of(
                     () -> adapter.expire(due, UUID.randomUUID()).name(),

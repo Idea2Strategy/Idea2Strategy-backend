@@ -7,7 +7,7 @@ import java.util.Objects;
 import org.springframework.http.ResponseCookie;
 
 /** Owns the single browser boundary for the rotating customer refresh JWT. */
-public final class RefreshSessionCookie {
+public final class RefreshTokenCookie {
     public static final String NAME = "i2s_refresh";
     public static final String PATH = "/api/v1/auth";
 
@@ -15,7 +15,7 @@ public final class RefreshSessionCookie {
     private final boolean secure;
     private final String sameSite;
 
-    public RefreshSessionCookie(Clock clock, boolean secure, String sameSite) {
+    public RefreshTokenCookie(Clock clock, boolean secure, String sameSite) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.secure = secure;
         this.sameSite = requireSameSite(sameSite);

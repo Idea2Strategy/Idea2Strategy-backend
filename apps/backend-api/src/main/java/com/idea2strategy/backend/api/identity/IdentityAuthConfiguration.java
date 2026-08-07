@@ -15,7 +15,7 @@ import com.idea2strategy.backend.application.identity.OidcAuthenticationService;
 import com.idea2strategy.backend.application.identity.NistPasswordPolicy;
 import com.idea2strategy.backend.application.identity.PasswordRecoveryService;
 import com.idea2strategy.backend.application.identity.PolicyConsentService;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.application.identity.RefreshTokenService;
 import com.idea2strategy.backend.domain.identity.AccountPreferenceDefaults;
 import com.idea2strategy.backend.domain.identity.ThemePreference;
 import com.idea2strategy.backend.persistence.identity.IdentityAccountJpaEntity;
@@ -46,7 +46,7 @@ import org.springframework.context.ApplicationEventPublisher;
 @EnableConfigurationProperties(TrustedOidcProperties.class)
 @ConditionalOnProperty(
         prefix = "identity.crypto",
-        name = {"email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key",
+        name = {"email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "refresh-token-hmac-key",
                 "customer-jwt-signing-key"})
 @EntityScan(basePackageClasses = IdentityAccountJpaEntity.class)
 @Import({
@@ -87,9 +87,9 @@ public class IdentityAuthConfiguration {
     }
 
     @Bean
-    HmacSessionTokens sessionTokens(
-            @Value("${identity.crypto.refresh-token-hmac-key:${identity.crypto.session-hmac-key}}") String key) {
-        return new HmacSessionTokens(decode(key));
+    HmacRefreshTokenSecrets refreshTokenSecrets(
+            @Value("${identity.crypto.refresh-token-hmac-key}") String key) {
+        return new HmacRefreshTokenSecrets(decode(key));
     }
 
     @Bean
@@ -105,11 +105,11 @@ public class IdentityAuthConfiguration {
     }
 
     @Bean
-    RefreshSessionCookie refreshSessionCookie(
+    RefreshTokenCookie refreshTokenCookie(
             Clock identityClock,
             @Value("${identity.jwt.refresh-cookie-secure:true}") boolean secure,
             @Value("${identity.jwt.refresh-cookie-same-site:Strict}") String sameSite) {
-        return new RefreshSessionCookie(identityClock, secure, sameSite);
+        return new RefreshTokenCookie(identityClock, secure, sameSite);
     }
 
     @Bean
@@ -187,7 +187,7 @@ public class IdentityAuthConfiguration {
             IdentityJpaCommandAdapter commands,
             Pbkdf2PasswordCodec passwordCodec,
             AesGcmEmailProtector emailProtector,
-            HmacSessionTokens sessionTokens,
+            HmacRefreshTokenSecrets refreshTokenSecrets,
             Clock identityClock,
             @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime) {
         return new EmailAuthenticationService(
@@ -195,7 +195,7 @@ public class IdentityAuthConfiguration {
                 commands,
                 passwordCodec,
                 emailProtector,
-                sessionTokens,
+                refreshTokenSecrets,
                 identityClock,
                 refreshLifetime);
     }
@@ -206,13 +206,13 @@ public class IdentityAuthConfiguration {
     }
 
     @Bean
-    SessionManagementService sessionManagementService(
+    RefreshTokenService refreshTokenService(
             IdentityJooqQueryAdapter queries,
             IdentityJpaCommandAdapter commands,
-            HmacSessionTokens sessionTokens,
+            HmacRefreshTokenSecrets refreshTokenSecrets,
             Clock identityClock,
             @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime) {
-        return new SessionManagementService(queries, commands, identityClock, sessionTokens, refreshLifetime);
+        return new RefreshTokenService(queries, commands, identityClock, refreshTokenSecrets, refreshLifetime);
     }
 
     @Bean
@@ -281,7 +281,7 @@ public class IdentityAuthConfiguration {
             IdentityJooqQueryAdapter queries,
             IdentityJpaCommandAdapter commands,
             HmacOidcSubjectProtector subjectProtector,
-            HmacSessionTokens sessionTokens,
+            HmacRefreshTokenSecrets refreshTokenSecrets,
             Clock identityClock,
             @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime,
             AesGcmEmailProtector emailProtector,
@@ -291,7 +291,7 @@ public class IdentityAuthConfiguration {
                 queries,
                 commands,
                 subjectProtector,
-                sessionTokens,
+                refreshTokenSecrets,
                 identityClock,
                 refreshLifetime,
                 queries,

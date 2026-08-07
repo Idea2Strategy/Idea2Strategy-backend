@@ -115,7 +115,7 @@ public final class Idea2StrategyCli {
     }
 
     private static JsonNode login(Arguments args, ApiClient api, CredentialStore credentials, InputStream stdin) {
-        args.rejectUnknown("--email", "--device-label");
+        args.rejectUnknown("--email");
         String password;
         try {
             password = new BufferedReader(new InputStreamReader(stdin, StandardCharsets.UTF_8)).readLine();
@@ -127,16 +127,15 @@ public final class Idea2StrategyCli {
         }
         ObjectNode body = JSON.createObjectNode()
                 .put("email", args.required("--email"))
-                .put("password", password)
-                .put("deviceLabel", args.optional("--device-label", "idea2strategy-cli"));
+                .put("password", password);
         JsonNode response = api.post("/api/v1/auth/login", body, null);
         String token = response.path("accessToken").asText();
         if (token.isBlank()) {
-            throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Login response did not contain a session token");
+            throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Login response did not contain an access JWT");
         }
         credentials.save(token);
         ObjectNode result = JSON.createObjectNode().put("credentialSaved", true);
-        copyIfPresent(response, result, "accountId", "sessionId", "expiresAt");
+        copyIfPresent(response, result, "accountId", "expiresAt");
         return result;
     }
 

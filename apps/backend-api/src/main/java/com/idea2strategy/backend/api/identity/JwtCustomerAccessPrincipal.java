@@ -10,7 +10,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** Resolves the current customer principal from a locally verified short-lived access JWT. */
-public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
+public class JwtCustomerAccessPrincipal implements CustomerAccessPrincipal {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final HttpServletRequest request;
@@ -20,7 +20,7 @@ public class BearerSessionCurrentPrincipal implements CustomerAccessPrincipal {
             new EnumMap<>(CustomerAccessScope.class);
     private CustomerJwtCodec.AccessClaims claims;
 
-    public BearerSessionCurrentPrincipal(
+    public JwtCustomerAccessPrincipal(
             HttpServletRequest request,
             CustomerJwtCodec jwt,
             CustomerAccessValidationService validation) {

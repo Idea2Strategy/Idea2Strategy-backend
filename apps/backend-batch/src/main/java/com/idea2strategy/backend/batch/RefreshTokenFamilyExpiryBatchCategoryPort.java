@@ -2,31 +2,31 @@ package com.idea2strategy.backend.batch;
 
 import com.idea2strategy.backend.application.batch.BatchCategory;
 import com.idea2strategy.backend.application.batch.BatchCategoryPort;
-import com.idea2strategy.backend.application.identity.SessionExpiryPort;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyExpiryPort;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-public class SessionExpiryBatchCategoryPort implements BatchCategoryPort {
-    private final SessionExpiryPort sessions;
+public class RefreshTokenFamilyExpiryBatchCategoryPort implements BatchCategoryPort {
+    private final RefreshTokenFamilyExpiryPort families;
     private final JdbcTemplate jdbc;
 
-    public SessionExpiryBatchCategoryPort(SessionExpiryPort sessions, JdbcTemplate jdbc) {
-        this.sessions = sessions;
+    public RefreshTokenFamilyExpiryBatchCategoryPort(RefreshTokenFamilyExpiryPort families, JdbcTemplate jdbc) {
+        this.families = families;
         this.jdbc = jdbc;
     }
 
-    @Override public BatchCategory category() { return BatchCategory.SESSION; }
+    @Override public BatchCategory category() { return BatchCategory.REFRESH_TOKEN_FAMILY; }
 
     @Override
     public ClaimPage claimDue(ClaimRequest request) {
         Instant databaseNow = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
-        List<WorkItem> items = sessions.findDueSessions(request.limit()).stream()
+        List<WorkItem> items = families.findDueRefreshTokenFamilies(request.limit()).stream()
                 .map(identity -> new WorkItem(
                         category(), encode(identity), identity.expiresAt(),
-                        "session-expiry:" + identity.sessionId() + ":" + identity.expiresAt(),
+                        "refresh-token-family-expiry:" + identity.familyId() + ":" + identity.expiresAt(),
                         UUID.randomUUID(), 1))
                 .toList();
         Cursor next = items.isEmpty() ? null : new Cursor(items.getLast().dueAt(), items.getLast().itemId());
@@ -36,24 +36,24 @@ public class SessionExpiryBatchCategoryPort implements BatchCategoryPort {
     @Override
     public ItemResult execute(WorkItem item, UUID runId, UUID correlationId) {
         try {
-            return sessions.expire(decode(item.itemId()), correlationId) == SessionExpiryPort.Result.APPLIED
+            return families.expire(decode(item.itemId()), correlationId) == RefreshTokenFamilyExpiryPort.Result.APPLIED
                     ? ItemResult.completed()
                     : ItemResult.alreadyCompleted();
         } catch (IllegalArgumentException exception) {
-            return ItemResult.permanent("SESSION_EXPIRY_BATCH_ITEM_INVALID");
+            return ItemResult.permanent("REFRESH_TOKEN_FAMILY_EXPIRY_BATCH_ITEM_INVALID");
         } catch (RuntimeException exception) {
-            return ItemResult.retryable("SESSION_EXPIRY_EXECUTION_RETRYABLE");
+            return ItemResult.retryable("REFRESH_TOKEN_FAMILY_EXPIRY_EXECUTION_RETRYABLE");
         }
     }
 
-    private static String encode(SessionExpiryPort.Identity identity) {
-        return identity.accountId() + "|" + identity.sessionId() + "|" + identity.expiresAt();
+    private static String encode(RefreshTokenFamilyExpiryPort.Identity identity) {
+        return identity.accountId() + "|" + identity.familyId() + "|" + identity.expiresAt();
     }
 
-    private static SessionExpiryPort.Identity decode(String value) {
+    private static RefreshTokenFamilyExpiryPort.Identity decode(String value) {
         String[] parts = value.split("\\|", 3);
         if (parts.length != 3) throw new IllegalArgumentException("invalid item");
-        return new SessionExpiryPort.Identity(
+        return new RefreshTokenFamilyExpiryPort.Identity(
                 UUID.fromString(parts[0]), UUID.fromString(parts[1]), Instant.parse(parts[2]));
     }
 }

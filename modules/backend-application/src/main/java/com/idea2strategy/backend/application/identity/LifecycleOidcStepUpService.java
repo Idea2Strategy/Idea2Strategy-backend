@@ -6,7 +6,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Verifies an OIDC step-up without creating an application session. */
+/** Verifies an OIDC step-up without issuing access or refresh JWTs. */
 public final class LifecycleOidcStepUpService {
     private final OidcIdentityQueryPort identities;
     private final IdentityCommandPort commands;

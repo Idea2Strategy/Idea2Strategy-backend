@@ -27,14 +27,14 @@ public class IdentityAuthController {
     private final EmailAuthenticationService authenticationService;
     private final VerificationDeliveryPort verificationDelivery;
     private final CustomerJwtCodec jwt;
-    private final RefreshSessionCookie refreshCookie;
+    private final RefreshTokenCookie refreshCookie;
 
     public IdentityAuthController(
             EmailRegistrationService registrationService,
             EmailAuthenticationService authenticationService,
             VerificationDeliveryPort verificationDelivery,
             CustomerJwtCodec jwt,
-            RefreshSessionCookie refreshCookie) {
+            RefreshTokenCookie refreshCookie) {
         this.registrationService = registrationService;
         this.authenticationService = authenticationService;
         this.verificationDelivery = verificationDelivery;
@@ -78,7 +78,7 @@ public class IdentityAuthController {
             @RequestBody LoginRequest request,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         var result = authenticationService.login(new LoginCommand(
-                request.email(), request.password(), request.deviceLabel(), correlation(correlationId)));
+                request.email(), request.password(), correlation(correlationId)));
         return tokenResponse(result);
     }
 
@@ -142,7 +142,7 @@ public class IdentityAuthController {
 
     public record ResendVerificationResponse(boolean verificationRequired, Instant verificationExpiresAt) {}
 
-    public record LoginRequest(String email, String password, String deviceLabel) {
+    public record LoginRequest(String email, String password) {
         public LoginRequest {
             Objects.requireNonNull(email, "email");
             Objects.requireNonNull(password, "password");
@@ -150,7 +150,7 @@ public class IdentityAuthController {
 
         @Override
         public String toString() {
-            return "LoginRequest[credentials=REDACTED, deviceLabel=" + deviceLabel + "]";
+            return "LoginRequest[credentials=REDACTED]";
         }
     }
 

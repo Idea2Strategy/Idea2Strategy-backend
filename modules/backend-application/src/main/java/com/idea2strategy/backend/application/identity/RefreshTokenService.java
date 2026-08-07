@@ -5,44 +5,44 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.UUID;
 
-public final class SessionManagementService {
-    private final SessionQueryPort queries;
-    private final SessionCommandPort commands;
+public final class RefreshTokenService {
+    private final RefreshTokenFamilyQueryPort queries;
+    private final RefreshTokenFamilyCommandPort commands;
     private final Clock clock;
-    private final SessionTokenIssuer tokenIssuer;
-    private final Duration sessionLifetime;
+    private final RefreshTokenSecretIssuer tokenIssuer;
+    private final Duration refreshTokenLifetime;
 
-    public SessionManagementService(SessionQueryPort queries, SessionCommandPort commands, Clock clock) {
+    public RefreshTokenService(RefreshTokenFamilyQueryPort queries, RefreshTokenFamilyCommandPort commands, Clock clock) {
         this(queries, commands, clock, null, Duration.ZERO);
     }
 
-    public SessionManagementService(
-            SessionQueryPort queries,
-            SessionCommandPort commands,
+    public RefreshTokenService(
+            RefreshTokenFamilyQueryPort queries,
+            RefreshTokenFamilyCommandPort commands,
             Clock clock,
-            SessionTokenIssuer tokenIssuer,
-            Duration sessionLifetime) {
+            RefreshTokenSecretIssuer tokenIssuer,
+            Duration refreshTokenLifetime) {
         this.queries = Objects.requireNonNull(queries, "queries");
         this.commands = Objects.requireNonNull(commands, "commands");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.tokenIssuer = tokenIssuer;
-        this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
+        this.refreshTokenLifetime = Objects.requireNonNull(refreshTokenLifetime, "refreshTokenLifetime");
     }
 
     public void revokeCurrent(UUID familyId, String tokenDigest, UUID correlationId) {
-        var current = loadCurrentToken(familyId, tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
+        var current = loadCurrentToken(familyId, tokenDigest, correlationId, CustomerAccessScope.TOKEN_TEARDOWN);
         revoke(current, current.id(), "LOGOUT", correlationId);
     }
 
-    public RotatedSession rotate(UUID familyId, String tokenDigest, UUID correlationId) {
+    public RotatedRefreshToken rotate(UUID familyId, String tokenDigest, UUID correlationId) {
         requireTokenDigest(tokenDigest);
-        if (tokenIssuer == null || sessionLifetime.isZero() || sessionLifetime.isNegative()) {
-            throw new IllegalStateException("Session rotation is not configured");
+        if (tokenIssuer == null || refreshTokenLifetime.isZero() || refreshTokenLifetime.isNegative()) {
+            throw new IllegalStateException("Refresh token rotation is not configured");
         }
         var current = loadValid(familyId, correlationId, CustomerAccessScope.STANDARD);
         var replacement = tokenIssuer.issue();
         var now = clock.instant();
-        var expiresAt = now.plus(sessionLifetime);
+        var expiresAt = now.plus(refreshTokenLifetime);
         boolean rotated = commands.rotate(
                 current.accountId(),
                 current.id(),
@@ -55,10 +55,10 @@ public final class SessionManagementService {
             commands.revoke(current.accountId(), current.id(), "REFRESH_TOKEN_REUSE", correlationId, now);
             commands.recordEvent(
                     current.accountId(), current.loginIdentityId(), current.id(),
-                    "SESSION_REJECTED", "ROTATION_RACE_LOST", correlationId, now);
+                    "REFRESH_TOKEN_REJECTED", "ROTATION_RACE_LOST", correlationId, now);
             throw new AuthenticationRejectedException("Refresh token was already used");
         }
-        return new RotatedSession(
+        return new RotatedRefreshToken(
                 current.accountId(),
                 current.loginIdentityId(),
                 current.authEpochAtIssue(),
@@ -69,15 +69,15 @@ public final class SessionManagementService {
     }
 
     public int revokeAll(UUID familyId, String tokenDigest, UUID correlationId) {
-        var current = loadCurrentToken(familyId, tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
+        var current = loadCurrentToken(familyId, tokenDigest, correlationId, CustomerAccessScope.TOKEN_TEARDOWN);
         return commands.revokeAll(
                 current.accountId(), "LOGOUT_ALL", Objects.requireNonNull(correlationId, "correlationId"), clock.instant());
     }
 
-    private void revoke(StoredSession current, UUID targetSessionId, String reason, UUID correlationId) {
+    private void revoke(StoredRefreshTokenFamily current, UUID targetFamilyId, String reason, UUID correlationId) {
         boolean revoked = commands.revoke(
                 current.accountId(),
-                targetSessionId,
+                targetFamilyId,
                 reason,
                 Objects.requireNonNull(correlationId, "correlationId"),
                 clock.instant());
@@ -86,23 +86,23 @@ public final class SessionManagementService {
                     current.accountId(),
                     current.loginIdentityId(),
                     current.id(),
-                    "SESSION_REJECTED",
+                    "REFRESH_TOKEN_REJECTED",
                     "TARGET_NOT_OWNED_OR_ACTIVE",
                     correlationId,
                     clock.instant());
-            throw new AuthenticationRejectedException("Session is not active for this account");
+            throw new AuthenticationRejectedException("Refresh token family is not active for this account");
         }
     }
 
-    private StoredSession loadValid(
+    private StoredRefreshTokenFamily loadValid(
             UUID familyId, UUID correlationId, CustomerAccessScope accessScope) {
         Objects.requireNonNull(familyId, "familyId");
-        var session = queries.findById(familyId)
+        var family = queries.findById(familyId)
                 .orElseThrow(() -> new AuthenticationRejectedException("Refresh token family is not valid"));
-        return validate(session, correlationId, accessScope);
+        return validate(family, correlationId, accessScope);
     }
 
-    private StoredSession loadCurrentToken(
+    private StoredRefreshTokenFamily loadCurrentToken(
             UUID familyId, String tokenDigest, UUID correlationId, CustomerAccessScope accessScope) {
         Objects.requireNonNull(familyId, "familyId");
         requireTokenDigest(tokenDigest);
@@ -118,62 +118,62 @@ public final class SessionManagementService {
         }
     }
 
-    private StoredSession validate(
-            StoredSession session, UUID correlationId, CustomerAccessScope accessScope) {
+    private StoredRefreshTokenFamily validate(
+            StoredRefreshTokenFamily family, UUID correlationId, CustomerAccessScope accessScope) {
         var now = clock.instant();
-        String rejectionReason = rejectionReason(session, now);
+        String rejectionReason = rejectionReason(family, now);
         if (rejectionReason != null) {
             commands.recordEvent(
-                    session.accountId(),
-                    session.loginIdentityId(),
-                    session.id(),
-                    "SESSION_REJECTED",
+                    family.accountId(),
+                    family.loginIdentityId(),
+                    family.id(),
+                    "REFRESH_TOKEN_REJECTED",
                     rejectionReason,
                     Objects.requireNonNull(correlationId, "correlationId"),
                     now);
-            throw new AuthenticationRejectedException("Session is not valid");
+            throw new AuthenticationRejectedException("Refresh token family is not valid");
         }
         Objects.requireNonNull(accessScope, "accessScope");
-        if (session.activeSanction() && !accessScope.allowedDuringSanction()) {
+        if (family.activeSanction() && !accessScope.allowedDuringSanction()) {
             commands.recordEvent(
-                    session.accountId(),
-                    session.loginIdentityId(),
-                    session.id(),
-                    "SESSION_REJECTED",
+                    family.accountId(),
+                    family.loginIdentityId(),
+                    family.id(),
+                    "REFRESH_TOKEN_REJECTED",
                     "ACTIVE_ACCOUNT_SANCTION",
                     Objects.requireNonNull(correlationId, "correlationId"),
                     now);
             throw new SanctionedAccountAccessException();
         }
-        commands.touch(session.accountId(), session.id(), now);
+        commands.touch(family.accountId(), family.id(), now);
         commands.recordEvent(
-                session.accountId(),
-                session.loginIdentityId(),
-                session.id(),
-                session.activeSanction() ? "SANCTION_RESTRICTED_ACCESS_VALIDATED" : "SESSION_VALIDATED",
-                session.activeSanction() ? accessScope.name() : null,
+                family.accountId(),
+                family.loginIdentityId(),
+                family.id(),
+                family.activeSanction() ? "SANCTION_RESTRICTED_ACCESS_VALIDATED" : "REFRESH_TOKEN_VALIDATED",
+                family.activeSanction() ? accessScope.name() : null,
                 Objects.requireNonNull(correlationId, "correlationId"),
                 now);
-        return session;
+        return family;
     }
 
-    private static String rejectionReason(StoredSession session, java.time.Instant now) {
-        if (session.revokedAt() != null) {
+    private static String rejectionReason(StoredRefreshTokenFamily family, java.time.Instant now) {
+        if (family.revokedAt() != null) {
             return "REVOKED";
         }
-        if (!session.expiresAt().isAfter(now)) {
+        if (!family.expiresAt().isAfter(now)) {
             return "EXPIRED";
         }
-        if (session.accountStatus() != AccountLifecycleStatus.ACTIVE) {
+        if (family.accountStatus() != AccountLifecycleStatus.ACTIVE) {
             return "ACCOUNT_NOT_ACTIVE";
         }
-        if (session.loginIdentityStatus() != LoginIdentityStatus.ACTIVE) {
+        if (family.loginIdentityStatus() != LoginIdentityStatus.ACTIVE) {
             return "LOGIN_IDENTITY_NOT_ACTIVE";
         }
-        if (session.authEpochAtIssue() != session.currentAuthEpoch()) {
+        if (family.authEpochAtIssue() != family.currentAuthEpoch()) {
             return "AUTH_EPOCH_MISMATCH";
         }
-        if (!Objects.equals(session.credentialVersionAtIssue(), session.currentCredentialVersion())) {
+        if (!Objects.equals(family.credentialVersionAtIssue(), family.currentCredentialVersion())) {
             return "CREDENTIAL_VERSION_MISMATCH";
         }
         return null;

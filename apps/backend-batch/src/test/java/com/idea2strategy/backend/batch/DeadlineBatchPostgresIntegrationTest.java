@@ -81,7 +81,7 @@ class DeadlineBatchPostgresIntegrationTest {
         seedActiveSuspensionPastExpiry();
         seedCaseNeedingInformationPastDeadline();
         UUID notificationId = seedMandatoryEmailNotification();
-        Set<BatchCategory> categories = Set.of(BatchCategory.SANCTION, BatchCategory.SESSION,
+        Set<BatchCategory> categories = Set.of(BatchCategory.SANCTION, BatchCategory.REFRESH_TOKEN_FAMILY,
                 BatchCategory.DELEGATED_TOKEN, BatchCategory.NOTIFICATION, BatchCategory.CASE_DEADLINE);
 
         var summary = orchestrator.run(new RunCommand(

@@ -8,7 +8,6 @@ import com.idea2strategy.backend.application.identity.AccountLifecycleStatus;
 import com.idea2strategy.backend.application.identity.AccountRecoveryQueryPort;
 import com.idea2strategy.backend.application.identity.CustomerAccessState;
 import com.idea2strategy.backend.application.identity.CustomerAccessStateQueryPort;
-import com.idea2strategy.backend.application.identity.ActiveSession;
 import com.idea2strategy.backend.application.identity.EmailStatus;
 import com.idea2strategy.backend.application.identity.IdentityQueryPort;
 import com.idea2strategy.backend.application.identity.LoginIdentityStatus;
@@ -18,8 +17,8 @@ import com.idea2strategy.backend.application.identity.OidcProvider;
 import com.idea2strategy.backend.application.identity.PasswordLoginAccount;
 import com.idea2strategy.backend.application.identity.PasswordRecoveryAccount;
 import com.idea2strategy.backend.application.identity.RegistrationQueryPort;
-import com.idea2strategy.backend.application.identity.SessionQueryPort;
-import com.idea2strategy.backend.application.identity.StoredSession;
+import com.idea2strategy.backend.application.identity.RefreshTokenFamilyQueryPort;
+import com.idea2strategy.backend.application.identity.StoredRefreshTokenFamily;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -33,7 +32,7 @@ public class IdentityJooqQueryAdapter
         implements IdentityQueryPort,
                 RegistrationQueryPort,
                 OidcIdentityQueryPort,
-                SessionQueryPort,
+                RefreshTokenFamilyQueryPort,
                 CustomerAccessStateQueryPort,
                 AccountRecoveryQueryPort {
     private final DSLContext dsl;
@@ -239,37 +238,36 @@ public class IdentityJooqQueryAdapter
     }
 
     @Override
-    public Optional<StoredSession> findByTokenDigest(String tokenDigest) {
-        return findSession(field(name("session", "current_token_digest"), String.class).eq(tokenDigest));
+    public Optional<StoredRefreshTokenFamily> findByTokenDigest(String tokenDigest) {
+        return findFamily(field(name("family", "current_token_digest"), String.class).eq(tokenDigest));
     }
 
     @Override
-    public Optional<StoredSession> findById(UUID sessionId) {
-        return findSession(field(name("session", "id"), UUID.class).eq(sessionId));
+    public Optional<StoredRefreshTokenFamily> findById(UUID familyId) {
+        return findFamily(field(name("family", "id"), UUID.class).eq(familyId));
     }
 
-    private Optional<StoredSession> findSession(Condition condition) {
-        var sessions = table(name("identity", "refresh_token_families")).as("session");
+    private Optional<StoredRefreshTokenFamily> findFamily(Condition condition) {
+        var families = table(name("identity", "refresh_token_families")).as("family");
         var accounts = table(name("identity", "accounts")).as("account");
         var logins = table(name("identity", "login_identities")).as("login");
         var security = table(name("identity", "account_security_states")).as("security");
         var credentials = table(name("identity", "password_credentials")).as("credential");
 
         return dsl.select(
-                        field(name("session", "id"), UUID.class),
-                        field(name("session", "account_id"), UUID.class),
-                        field(name("session", "authenticated_by_login_identity_id"), UUID.class),
-                        field(name("session", "auth_epoch_at_issue"), Long.class),
+                        field(name("family", "id"), UUID.class),
+                        field(name("family", "account_id"), UUID.class),
+                        field(name("family", "authenticated_by_login_identity_id"), UUID.class),
+                        field(name("family", "auth_epoch_at_issue"), Long.class),
                         field(name("security", "auth_epoch"), Long.class),
-                        field(name("session", "credential_version_at_issue"), Long.class),
+                        field(name("family", "credential_version_at_issue"), Long.class),
                         field(name("credential", "credential_version"), Long.class),
                         field(name("account", "lifecycle_status")).cast(String.class),
                         field(name("login", "status")).cast(String.class),
-                        field("cast(null as varchar)", String.class),
-                        field(name("session", "issued_at"), Instant.class),
-                        field(name("session", "last_rotated_at"), Instant.class),
-                        field(name("session", "expires_at"), Instant.class),
-                        field(name("session", "revoked_at"), Instant.class),
+                        field(name("family", "issued_at"), Instant.class),
+                        field(name("family", "last_rotated_at"), Instant.class),
+                        field(name("family", "expires_at"), Instant.class),
+                        field(name("family", "revoked_at"), Instant.class),
                         field("""
                                 exists (
                                     select 1 from identity.account_sanctions sanction
@@ -278,17 +276,17 @@ public class IdentityJooqQueryAdapter
                                       and sanction.sanction_type in ('SUSPENSION', 'PERMANENT')
                                 )
                                 """, Boolean.class))
-                .from(sessions)
+                .from(families)
                 .join(accounts).on(field(name("account", "id"), UUID.class)
-                        .eq(field(name("session", "account_id"), UUID.class)))
+                        .eq(field(name("family", "account_id"), UUID.class)))
                 .join(logins).on(field(name("login", "id"), UUID.class)
-                        .eq(field(name("session", "authenticated_by_login_identity_id"), UUID.class)))
+                        .eq(field(name("family", "authenticated_by_login_identity_id"), UUID.class)))
                 .join(security).on(field(name("security", "account_id"), UUID.class)
-                        .eq(field(name("session", "account_id"), UUID.class)))
+                        .eq(field(name("family", "account_id"), UUID.class)))
                 .leftJoin(credentials).on(field(name("credential", "login_identity_id"), UUID.class)
                         .eq(field(name("login", "id"), UUID.class)))
                 .where(condition)
-                .fetchOptional(record -> new StoredSession(
+                .fetchOptional(record -> new StoredRefreshTokenFamily(
                         record.value1(),
                         record.value2(),
                         record.value3(),
@@ -302,46 +300,7 @@ public class IdentityJooqQueryAdapter
                         record.value11(),
                         record.value12(),
                         record.value13(),
-                        record.value14(),
-                        Boolean.TRUE.equals(record.value15())));
+                        Boolean.TRUE.equals(record.value14())));
     }
 
-    @Override
-    public List<ActiveSession> findActiveByAccountId(UUID accountId, Instant now) {
-        var sessions = table(name("identity", "refresh_token_families")).as("session");
-        var accounts = table(name("identity", "accounts")).as("account");
-        var logins = table(name("identity", "login_identities")).as("login");
-        var security = table(name("identity", "account_security_states")).as("security");
-        var credentials = table(name("identity", "password_credentials")).as("credential");
-        var credentialAtIssue = field(name("session", "credential_version_at_issue"), Long.class);
-        var currentCredential = field(name("credential", "credential_version"), Long.class);
-        return dsl.select(
-                        field(name("session", "id"), UUID.class),
-                        field("cast(null as varchar)", String.class),
-                        field(name("session", "issued_at"), Instant.class),
-                        field(name("session", "last_rotated_at"), Instant.class),
-                        field(name("session", "expires_at"), Instant.class))
-                .from(sessions)
-                .join(accounts).on(field(name("account", "id"), UUID.class)
-                        .eq(field(name("session", "account_id"), UUID.class)))
-                .join(logins).on(field(name("login", "id"), UUID.class)
-                        .eq(field(name("session", "authenticated_by_login_identity_id"), UUID.class)))
-                .join(security).on(field(name("security", "account_id"), UUID.class)
-                        .eq(field(name("session", "account_id"), UUID.class)))
-                .leftJoin(credentials).on(field(name("credential", "login_identity_id"), UUID.class)
-                        .eq(field(name("login", "id"), UUID.class)))
-                .where(field(name("session", "account_id"), UUID.class)
-                        .eq(accountId)
-                        .and(field(name("session", "revoked_at")).isNull())
-                        .and(field(name("session", "expires_at"), Instant.class).gt(now))
-                        .and(field(name("session", "auth_epoch_at_issue"), Long.class)
-                                .eq(field(name("security", "auth_epoch"), Long.class)))
-                        .and(field(name("account", "lifecycle_status")).cast(String.class).eq("ACTIVE"))
-                        .and(field(name("login", "status")).cast(String.class).eq("ACTIVE"))
-                        .and(credentialAtIssue.eq(currentCredential)
-                                .or(credentialAtIssue.isNull().and(currentCredential.isNull()))))
-                .orderBy(field(name("session", "last_rotated_at")).desc(), field(name("session", "id")))
-                .fetch(record -> new ActiveSession(
-                        record.value1(), record.value2(), record.value3(), record.value4(), record.value5()));
-    }
 }

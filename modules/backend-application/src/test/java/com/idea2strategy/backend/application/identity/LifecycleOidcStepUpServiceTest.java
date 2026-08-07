@@ -32,7 +32,7 @@ class LifecycleOidcStepUpServiceTest {
         assertThat(result.proof().providerCode()).isEqualTo("TEST_OIDC");
         assertThat(result.proof().challengeId()).isEqualTo(CHALLENGE_ID);
         verify(fixture.commands).recordStepUpSuccess(any());
-        verify(fixture.commands, never()).createSession(any());
+        verify(fixture.commands, never()).createRefreshTokenFamily(any());
     }
 
     @Test

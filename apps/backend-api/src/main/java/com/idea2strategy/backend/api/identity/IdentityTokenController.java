@@ -1,8 +1,8 @@
 package com.idea2strategy.backend.api.identity;
 
-import com.idea2strategy.backend.application.identity.RotatedSession;
+import com.idea2strategy.backend.application.identity.RotatedRefreshToken;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.application.identity.RefreshTokenService;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -16,34 +16,34 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/auth")
-@ConditionalOnBean({SessionManagementService.class, HmacSessionTokens.class, CustomerJwtCodec.class})
-public class IdentitySessionController {
+@ConditionalOnBean({RefreshTokenService.class, HmacRefreshTokenSecrets.class, CustomerJwtCodec.class})
+public class IdentityTokenController {
     private static final String BEARER_PREFIX = "Bearer ";
 
-    private final SessionManagementService sessions;
-    private final HmacSessionTokens tokens;
+    private final RefreshTokenService refreshTokens;
+    private final HmacRefreshTokenSecrets refreshTokenSecrets;
     private final CustomerJwtCodec jwt;
-    private final RefreshSessionCookie refreshCookie;
+    private final RefreshTokenCookie refreshCookie;
 
-    public IdentitySessionController(
-            SessionManagementService sessions,
-            HmacSessionTokens tokens,
+    public IdentityTokenController(
+            RefreshTokenService refreshTokens,
+            HmacRefreshTokenSecrets refreshTokenSecrets,
             CustomerJwtCodec jwt,
-            RefreshSessionCookie refreshCookie) {
-        this.sessions = sessions;
-        this.tokens = tokens;
+            RefreshTokenCookie refreshCookie) {
+        this.refreshTokens = refreshTokens;
+        this.refreshTokenSecrets = refreshTokenSecrets;
         this.jwt = jwt;
         this.refreshCookie = refreshCookie;
     }
 
     @PostMapping({"/refresh", "/sessions/rotate"})
     public ResponseEntity<RotatedTokenResponse> rotate(
-            @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
+            @CookieValue(value = RefreshTokenCookie.NAME, required = false) String refreshCookieValue,
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         CustomerJwtCodec.RefreshClaims current = refresh(refreshCookieValue, authorization);
-        RotatedSession rotated = sessions.rotate(
-                current.familyId(), tokens.digest(current.tokenSecret()), correlation(correlationId));
+        RotatedRefreshToken rotated = refreshTokens.rotate(
+                current.familyId(), refreshTokenSecrets.digest(current.tokenSecret()), correlation(correlationId));
         String replacementRefresh = jwt.issueRefresh(
                 rotated.accountId(),
                 rotated.familyId(),
@@ -71,12 +71,12 @@ public class IdentitySessionController {
 
     @PostMapping("/logout")
     public ResponseEntity<Void> logoutCurrent(
-            @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
+            @CookieValue(value = RefreshTokenCookie.NAME, required = false) String refreshCookieValue,
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         CustomerJwtCodec.RefreshClaims current = refresh(refreshCookieValue, authorization);
-        sessions.revokeCurrent(
-                current.familyId(), tokens.digest(current.tokenSecret()), correlation(correlationId));
+        refreshTokens.revokeCurrent(
+                current.familyId(), refreshTokenSecrets.digest(current.tokenSecret()), correlation(correlationId));
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie.clear().toString())
                 .build();
@@ -84,12 +84,12 @@ public class IdentitySessionController {
 
     @PostMapping("/logout-all")
     public ResponseEntity<Void> logoutAll(
-            @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
+            @CookieValue(value = RefreshTokenCookie.NAME, required = false) String refreshCookieValue,
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         CustomerJwtCodec.RefreshClaims current = refresh(refreshCookieValue, authorization);
-        sessions.revokeAll(
-                current.familyId(), tokens.digest(current.tokenSecret()), correlation(correlationId));
+        refreshTokens.revokeAll(
+                current.familyId(), refreshTokenSecrets.digest(current.tokenSecret()), correlation(correlationId));
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie.clear().toString())
                 .build();

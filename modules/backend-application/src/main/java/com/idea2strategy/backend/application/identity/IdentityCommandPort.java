@@ -1,7 +1,7 @@
 package com.idea2strategy.backend.application.identity;
 
 public interface IdentityCommandPort {
-    void createSession(AuthenticationSession session);
+    void createRefreshTokenFamily(RefreshTokenFamily family);
 
     void recordLoginFailure(LoginFailure failure);
 
@@ -9,8 +9,8 @@ public interface IdentityCommandPort {
 
     default void recordStepUpSuccess(AuthenticationSuccess success) {}
 
-    default void completeLogin(AuthenticationSession session, AuthenticationSuccess success) {
-        createSession(session);
+    default void completeLogin(RefreshTokenFamily family, AuthenticationSuccess success) {
+        createRefreshTokenFamily(family);
         recordLoginSuccess(success);
     }
 

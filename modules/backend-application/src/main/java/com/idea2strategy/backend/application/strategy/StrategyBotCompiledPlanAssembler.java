@@ -322,10 +322,6 @@ public final class StrategyBotCompiledPlanAssembler {
                     .computeIfAbsent(code, ignored -> new TreeSet<>())
                     .addAll(instruments));
         }
-        if (instrumentsByFeatureCode.isEmpty()) {
-            throw new IllegalStateException("A compiled plan requires at least one official feature");
-        }
-
         List<RequiredFeature> requirements = new ArrayList<>();
         new TreeSet<>(instrumentsByFeatureCode.keySet()).forEach(code -> {
             StrategyFeatureDefinition definition = features.get(code);

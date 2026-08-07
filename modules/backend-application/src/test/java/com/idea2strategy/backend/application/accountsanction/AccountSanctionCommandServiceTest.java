@@ -45,7 +45,7 @@ class AccountSanctionCommandServiceTest {
         assertThat(authorization.requiredPermissions).containsExactly(APPLY_PERMISSION);
         assertThat(access.effects).singleElement().satisfies(effect -> {
             assertThat(effect.bumpAuthEpoch()).isTrue();
-            assertThat(effect.revokeAllSessions()).isTrue();
+            assertThat(effect.revokeAllCredentials()).isTrue();
             assertThat(effect.reasonCode()).isEqualTo("ACCOUNT_SANCTION_APPLIED");
         });
         assertThat(outbox.messages).extracting(AccountSanctionOutboxPublicationPort.Message::type)

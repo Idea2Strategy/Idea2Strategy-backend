@@ -110,7 +110,7 @@ class AccountOperationsFullJourneyIntegrationTest {
         registry.add("identity.crypto.email-encryption-key", () -> key);
         registry.add("identity.crypto.lookup-hmac-key", () -> key);
         registry.add("identity.crypto.verification-hmac-key", () -> key);
-        registry.add("identity.crypto.session-hmac-key", () -> key);
+        registry.add("identity.crypto.refresh-token-hmac-key", () -> key);
         registry.add("identity.crypto.customer-jwt-signing-key", () -> key);
         registry.add("idea2strategy.operator-auth.enabled", () -> "true");
         registry.add("idea2strategy.operator-auth.issuer", () -> "https://operator.example");
@@ -287,7 +287,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(jsonPath("$.code").value("ACCOUNT_SANCTION_ACTIVE"));
         assertThat(count("""
                 select count(*) from identity.authentication_events
-                where account_id = ? and event_type = 'SESSION_REJECTED'
+                where account_id = ? and event_type = 'REFRESH_TOKEN_REJECTED'
                   and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
                 """, accountId)).isGreaterThanOrEqualTo(2);
         String appealBody = """
@@ -510,7 +510,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Correlation-Id", UUID.randomUUID())
                         .content("""
-                                {"email":"%s","password":"%s","deviceLabel":"a22f-journey"}
+                                {"email":"%s","password":"%s"}
                                 """.formatted(email, password)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))

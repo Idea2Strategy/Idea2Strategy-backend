@@ -19,7 +19,7 @@ import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-class BearerSessionCurrentPrincipalTest {
+class JwtCustomerAccessPrincipalTest {
     private static final UUID ACCOUNT = UUID.fromString("a2200000-0000-4000-8000-000000000001");
     private static final UUID LOGIN_IDENTITY = UUID.fromString("a2200000-0000-4000-8000-000000000002");
     private static final UUID FAMILY = UUID.fromString("a2200000-0000-4000-8000-000000000004");
@@ -35,7 +35,7 @@ class BearerSessionCurrentPrincipalTest {
         when(validation.authenticate(ACCOUNT, LOGIN_IDENTITY, 3, 7L, CustomerAccessScope.APPEAL))
                 .thenReturn(new AuthenticatedCustomer(ACCOUNT, true));
 
-        var principal = new BearerSessionCurrentPrincipal(request, jwt, validation);
+        var principal = new JwtCustomerAccessPrincipal(request, jwt, validation);
 
         assertThat(principal.accountId()).isEqualTo(ACCOUNT);
         assertThat(principal.accountId(CustomerAccessScope.APPEAL)).isEqualTo(ACCOUNT);
@@ -50,13 +50,13 @@ class BearerSessionCurrentPrincipalTest {
         CustomerJwtCodec jwt = jwt();
         CustomerAccessValidationService validation = mock(CustomerAccessValidationService.class);
         when(request.getHeader("Authorization")).thenReturn("Basic credential");
-        assertThatThrownBy(() -> new BearerSessionCurrentPrincipal(request, jwt, validation).accountId())
+        assertThatThrownBy(() -> new JwtCustomerAccessPrincipal(request, jwt, validation).accountId())
                 .isInstanceOf(AuthenticationRejectedException.class);
 
         when(request.getHeader("Authorization")).thenReturn("Bearer "
                 + jwt.issueRefresh(ACCOUNT, FAMILY, LOGIN_IDENTITY, 3, 7L,
                         "refresh-secret", Instant.parse("2026-08-06T12:00:00Z")));
-        assertThatThrownBy(() -> new BearerSessionCurrentPrincipal(request, jwt, validation).accountId())
+        assertThatThrownBy(() -> new JwtCustomerAccessPrincipal(request, jwt, validation).accountId())
                 .isInstanceOf(AuthenticationRejectedException.class);
     }
 

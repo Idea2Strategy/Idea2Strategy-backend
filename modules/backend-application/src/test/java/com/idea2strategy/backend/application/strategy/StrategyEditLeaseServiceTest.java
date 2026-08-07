@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.idea2strategy.backend.application.testing.MutableClock;
-import com.idea2strategy.backend.application.testing.TestSessionPrincipal;
+import com.idea2strategy.backend.application.testing.TestCustomerAccessPrincipal;
 import com.idea2strategy.backend.domain.strategy.Strategy;
 import com.idea2strategy.backend.domain.strategy.StrategyEditLease;
 import java.time.Duration;
@@ -81,7 +81,7 @@ class StrategyEditLeaseServiceTest {
         return new StrategyEditLeaseService(
                 repository,
                 repository,
-                new TestSessionPrincipal(OWNER_ID),
+                new TestCustomerAccessPrincipal(OWNER_ID),
                 () -> token,
                 clock,
                 LEASE_DURATION);

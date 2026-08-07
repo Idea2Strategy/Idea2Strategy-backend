@@ -79,6 +79,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260805130000__backtest_run_input_pins.sql",
                         "V20260806100000__backend_google_oidc_provider.sql",
                         "V20260807120000__backend_customer_refresh_token_families.sql",
+                        "V20260807130000__backend_publish_full_basic_element_catalog.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))

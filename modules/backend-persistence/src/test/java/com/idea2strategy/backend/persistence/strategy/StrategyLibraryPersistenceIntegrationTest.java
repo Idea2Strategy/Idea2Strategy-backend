@@ -108,7 +108,7 @@ class StrategyLibraryPersistenceIntegrationTest {
                 DRAFT_ID, draftSemantic, "6".repeat(64), "7".repeat(64), now.minusMinutes(2), now.minusSeconds(10));
         jdbc.update(
                 "insert into strategy.validation_runs (id, strategy_id, requested_by_account_id, requested_edit_sequence, semantic_hash, element_catalog_version_id, status, issue_count, result_document, requested_at, completed_at) values (?, ?, ?, 0, ?, ?, 'PASSED', 0, '{}'::jsonb, ?, ?)",
-                UUID.randomUUID(), DRAFT_ID, OWNER_ID, "b".repeat(64), CATALOG_ID,
+                UUID.randomUUID(), DRAFT_ID, OWNER_ID, "6".repeat(64), CATALOG_ID,
                 now.minusSeconds(9), now.minusSeconds(8));
         jdbc.update(
                 "insert into bot.bots (id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, execution_eligible_from, created_at, updated_at) values (?, ?, 'PRO', 'Owned release', 'STOPPED', ?, ?, ?, ?), (?, ?, 'BASIC', 'Other release', 'RUNNING', ?, ?, ?, ?)",
@@ -159,7 +159,8 @@ class StrategyLibraryPersistenceIntegrationTest {
                         StrategyLibraryItemKind.RELEASED,
                         StrategyLibraryItemKind.PACKAGE,
                         StrategyLibraryItemKind.TEMPLATE);
-        assertThat(items.get(0).validationStatus()).isEqualTo("PASSED");
+        assertThat(items.get(0).status()).isEqualTo("READY");
+        assertThat(items.get(0).validationStatus()).isEqualTo("VALID");
         assertThat(items.get(0).blockCount()).isEqualTo(3);
         assertThat(items.get(0).symbols()).containsExactly("AAPL");
         assertThat(items.get(1).backtestStatus()).isEqualTo("COMPLETED");
@@ -172,6 +173,21 @@ class StrategyLibraryPersistenceIntegrationTest {
         var afterRelease = adapter.findVisible(OWNER_ID, NOW, items.get(1).position(), 10);
         assertThat(afterRelease).extracting(StrategyLibraryItem::id)
                 .containsExactly(PACKAGE_VERSION_ID, TEMPLATE_VERSION_ID);
+    }
+
+    @Test
+    void marksTheDraftIncompleteWhenTheLatestSavedRevisionHasNoMatchingValidRun() {
+        jdbc.update(
+                "update strategy.strategy_documents set edit_sequence = 1, semantic_hash = ? where strategy_id = ?",
+                "9".repeat(64), DRAFT_ID);
+
+        var draft = adapter.findVisible(OWNER_ID, NOW, null, 10).stream()
+                .filter(item -> item.id().equals(DRAFT_ID))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(draft.status()).isEqualTo("INCOMPLETE");
+        assertThat(draft.validationStatus()).isNull();
     }
 
     @SpringBootConfiguration

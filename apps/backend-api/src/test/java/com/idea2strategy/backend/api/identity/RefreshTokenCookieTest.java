@@ -7,12 +7,12 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
 
-class RefreshSessionCookieTest {
+class RefreshTokenCookieTest {
     private static final Instant NOW = Instant.parse("2026-08-07T00:00:00Z");
 
     @Test
     void issuesAHostOnlyHttpOnlySecureStrictCookieWithoutExposingTheTokenElsewhere() {
-        var cookies = new RefreshSessionCookie(
+        var cookies = new RefreshTokenCookie(
                 Clock.fixed(NOW, ZoneOffset.UTC), true, "Strict");
 
         String value = cookies.issue("refresh.jwt.value", NOW.plusSeconds(7200)).toString();
@@ -29,7 +29,7 @@ class RefreshSessionCookieTest {
 
     @Test
     void clearsTheExactCookieBoundary() {
-        var cookies = new RefreshSessionCookie(
+        var cookies = new RefreshTokenCookie(
                 Clock.fixed(NOW, ZoneOffset.UTC), true, "Strict");
 
         assertThat(cookies.clear().toString())
