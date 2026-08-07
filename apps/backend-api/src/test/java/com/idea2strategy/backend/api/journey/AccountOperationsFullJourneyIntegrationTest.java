@@ -29,6 +29,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -110,6 +111,7 @@ class AccountOperationsFullJourneyIntegrationTest {
         registry.add("identity.crypto.lookup-hmac-key", () -> key);
         registry.add("identity.crypto.verification-hmac-key", () -> key);
         registry.add("identity.crypto.session-hmac-key", () -> key);
+        registry.add("identity.crypto.customer-jwt-signing-key", () -> key);
         registry.add("idea2strategy.operator-auth.enabled", () -> "true");
         registry.add("idea2strategy.operator-auth.issuer", () -> "https://operator.example");
         registry.add("idea2strategy.operator-auth.jwk-set-uri", () -> "https://operator.example/jwks");
@@ -268,7 +270,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                   and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
                 """, accountId)).isOne();
         mvc.perform(get("/api/v1/auth/sessions")
-                        .header("Authorization", "Bearer " + appealSession.refreshToken())
+                        .cookie(appealSession.refreshCookie())
                         .header("X-Correlation-Id", CORRELATION))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ACCOUNT_SANCTION_ACTIVE"))
@@ -504,7 +506,7 @@ class AccountOperationsFullJourneyIntegrationTest {
     }
 
     private TokenPair loginTokens(MockMvc mvc, String email, String password, UUID accountId) throws Exception {
-        String login = mvc.perform(post("/api/v1/auth/login")
+        var loginResult = mvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Correlation-Id", UUID.randomUUID())
                         .content("""
@@ -512,9 +514,11 @@ class AccountOperationsFullJourneyIntegrationTest {
                                 """.formatted(email, password)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountId").value(accountId.toString()))
-                .andReturn().getResponse().getContentAsString();
-        var response = json.readTree(login);
-        return new TokenPair(response.get("accessToken").asText(), response.get("refreshToken").asText());
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andReturn();
+        var response = json.readTree(loginResult.getResponse().getContentAsString());
+        return new TokenPair(response.get("accessToken").asText(),
+                loginResult.getResponse().getCookie("i2s_refresh"));
     }
 
     private void ensureNotificationPolicy(String typeCode) {
@@ -598,7 +602,7 @@ class AccountOperationsFullJourneyIntegrationTest {
 
     private record Login(UUID accountId, String accessToken) {}
 
-    private record TokenPair(String accessToken, String refreshToken) {}
+    private record TokenPair(String accessToken, Cookie refreshCookie) {}
 
     @TestConfiguration(proxyBeanMethods = false)
     static class OperatorJwtTestConfiguration {

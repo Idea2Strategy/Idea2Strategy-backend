@@ -102,7 +102,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     OwnedRoomManagementQueryService ownedRoomManagementQueryService(
             OwnedRoomManagementJooqAdapter adapter, CurrentPrincipal principal) {
         return new OwnedRoomManagementQueryService(adapter, principal);
@@ -118,14 +118,14 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     UserPostEvaluationChoiceService userPostEvaluationChoiceService(
             PostEvaluationChoiceJooqAdapter adapter, CurrentPrincipal principal) {
         return new UserPostEvaluationChoiceService(adapter, principal, Clock.systemUTC());
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     UserRoomTerminationService userRoomTerminationService(
             RoomTerminationJooqAdapter adapter, CurrentPrincipal principal) {
         return new UserRoomTerminationService(adapter, principal, Clock.systemUTC());
@@ -166,7 +166,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     RoomInvitationService roomInvitationService(
             RoomInvitationJooqAdapter invitationAdapter,
             RoomInvitationSecretIssuer secretIssuer,
@@ -176,7 +176,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     RoomParticipationAdmissionService roomParticipationAdmissionService(
             RoomParticipationAdmissionJooqAdapter admissionAdapter, CurrentPrincipal principal) {
         return new RoomParticipationAdmissionService(
@@ -188,7 +188,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     BasicExecutionPlanCommandService roomBasicExecutionPlanCommandService(
             CompiledFlowPlanJooqCommandAdapter planAdapter,
             StrategyValidationRunJooqQueryAdapter validationAdapter,
@@ -206,7 +206,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     ImmutableStrategyReleaseCommandService roomImmutableStrategyReleaseCommandService(
             ImmutableStrategyReleaseJooqCommandAdapter releaseAdapter,
             BasicExecutionPlanCommandService planService,
@@ -225,7 +225,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     RoomStrategyParticipationService roomStrategyParticipationService(
             RoomParticipationAdmissionService admissionService,
             RoomStrategyBotProvisioningJooqAdapter provisioningAdapter,
@@ -257,14 +257,14 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     OwnedStrategyValidationCatalogQueryService ownedStrategyValidationCatalogQueryService(
             StrategyValidationRunJooqQueryAdapter validationAdapter, CurrentPrincipal principal) {
         return new OwnedStrategyValidationCatalogQueryService(validationAdapter, principal);
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     UserCompetitionRoomCreationService userCompetitionRoomCreationService(
             CompetitionRoomJpaCommandAdapter commandAdapter,
             ScoringTemplateCatalogService scoringCatalog,
@@ -279,7 +279,7 @@ public class CompetitionRoomConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "identity.crypto", name = "session-hmac-key")
+    @ConditionalOnProperty(prefix = "identity.crypto", name = {"session-hmac-key", "customer-jwt-signing-key"})
     UserRoomConfigurationService userRoomConfigurationService(
             RoomConfigurationJooqAdapter configurationAdapter,
             ScoringTemplateCatalogService scoringCatalog,

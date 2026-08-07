@@ -45,7 +45,8 @@ import org.springframework.context.ApplicationEventPublisher;
 @EnableConfigurationProperties(TrustedOidcProperties.class)
 @ConditionalOnProperty(
         prefix = "identity.crypto",
-        name = {"email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key"})
+        name = {"email-encryption-key", "lookup-hmac-key", "verification-hmac-key", "session-hmac-key",
+                "customer-jwt-signing-key"})
 @EntityScan(basePackageClasses = IdentityAccountJpaEntity.class)
 @Import({
         IdentityJooqQueryAdapter.class,
@@ -91,7 +92,7 @@ public class IdentityAuthConfiguration {
 
     @Bean
     CustomerJwtCodec customerJwtCodec(
-            @Value("${identity.crypto.session-hmac-key}") String key,
+            @Value("${identity.crypto.customer-jwt-signing-key}") String key,
             Clock identityClock,
             @Value("${identity.jwt.issuer:https://ideatostrategy.com}") String issuer,
             @Value("${identity.jwt.access-audience:idea2strategy-api}") String accessAudience,
@@ -99,6 +100,14 @@ public class IdentityAuthConfiguration {
             @Value("${identity.jwt.access-lifetime:PT5M}") Duration accessLifetime) {
         return new CustomerJwtCodec(
                 decode(key), identityClock, issuer, accessAudience, refreshAudience, accessLifetime);
+    }
+
+    @Bean
+    RefreshSessionCookie refreshSessionCookie(
+            Clock identityClock,
+            @Value("${identity.jwt.refresh-cookie-secure:true}") boolean secure,
+            @Value("${identity.jwt.refresh-cookie-same-site:Strict}") String sameSite) {
+        return new RefreshSessionCookie(identityClock, secure, sameSite);
     }
 
     @Bean
