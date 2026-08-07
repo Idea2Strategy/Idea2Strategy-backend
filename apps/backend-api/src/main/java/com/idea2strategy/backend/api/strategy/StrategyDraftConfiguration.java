@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.api.strategy;
 
-import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
+import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.strategy.BasicStrategyDraftCommandService;
 import com.idea2strategy.backend.application.strategy.BasicStructureCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
@@ -38,8 +38,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key",
-        "identity.crypto.customer-jwt-signing-key"})
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.customer-jwt-signing-key"})
 @EntityScan(basePackageClasses = {
     StrategyJpaEntity.class,
     StrategyDocumentJpaEntity.class,
@@ -66,7 +65,7 @@ public class StrategyDraftConfiguration {
             BasicStrategyDraftJpaCommandAdapter commandAdapter,
             StrategyJooqQueryAdapter strategyQueryAdapter,
             StrategyDocumentJooqQueryAdapter documentQueryAdapter,
-            CurrentSessionPrincipal principal,
+            CurrentPrincipal principal,
             ApplicationEventPublisher eventPublisher) {
         return new BasicStrategyDraftCommandService(
                 commandAdapter,
@@ -81,7 +80,7 @@ public class StrategyDraftConfiguration {
     @Bean
     StrategyDocumentQueryService strategyDocumentQueryService(
             StrategyDocumentJooqQueryAdapter documentQueryAdapter,
-            CurrentSessionPrincipal principal) {
+            CurrentPrincipal principal) {
         return new StrategyDocumentQueryService(documentQueryAdapter, principal);
     }
 
@@ -89,7 +88,7 @@ public class StrategyDraftConfiguration {
     StrategyEditLeaseService strategyEditLeaseService(
             StrategyEditLeaseJpaCommandAdapter leaseAdapter,
             StrategyJooqQueryAdapter strategyQueryAdapter,
-            CurrentSessionPrincipal principal,
+            CurrentPrincipal principal,
             @Value("${strategy.edit-lease.duration:PT2M}") Duration leaseDuration) {
         return new StrategyEditLeaseService(
                 leaseAdapter,
@@ -112,7 +111,7 @@ public class StrategyDraftConfiguration {
             StrategyJooqQueryAdapter strategyQueryAdapter,
             StrategyDocumentJooqQueryAdapter documentQueryAdapter,
             BasicStructureCatalogQueryService structureCatalogService,
-            CurrentSessionPrincipal principal,
+            CurrentPrincipal principal,
             ApplicationEventPublisher eventPublisher) {
         return new StrategyCopyCommandService(
                 commandAdapter,
@@ -130,7 +129,7 @@ public class StrategyDraftConfiguration {
             StrategyValidationRunJpaCommandAdapter validationCommandAdapter,
             StrategyJooqQueryAdapter strategyQueryAdapter,
             StrategyDocumentJooqQueryAdapter documentQueryAdapter,
-            CurrentSessionPrincipal principal) {
+            CurrentPrincipal principal) {
         return new BasicStrategyValidationCommandService(
                 validationCommandAdapter,
                 strategyQueryAdapter,
@@ -144,7 +143,7 @@ public class StrategyDraftConfiguration {
     StrategyValidationQueryService strategyValidationQueryService(
             StrategyValidationRunJooqQueryAdapter validationQueryAdapter,
             StrategyDocumentJooqQueryAdapter documentQueryAdapter,
-            CurrentSessionPrincipal principal) {
+            CurrentPrincipal principal) {
         return new StrategyValidationQueryService(validationQueryAdapter, documentQueryAdapter, principal);
     }
 

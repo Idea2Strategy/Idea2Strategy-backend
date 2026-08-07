@@ -79,7 +79,7 @@ class AccountReactivationPersistenceIntegrationTest {
         var service = service();
         var command = command(accountId, challengeId, "reactivate-1");
         long sessionsBefore = jdbc.queryForObject(
-                "select count(*) from identity.sessions where account_id = ?", Long.class, accountId);
+                "select count(*) from identity.refresh_token_families where account_id = ?", Long.class, accountId);
 
         var first = service.reactivate(command);
         var replay = service.reactivate(command);
@@ -87,7 +87,7 @@ class AccountReactivationPersistenceIntegrationTest {
         assertThat(first.status()).isEqualTo(AccountLifecycleStatus.ACTIVE);
         assertThat(replay).isEqualTo(first);
         assertThat(jdbc.queryForObject(
-                "select count(*) from identity.sessions where account_id = ?", Long.class, accountId))
+                "select count(*) from identity.refresh_token_families where account_id = ?", Long.class, accountId))
                 .isEqualTo(sessionsBefore);
         assertThat(consentCount(accountId)).isEqualTo(1);
         assertThat(jdbc.queryForMap("""

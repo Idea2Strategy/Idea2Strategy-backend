@@ -81,7 +81,7 @@ class StrategyEditLeaseServiceTest {
         return new StrategyEditLeaseService(
                 repository,
                 repository,
-                new TestSessionPrincipal(OWNER_ID, sessionId),
+                new TestSessionPrincipal(OWNER_ID),
                 () -> token,
                 clock,
                 LEASE_DURATION);
@@ -134,7 +134,7 @@ class StrategyEditLeaseServiceTest {
         private boolean matches(UUID strategyId, UUID sessionId, String tokenDigest) {
             return lease != null
                     && lease.strategyId().equals(strategyId)
-                    && lease.sessionId().equals(sessionId)
+                    && lease.accountId().equals(sessionId)
                     && lease.tokenDigest().equals(tokenDigest);
         }
     }

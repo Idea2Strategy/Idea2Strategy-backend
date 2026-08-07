@@ -19,7 +19,7 @@ class RefreshSessionCookieTest {
 
         assertThat(value)
                 .startsWith("i2s_refresh=refresh.jwt.value")
-                .contains("Path=/api/v1/auth/sessions")
+                .contains("Path=/api/v1/auth")
                 .contains("Max-Age=7200")
                 .contains("Secure")
                 .contains("HttpOnly")
@@ -34,7 +34,7 @@ class RefreshSessionCookieTest {
 
         assertThat(cookies.clear().toString())
                 .startsWith("i2s_refresh=")
-                .contains("Path=/api/v1/auth/sessions")
+                .contains("Path=/api/v1/auth")
                 .contains("Max-Age=0")
                 .contains("Secure")
                 .contains("HttpOnly")

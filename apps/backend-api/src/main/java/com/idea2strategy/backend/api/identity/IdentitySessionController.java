@@ -3,24 +3,19 @@ package com.idea2strategy.backend.api.identity;
 import com.idea2strategy.backend.application.identity.RotatedSession;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
-import com.idea2strategy.backend.application.identity.SessionView;
-import java.util.List;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/v1/auth/sessions")
+@RequestMapping("/api/v1/auth")
 @ConditionalOnBean({SessionManagementService.class, HmacSessionTokens.class, CustomerJwtCodec.class})
 public class IdentitySessionController {
     private static final String BEARER_PREFIX = "Bearer ";
@@ -41,70 +36,63 @@ public class IdentitySessionController {
         this.refreshCookie = refreshCookie;
     }
 
-    @GetMapping
-    public List<SessionView> list(
-            @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
-            @RequestHeader(value = "Authorization", required = false) String authorization,
-            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        return sessions.list(digest(refreshCookieValue, authorization), correlation(correlationId));
-    }
-
-    @PostMapping("/rotate")
+    @PostMapping({"/refresh", "/sessions/rotate"})
     public ResponseEntity<RotatedTokenResponse> rotate(
             @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
         CustomerJwtCodec.RefreshClaims current = refresh(refreshCookieValue, authorization);
-        RotatedSession rotated = sessions.rotate(tokens.digest(current.sessionSecret()), correlation(correlationId));
+        RotatedSession rotated = sessions.rotate(
+                current.familyId(), tokens.digest(current.tokenSecret()), correlation(correlationId));
         String replacementRefresh = jwt.issueRefresh(
-                current.accountId(), rotated.sessionId(), rotated.sessionToken(), rotated.expiresAt());
+                rotated.accountId(),
+                rotated.familyId(),
+                rotated.loginIdentityId(),
+                rotated.authEpoch(),
+                rotated.credentialVersion(),
+                rotated.tokenSecret(),
+                rotated.expiresAt());
         var body = new RotatedTokenResponse(
-                current.accountId(),
-                rotated.sessionId(),
+                rotated.accountId(),
                 "Bearer",
-                jwt.issueAccess(current.accountId(), rotated.sessionId()),
+                jwt.issueAccess(
+                        rotated.accountId(),
+                        rotated.loginIdentityId(),
+                        rotated.authEpoch(),
+                        rotated.credentialVersion()),
                 jwt.accessExpiresAt(),
                 rotated.expiresAt());
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE,
-                        refreshCookie.issue(replacementRefresh, rotated.expiresAt()).toString())
+                        refreshCookie.issue(replacementRefresh, rotated.expiresAt()).toString(),
+                        refreshCookie.clearLegacyPath().toString())
                 .body(body);
     }
 
-    @DeleteMapping("/current")
+    @PostMapping("/logout")
     public ResponseEntity<Void> logoutCurrent(
             @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        sessions.revokeCurrent(digest(refreshCookieValue, authorization), correlation(correlationId));
+        CustomerJwtCodec.RefreshClaims current = refresh(refreshCookieValue, authorization);
+        sessions.revokeCurrent(
+                current.familyId(), tokens.digest(current.tokenSecret()), correlation(correlationId));
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie.clear().toString())
                 .build();
     }
 
-    @DeleteMapping("/{sessionId}")
-    public ResponseEntity<Void> logoutOther(
-            @PathVariable UUID sessionId,
-            @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
-            @RequestHeader(value = "Authorization", required = false) String authorization,
-            @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        sessions.revokeOther(digest(refreshCookieValue, authorization), sessionId, correlation(correlationId));
-        return ResponseEntity.noContent().build();
-    }
-
-    @DeleteMapping
+    @PostMapping("/logout-all")
     public ResponseEntity<Void> logoutAll(
             @CookieValue(value = RefreshSessionCookie.NAME, required = false) String refreshCookieValue,
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        sessions.revokeAll(digest(refreshCookieValue, authorization), correlation(correlationId));
+        CustomerJwtCodec.RefreshClaims current = refresh(refreshCookieValue, authorization);
+        sessions.revokeAll(
+                current.familyId(), tokens.digest(current.tokenSecret()), correlation(correlationId));
         return ResponseEntity.noContent()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie.clear().toString())
                 .build();
-    }
-
-    private String digest(String refreshCookieValue, String authorization) {
-        return tokens.digest(refresh(refreshCookieValue, authorization).sessionSecret());
     }
 
     private CustomerJwtCodec.RefreshClaims refresh(String refreshCookieValue, String authorization) {
@@ -112,7 +100,7 @@ public class IdentitySessionController {
             return jwt.verifyRefresh(refreshCookieValue.trim());
         }
         if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
-            throw new AuthenticationRejectedException("A refresh session cookie is required");
+            throw new AuthenticationRejectedException("A refresh token cookie is required");
         }
         String rawToken = authorization.substring(BEARER_PREFIX.length()).trim();
         if (rawToken.isEmpty()) {
@@ -127,14 +115,13 @@ public class IdentitySessionController {
 
     public record RotatedTokenResponse(
             UUID accountId,
-            UUID sessionId,
             String tokenType,
             String accessToken,
             Instant accessExpiresAt,
             Instant refreshExpiresAt) {
         @Override
         public String toString() {
-            return "RotatedTokenResponse[accountId=" + accountId + ",sessionId=" + sessionId + ",tokenType=" + tokenType
+            return "RotatedTokenResponse[accountId=" + accountId + ",tokenType=" + tokenType
                     + ",accessToken=REDACTED,accessExpiresAt=" + accessExpiresAt
                     + ",refreshExpiresAt=" + refreshExpiresAt + "]";
         }

@@ -295,7 +295,7 @@ public class AccountLifecycleJpaCommandAdapter implements AccountLifecycleComman
             throw new IllegalStateException("Account security state is missing");
         }
         entityManager.createNativeQuery("""
-                        update identity.sessions
+                        update identity.refresh_token_families
                         set revoked_at = :occurredAt, revoke_reason_code = :reasonCode
                         where account_id = :accountId and revoked_at is null
                         """)

@@ -30,7 +30,7 @@ public class IdentityExpiryJdbcAdapter implements SessionExpiryPort, DelegatedCr
         requireLimit(limit);
         return jdbc.query("""
                 select account_id, id, expires_at
-                  from identity.sessions
+                  from identity.refresh_token_families
                  where revoked_at is null
                    and expires_at <= clock_timestamp()
                  order by expires_at, id
@@ -94,7 +94,7 @@ public class IdentityExpiryJdbcAdapter implements SessionExpiryPort, DelegatedCr
                 UUID.class, identity.accountId());
         Instant now = databaseNow();
         int updated = jdbc.update("""
-                update identity.sessions
+                update identity.refresh_token_families
                    set revoked_at = ?, revoke_reason_code = ?
                  where id = ? and account_id = ? and expires_at = ?
                    and revoked_at is null and expires_at <= ?

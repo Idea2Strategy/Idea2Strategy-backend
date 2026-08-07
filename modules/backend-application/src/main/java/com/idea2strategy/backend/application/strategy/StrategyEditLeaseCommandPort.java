@@ -9,10 +9,10 @@ public interface StrategyEditLeaseCommandPort {
 
     boolean heartbeat(
             UUID strategyId,
-            UUID sessionId,
+            UUID accountId,
             String tokenDigest,
             Instant heartbeatAt,
             Instant expiresAt);
 
-    boolean release(UUID strategyId, UUID sessionId, String tokenDigest);
+    boolean release(UUID strategyId, UUID accountId, String tokenDigest);
 }

@@ -60,7 +60,7 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
     @BeforeEach
     void prepare() {
         jdbc.update("delete from identity.authentication_events where account_id = ?", ACCOUNT);
-        jdbc.update("delete from identity.sessions where account_id = ?", ACCOUNT);
+        jdbc.update("delete from identity.refresh_token_families where account_id = ?", ACCOUNT);
         jdbc.update("delete from identity.login_identities where account_id = ?", ACCOUNT);
         jdbc.update("delete from identity.auth_providers where id = 21001");
         jdbc.update("delete from identity.delegated_authorization_events where authorization_id = ?", AUTHORIZATION);
@@ -76,9 +76,9 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
         jdbc.update("insert into identity.login_identities "
                 + "(id, account_id, provider_id, status, activated_at) values (?, ?, 21001, 'ACTIVE', ?)",
                 PROVIDER, ACCOUNT, at);
-        jdbc.update("insert into identity.sessions "
-                + "(id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue, token_digest, "
-                + "digest_key_version, issued_at, last_seen_at, expires_at) "
+        jdbc.update("insert into identity.refresh_token_families "
+                + "(id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue, current_token_digest, "
+                + "digest_key_version, issued_at, last_rotated_at, expires_at) "
                 + "values (?, ?, ?, 1, ?, 1, ?, ?, ?)",
                 SESSION, ACCOUNT, PROVIDER, "session-" + SESSION, at, at, EXPIRES_AT.atOffset(ZoneOffset.UTC));
 
@@ -113,7 +113,7 @@ class IdentityExpiryJdbcAdapterIntegrationTest {
                 SessionExpiryPort.Result.APPLIED, SessionExpiryPort.Result.ALREADY_TRANSITIONED);
         assertThat(count("select count(*) from identity.authentication_events "
                 + "where account_id = ? and event_type = 'SESSION_EXPIRED'", ACCOUNT)).isOne();
-        assertThat(text("select revoke_reason_code from identity.sessions where id = ?", SESSION))
+        assertThat(text("select revoke_reason_code from identity.refresh_token_families where id = ?", SESSION))
                 .isEqualTo("SESSION_EXPIRED");
         assertThat(adapter.findDueSessions(10)).isEmpty();
     }

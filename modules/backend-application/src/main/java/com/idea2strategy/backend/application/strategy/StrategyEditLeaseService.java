@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.application.strategy;
 
-import com.idea2strategy.backend.application.common.CurrentSessionPrincipal;
+import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.domain.strategy.StrategyEditLease;
 import java.time.Clock;
 import java.time.Duration;
@@ -12,7 +12,7 @@ import java.util.UUID;
 public final class StrategyEditLeaseService {
     private final StrategyEditLeaseCommandPort commandPort;
     private final StrategyQueryPort strategyQueryPort;
-    private final CurrentSessionPrincipal principal;
+    private final CurrentPrincipal principal;
     private final StrategyEditLeaseTokenGenerator tokenGenerator;
     private final Clock clock;
     private final Duration leaseDuration;
@@ -20,7 +20,7 @@ public final class StrategyEditLeaseService {
     public StrategyEditLeaseService(
             StrategyEditLeaseCommandPort commandPort,
             StrategyQueryPort strategyQueryPort,
-            CurrentSessionPrincipal principal,
+            CurrentPrincipal principal,
             StrategyEditLeaseTokenGenerator tokenGenerator,
             Clock clock,
             Duration leaseDuration) {
@@ -42,7 +42,7 @@ public final class StrategyEditLeaseService {
         Instant expiresAt = now.plus(leaseDuration);
         StrategyEditLease lease = new StrategyEditLease(
                 strategyId,
-                principal.sessionId(),
+                principal.accountId(),
                 StrategyEditLeaseTokens.sha256(token),
                 StrategyEditLeaseTokens.DIGEST_KEY_VERSION,
                 now,
@@ -60,7 +60,7 @@ public final class StrategyEditLeaseService {
         Instant expiresAt = now.plus(leaseDuration);
         if (!commandPort.heartbeat(
                 strategyId,
-                principal.sessionId(),
+                principal.accountId(),
                 StrategyEditLeaseTokens.sha256(token),
                 now,
                 expiresAt)) {
@@ -72,7 +72,7 @@ public final class StrategyEditLeaseService {
     public void release(UUID strategyId, String token) {
         requireOwnedStrategy(strategyId);
         if (!commandPort.release(
-                strategyId, principal.sessionId(), StrategyEditLeaseTokens.sha256(token))) {
+                strategyId, principal.accountId(), StrategyEditLeaseTokens.sha256(token))) {
             throw new StrategyEditLeaseInvalidException();
         }
     }

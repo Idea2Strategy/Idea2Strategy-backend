@@ -237,7 +237,7 @@ public class AccountRetentionJpaAdapter implements RetentionExecutionStore {
     }
 
     private void deleteCredentials(UUID accountId, Instant now) {
-        entityManager.createNativeQuery("delete from identity.sessions where account_id = :accountId")
+        entityManager.createNativeQuery("delete from identity.refresh_token_families where account_id = :accountId")
                 .setParameter("accountId", accountId).executeUpdate();
         entityManager.createNativeQuery("delete from identity.password_reset_requests where account_id = :accountId")
                 .setParameter("accountId", accountId).executeUpdate();

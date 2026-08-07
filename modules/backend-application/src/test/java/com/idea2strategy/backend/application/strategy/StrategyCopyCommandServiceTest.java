@@ -167,7 +167,7 @@ class StrategyCopyCommandServiceTest {
                 repository,
                 repository,
                 structureService,
-                new TestSessionPrincipal(OWNER_ID, UUID.randomUUID()),
+                new TestSessionPrincipal(OWNER_ID),
                 new FixedIdGenerator(COPY_ID),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 events);

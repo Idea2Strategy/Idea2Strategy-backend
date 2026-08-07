@@ -77,7 +77,6 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         jdbcTemplate.update("delete from strategy.strategy_edit_leases");
         jdbcTemplate.update("delete from strategy.strategy_documents");
         jdbcTemplate.update("delete from strategy.strategies");
-        jdbcTemplate.update("delete from identity.sessions where id in (?, ?)", SESSION_ID, SECOND_SESSION_ID);
         jdbcTemplate.update("delete from identity.login_identities where id = ?", LOGIN_ID);
         jdbcTemplate.execute(
                 "truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
@@ -101,37 +100,11 @@ class BasicStrategyDraftPersistenceIntegrationTest {
                 LOGIN_ID,
                 OWNER_ID,
                 NOW.atOffset(ZoneOffset.UTC));
-        jdbcTemplate.update(
-                """
-                insert into identity.sessions
-                    (id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue,
-                     credential_version_at_issue, token_digest, digest_key_version, last_seen_at, expires_at)
-                values (?, ?, ?, 1, 1, ?, 1, ?, ?)
-                """,
-                SESSION_ID,
-                OWNER_ID,
-                LOGIN_ID,
-                "session-token-digest",
-                NOW.atOffset(ZoneOffset.UTC),
-                NOW.plusSeconds(3600).atOffset(ZoneOffset.UTC));
-        jdbcTemplate.update(
-                """
-                insert into identity.sessions
-                    (id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue,
-                     credential_version_at_issue, token_digest, digest_key_version, last_seen_at, expires_at)
-                values (?, ?, ?, 1, 1, ?, 1, ?, ?)
-                """,
-                SECOND_SESSION_ID,
-                OWNER_ID,
-                LOGIN_ID,
-                "second-session-token-digest",
-                NOW.atOffset(ZoneOffset.UTC),
-                NOW.plusSeconds(3600).atOffset(ZoneOffset.UTC));
     }
 
     @Test
     void createsDraftRowsAndRejectsAStaleConditionalUpdate() {
-        var principal = new TestSessionPrincipal(OWNER_ID, SESSION_ID);
+        var principal = new TestSessionPrincipal(OWNER_ID);
         var events = new RecordingDomainEventPublisher();
         var service = new BasicStrategyDraftCommandService(
                 draftCommandAdapter,
@@ -147,7 +120,7 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         assertThat(leaseCommandAdapter.acquire(
                         new StrategyEditLease(
                                 strategyId,
-                                SESSION_ID,
+                                OWNER_ID,
                                 leaseTokenDigest,
                                 StrategyEditLeaseTokens.DIGEST_KEY_VERSION,
                                 NOW,
@@ -185,9 +158,9 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         assertThat(new StrategyDocumentQueryService(documentQueryAdapter, principal).getOwned(strategyId))
                 .isEqualTo(latest);
         assertThat(draftCommandAdapter.replaceDocument(
-                        latest, 0, SESSION_ID, leaseTokenDigest, NOW))
+                        latest, 0, OWNER_ID, leaseTokenDigest, NOW))
                 .isEqualTo(com.idea2strategy.backend.application.strategy.StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE);
-        assertThat(leaseCommandAdapter.release(strategyId, SESSION_ID, leaseTokenDigest)).isTrue();
+        assertThat(leaseCommandAdapter.release(strategyId, OWNER_ID, leaseTokenDigest)).isTrue();
         assertThatThrownBy(() -> service.autosave(
                         strategyId,
                         1,
@@ -203,7 +176,7 @@ class BasicStrategyDraftPersistenceIntegrationTest {
 
     @Test
     void leasePersistenceBlocksCompetingSessionsAndAllowsRecoveryAfterRelease() {
-        var principal = new TestSessionPrincipal(OWNER_ID, SESSION_ID);
+        var principal = new TestSessionPrincipal(OWNER_ID);
         var service = new BasicStrategyDraftCommandService(
                 draftCommandAdapter,
                 strategyQueryAdapter,
@@ -217,15 +190,15 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         String secondDigest = StrategyEditLeaseTokens.sha256("second-token");
 
         assertThat(leaseCommandAdapter.acquire(
-                        lease(strategyId, SESSION_ID, firstDigest, NOW, NOW.plusSeconds(60)), NOW))
+                        lease(strategyId, OWNER_ID, firstDigest, NOW, NOW.plusSeconds(60)), NOW))
                 .isTrue();
         assertThat(leaseCommandAdapter.acquire(
-                        lease(strategyId, SECOND_SESSION_ID, secondDigest, NOW.plusSeconds(10), NOW.plusSeconds(70)),
+                        lease(strategyId, OWNER_ID, secondDigest, NOW.plusSeconds(10), NOW.plusSeconds(70)),
                         NOW.plusSeconds(10)))
                 .isFalse();
         assertThat(leaseCommandAdapter.heartbeat(
                         strategyId,
-                        SESSION_ID,
+                        OWNER_ID,
                         firstDigest,
                         NOW.plusSeconds(20),
                         NOW.plusSeconds(80)))
@@ -236,18 +209,18 @@ class BasicStrategyDraftPersistenceIntegrationTest {
                         strategyId))
                 .isEqualTo(firstDigest)
                 .doesNotContain("first-token");
-        assertThat(leaseCommandAdapter.release(strategyId, SESSION_ID, firstDigest)).isTrue();
+        assertThat(leaseCommandAdapter.release(strategyId, OWNER_ID, firstDigest)).isTrue();
         assertThat(leaseCommandAdapter.acquire(
-                        lease(strategyId, SECOND_SESSION_ID, secondDigest, NOW.plusSeconds(21), NOW.plusSeconds(81)),
+                        lease(strategyId, OWNER_ID, secondDigest, NOW.plusSeconds(21), NOW.plusSeconds(81)),
                         NOW.plusSeconds(21)))
                 .isTrue();
     }
 
     private static StrategyEditLease lease(
-            UUID strategyId, UUID sessionId, String digest, Instant acquiredAt, Instant expiresAt) {
+            UUID strategyId, UUID accountId, String digest, Instant acquiredAt, Instant expiresAt) {
         return new StrategyEditLease(
                 strategyId,
-                sessionId,
+                accountId,
                 digest,
                 StrategyEditLeaseTokens.DIGEST_KEY_VERSION,
                 acquiredAt,

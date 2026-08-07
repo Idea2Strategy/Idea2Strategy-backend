@@ -17,7 +17,6 @@ public final class OidcAuthenticationService {
     private final SessionTokenIssuer tokenIssuer;
     private final Clock clock;
     private final Duration sessionLifetime;
-    private final int maxActiveSessions;
     private final RegistrationQueryPort registrationQueries;
     private final OidcIdentityCommandPort oidcCommands;
     private final EmailProtector emailProtector;
@@ -29,7 +28,7 @@ public final class OidcAuthenticationService {
             OidcSubjectProtector subjectProtector,
             SessionTokenIssuer tokenIssuer,
             Clock clock) {
-        this(queryPort, commandPort, subjectProtector, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME, 5);
+        this(queryPort, commandPort, subjectProtector, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME);
     }
 
     public OidcAuthenticationService(
@@ -38,8 +37,7 @@ public final class OidcAuthenticationService {
             OidcSubjectProtector subjectProtector,
             SessionTokenIssuer tokenIssuer,
             Clock clock,
-            Duration sessionLifetime,
-            int maxActiveSessions) {
+            Duration sessionLifetime) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.subjectProtector = Objects.requireNonNull(subjectProtector, "subjectProtector");
@@ -49,10 +47,6 @@ public final class OidcAuthenticationService {
         if (sessionLifetime.isZero() || sessionLifetime.isNegative()) {
             throw new IllegalArgumentException("sessionLifetime must be positive");
         }
-        if (maxActiveSessions < 1) {
-            throw new IllegalArgumentException("maxActiveSessions must be positive");
-        }
-        this.maxActiveSessions = maxActiveSessions;
         this.registrationQueries = null;
         this.oidcCommands = null;
         this.emailProtector = null;
@@ -66,7 +60,6 @@ public final class OidcAuthenticationService {
             SessionTokenIssuer tokenIssuer,
             Clock clock,
             Duration sessionLifetime,
-            int maxActiveSessions,
             RegistrationQueryPort registrationQueries,
             OidcIdentityCommandPort oidcCommands,
             EmailProtector emailProtector,
@@ -77,10 +70,9 @@ public final class OidcAuthenticationService {
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
-        if (sessionLifetime.isZero() || sessionLifetime.isNegative() || maxActiveSessions < 1) {
+        if (sessionLifetime.isZero() || sessionLifetime.isNegative()) {
             throw new IllegalArgumentException("OIDC session configuration is invalid");
         }
-        this.maxActiveSessions = maxActiveSessions;
         this.registrationQueries = Objects.requireNonNull(registrationQueries, "registrationQueries");
         this.oidcCommands = Objects.requireNonNull(oidcCommands, "oidcCommands");
         this.emailProtector = Objects.requireNonNull(emailProtector, "emailProtector");
@@ -123,9 +115,10 @@ public final class OidcAuthenticationService {
         commandPort.completeLogin(
                 session,
                 new AuthenticationSuccess(
-                        account.accountId(), account.loginIdentityId(), command.correlationId(), now),
-                maxActiveSessions);
-        return new LoginResult(account.accountId(), sessionId, token.rawToken(), expiresAt);
+                        account.accountId(), account.loginIdentityId(), command.correlationId(), now));
+        return new LoginResult(
+                account.accountId(), account.loginIdentityId(), account.authEpoch(), null,
+                sessionId, token.rawToken(), expiresAt);
     }
 
     private OidcLoginAccount registerNewAccount(

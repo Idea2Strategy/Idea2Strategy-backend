@@ -98,7 +98,8 @@ class MigrationPolicyTest {
                         "V20260804160020__pipeline_dataset_manifest_empty_hash.sql",
                         "V20260804160100__backtest_runtime_ownership_constrain.sql",
                         "V20260805130000__backtest_run_input_pins.sql",
-                        "V20260806100000__backend_google_oidc_provider.sql"),
+                        "V20260806100000__backend_google_oidc_provider.sql",
+                        "V20260807120000__backend_customer_refresh_token_families.sql"),
                 plan.orderedFileNames());
     }
 

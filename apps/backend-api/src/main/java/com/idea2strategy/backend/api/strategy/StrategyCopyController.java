@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/strategies/{strategyId}/copies")
-@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.session-hmac-key"})
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.customer-jwt-signing-key"})
 public class StrategyCopyController {
     private final StrategyCopyCommandService commandService;
 

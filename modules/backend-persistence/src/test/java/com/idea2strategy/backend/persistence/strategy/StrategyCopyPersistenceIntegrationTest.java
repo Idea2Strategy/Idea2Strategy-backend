@@ -140,7 +140,7 @@ class StrategyCopyPersistenceIntegrationTest {
                 new BasicStructureCatalogQueryService(
                         (catalogId, publishedAt) -> structures,
                         Clock.fixed(NOW, ZoneOffset.UTC)),
-                new TestSessionPrincipal(OWNER_ID, UUID.randomUUID()),
+                new TestSessionPrincipal(OWNER_ID),
                 new FixedIdGenerator(generatedId),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 new RecordingDomainEventPublisher());

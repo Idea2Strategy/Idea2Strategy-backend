@@ -2,7 +2,6 @@ package com.idea2strategy.backend.application.identity;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -30,61 +29,17 @@ public final class SessionManagementService {
         this.sessionLifetime = Objects.requireNonNull(sessionLifetime, "sessionLifetime");
     }
 
-    public AuthenticatedSession authenticate(String tokenDigest) {
-        return authenticate(tokenDigest, UUID.randomUUID());
-    }
-
-    public AuthenticatedSession authenticate(String tokenDigest, UUID correlationId) {
-        return authenticate(tokenDigest, correlationId, CustomerAccessScope.STANDARD);
-    }
-
-    public AuthenticatedSession authenticate(
-            String tokenDigest, UUID correlationId, CustomerAccessScope accessScope) {
-        var session = loadValid(tokenDigest, correlationId, accessScope);
-        return new AuthenticatedSession(session.accountId(), session.id(), session.activeSanction());
-    }
-
-    public AuthenticatedSession authenticateAccess(
-            UUID accountId,
-            UUID sessionId,
-            UUID correlationId,
-            CustomerAccessScope accessScope) {
-        Objects.requireNonNull(accountId, "accountId");
-        Objects.requireNonNull(sessionId, "sessionId");
-        var session = queries.findById(sessionId)
-                .filter(stored -> stored.accountId().equals(accountId))
-                .orElseThrow(() -> new AuthenticationRejectedException("Session is not valid"));
-        session = validate(session, correlationId, accessScope);
-        return new AuthenticatedSession(session.accountId(), session.id(), session.activeSanction());
-    }
-
-    public List<SessionView> list(String tokenDigest) {
-        return list(tokenDigest, UUID.randomUUID());
-    }
-
-    public List<SessionView> list(String tokenDigest, UUID correlationId) {
-        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.STANDARD);
-        return queries.findActiveByAccountId(current.accountId(), clock.instant()).stream()
-                .map(session -> new SessionView(
-                        session.sessionId(),
-                        session.deviceLabel(),
-                        session.issuedAt(),
-                        session.lastSeenAt(),
-                        session.expiresAt(),
-                        session.sessionId().equals(current.id())))
-                .toList();
-    }
-
-    public void revokeCurrent(String tokenDigest, UUID correlationId) {
-        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
+    public void revokeCurrent(UUID familyId, String tokenDigest, UUID correlationId) {
+        var current = loadCurrentToken(familyId, tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
         revoke(current, current.id(), "LOGOUT", correlationId);
     }
 
-    public RotatedSession rotate(String tokenDigest, UUID correlationId) {
+    public RotatedSession rotate(UUID familyId, String tokenDigest, UUID correlationId) {
+        requireTokenDigest(tokenDigest);
         if (tokenIssuer == null || sessionLifetime.isZero() || sessionLifetime.isNegative()) {
             throw new IllegalStateException("Session rotation is not configured");
         }
-        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.STANDARD);
+        var current = loadValid(familyId, correlationId, CustomerAccessScope.STANDARD);
         var replacement = tokenIssuer.issue();
         var now = clock.instant();
         var expiresAt = now.plus(sessionLifetime);
@@ -97,28 +52,24 @@ public final class SessionManagementService {
                 Objects.requireNonNull(correlationId, "correlationId"),
                 now);
         if (!rotated) {
+            commands.revoke(current.accountId(), current.id(), "REFRESH_TOKEN_REUSE", correlationId, now);
             commands.recordEvent(
                     current.accountId(), current.loginIdentityId(), current.id(),
                     "SESSION_REJECTED", "ROTATION_RACE_LOST", correlationId, now);
-            throw new AuthenticationRejectedException("Session is no longer active");
+            throw new AuthenticationRejectedException("Refresh token was already used");
         }
-        return new RotatedSession(current.id(), replacement.rawToken(), expiresAt);
+        return new RotatedSession(
+                current.accountId(),
+                current.loginIdentityId(),
+                current.authEpochAtIssue(),
+                current.credentialVersionAtIssue(),
+                current.id(),
+                replacement.rawToken(),
+                expiresAt);
     }
 
-    public void revokeOther(String tokenDigest, UUID targetSessionId, UUID correlationId) {
-        Objects.requireNonNull(targetSessionId, "targetSessionId");
-        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
-        if (current.id().equals(targetSessionId)) {
-            commands.recordEvent(
-                    current.accountId(), current.loginIdentityId(), current.id(),
-                    "SESSION_REJECTED", "CURRENT_SESSION_REMOTE_TARGET", correlationId, clock.instant());
-            throw new IllegalArgumentException("Use current-session logout for the current session");
-        }
-        revoke(current, targetSessionId, "REMOTE_LOGOUT", correlationId);
-    }
-
-    public int revokeAll(String tokenDigest, UUID correlationId) {
-        var current = loadValid(tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
+    public int revokeAll(UUID familyId, String tokenDigest, UUID correlationId) {
+        var current = loadCurrentToken(familyId, tokenDigest, correlationId, CustomerAccessScope.SESSION_TEARDOWN);
         return commands.revokeAll(
                 current.accountId(), "LOGOUT_ALL", Objects.requireNonNull(correlationId, "correlationId"), clock.instant());
     }
@@ -144,13 +95,27 @@ public final class SessionManagementService {
     }
 
     private StoredSession loadValid(
-            String tokenDigest, UUID correlationId, CustomerAccessScope accessScope) {
-        if (tokenDigest == null || tokenDigest.isBlank()) {
-            throw new AuthenticationRejectedException("A session token is required");
-        }
-        var session = queries.findByTokenDigest(tokenDigest)
-                .orElseThrow(() -> new AuthenticationRejectedException("Session is not valid"));
+            UUID familyId, UUID correlationId, CustomerAccessScope accessScope) {
+        Objects.requireNonNull(familyId, "familyId");
+        var session = queries.findById(familyId)
+                .orElseThrow(() -> new AuthenticationRejectedException("Refresh token family is not valid"));
         return validate(session, correlationId, accessScope);
+    }
+
+    private StoredSession loadCurrentToken(
+            UUID familyId, String tokenDigest, UUID correlationId, CustomerAccessScope accessScope) {
+        Objects.requireNonNull(familyId, "familyId");
+        requireTokenDigest(tokenDigest);
+        var family = queries.findByTokenDigest(tokenDigest)
+                .filter(candidate -> familyId.equals(candidate.id()))
+                .orElseThrow(() -> new AuthenticationRejectedException("Refresh token is not current"));
+        return validate(family, correlationId, accessScope);
+    }
+
+    private void requireTokenDigest(String tokenDigest) {
+        if (tokenDigest == null || tokenDigest.isBlank()) {
+            throw new AuthenticationRejectedException("A refresh token is required");
+        }
     }
 
     private StoredSession validate(

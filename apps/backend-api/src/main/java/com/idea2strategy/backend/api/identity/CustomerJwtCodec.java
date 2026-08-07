@@ -49,18 +49,38 @@ public final class CustomerJwtCodec {
         }
     }
 
-    public String issueAccess(UUID accountId, UUID sessionId) {
+    public String issueAccess(
+            UUID accountId,
+            UUID loginIdentityId,
+            long authEpoch,
+            Long credentialVersion) {
         Instant now = clock.instant();
-        return issue(accountId, sessionId, "access", accessAudience, now, now.plus(accessLifetime), Map.of());
+        var additional = new LinkedHashMap<String, Object>();
+        additional.put("lid", Objects.requireNonNull(loginIdentityId, "loginIdentityId").toString());
+        additional.put("ae", positive(authEpoch, "authEpoch"));
+        if (credentialVersion != null) additional.put("cv", positive(credentialVersion, "credentialVersion"));
+        return issue(accountId, "access", accessAudience, now, now.plus(accessLifetime), additional);
     }
 
-    public String issueRefresh(UUID accountId, UUID sessionId, String sessionSecret, Instant expiresAt) {
+    public String issueRefresh(
+            UUID accountId,
+            UUID familyId,
+            UUID loginIdentityId,
+            long authEpoch,
+            Long credentialVersion,
+            String tokenSecret,
+            Instant expiresAt) {
         Instant now = clock.instant();
         if (!Objects.requireNonNull(expiresAt, "expiresAt").isAfter(now)) {
             throw new IllegalArgumentException("Refresh token expiry must be in the future");
         }
-        return issue(accountId, sessionId, "refresh", refreshAudience, now, expiresAt,
-                Map.of("st", requireText(sessionSecret, "sessionSecret")));
+        var additional = new LinkedHashMap<String, Object>();
+        additional.put("fid", Objects.requireNonNull(familyId, "familyId").toString());
+        additional.put("lid", Objects.requireNonNull(loginIdentityId, "loginIdentityId").toString());
+        additional.put("ae", positive(authEpoch, "authEpoch"));
+        if (credentialVersion != null) additional.put("cv", positive(credentialVersion, "credentialVersion"));
+        additional.put("rt", requireText(tokenSecret, "tokenSecret"));
+        return issue(accountId, "refresh", refreshAudience, now, expiresAt, additional);
     }
 
     public Instant accessExpiresAt() {
@@ -69,35 +89,41 @@ public final class CustomerJwtCodec {
 
     public AccessClaims verifyAccess(String token) {
         Map<String, Object> claims = verify(token, "access", accessAudience);
-        return new AccessClaims(uuid(claims, "sub"), uuid(claims, "sid"), instant(claims, "exp"));
+        return new AccessClaims(
+                uuid(claims, "sub"),
+                uuid(claims, "lid"),
+                positiveLong(claims, "ae"),
+                nullablePositiveLong(claims, "cv"),
+                instant(claims, "exp"));
     }
 
     public RefreshClaims verifyRefresh(String token) {
         Map<String, Object> claims = verify(token, "refresh", refreshAudience);
         return new RefreshClaims(
                 uuid(claims, "sub"),
-                uuid(claims, "sid"),
-                text(claims, "st"),
+                uuid(claims, claims.containsKey("fid") ? "fid" : "sid"),
+                claims.containsKey("lid") ? uuid(claims, "lid") : null,
+                claims.containsKey("ae") ? positiveLong(claims, "ae") : 0,
+                nullablePositiveLong(claims, "cv"),
+                text(claims, claims.containsKey("rt") ? "rt" : "st"),
                 instant(claims, "exp"));
     }
 
     private String issue(
             UUID accountId,
-            UUID sessionId,
             String type,
             String audience,
             Instant issuedAt,
             Instant expiresAt,
-            Map<String, String> additional) {
+            Map<String, Object> additional) {
         Objects.requireNonNull(accountId, "accountId");
-        Objects.requireNonNull(sessionId, "sessionId");
         try {
             var claims = new LinkedHashMap<String, Object>();
             claims.put("iss", issuer);
             claims.put("aud", audience);
             claims.put("sub", accountId.toString());
-            claims.put("sid", sessionId.toString());
             claims.put("typ", type);
+            claims.put("jti", UUID.randomUUID().toString());
             claims.put("iat", issuedAt.getEpochSecond());
             claims.put("exp", expiresAt.getEpochSecond());
             claims.putAll(additional);
@@ -136,7 +162,6 @@ public final class CustomerJwtCodec {
                 throw rejected();
             }
             uuid(claims, "sub");
-            uuid(claims, "sid");
             return claims;
         } catch (AuthenticationRejectedException exception) {
             throw exception;
@@ -175,6 +200,21 @@ public final class CustomerJwtCodec {
         }
     }
 
+    private static long positiveLong(Map<String, Object> claims, String name) {
+        Object value = claims.get(name);
+        if (!(value instanceof Number number) || number.longValue() < 1) throw rejected();
+        return number.longValue();
+    }
+
+    private static Long nullablePositiveLong(Map<String, Object> claims, String name) {
+        return claims.containsKey(name) ? positiveLong(claims, name) : null;
+    }
+
+    private static long positive(long value, String name) {
+        if (value < 1) throw new IllegalArgumentException(name + " must be positive");
+        return value;
+    }
+
     private static String requireText(String value, String name) {
         if (value == null || value.isBlank()) throw new IllegalArgumentException(name + " is required");
         return value;
@@ -184,13 +224,25 @@ public final class CustomerJwtCodec {
         return new AuthenticationRejectedException("Customer JWT is invalid");
     }
 
-    public record AccessClaims(UUID accountId, UUID sessionId, Instant expiresAt) {}
+    public record AccessClaims(
+            UUID accountId,
+            UUID loginIdentityId,
+            long authEpoch,
+            Long credentialVersion,
+            Instant expiresAt) {}
 
-    public record RefreshClaims(UUID accountId, UUID sessionId, String sessionSecret, Instant expiresAt) {
+    public record RefreshClaims(
+            UUID accountId,
+            UUID familyId,
+            UUID loginIdentityId,
+            long authEpoch,
+            Long credentialVersion,
+            String tokenSecret,
+            Instant expiresAt) {
         @Override
         public String toString() {
-            return "RefreshClaims[accountId=" + accountId + ",sessionId=" + sessionId
-                    + ",sessionSecret=REDACTED,expiresAt=" + expiresAt + "]";
+            return "RefreshClaims[accountId=" + accountId + ",familyId=" + familyId
+                    + ",loginIdentityId=" + loginIdentityId + ",tokenSecret=REDACTED,expiresAt=" + expiresAt + "]";
         }
     }
 }

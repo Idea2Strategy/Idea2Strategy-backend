@@ -210,7 +210,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .anySatisfy(result -> assertThat(result.accountId()).isEqualTo(accountId));
         assertThat(text("select lifecycle_status::text from identity.accounts where id = ?", accountId))
                 .isEqualTo("DORMANT");
-        assertThat(count("select count(*) from identity.sessions where account_id = ? and revoked_at is null",
+        assertThat(count("select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is null",
                 accountId)).isZero();
 
         mvc.perform(post("/api/v1/account/reactivations/password")
@@ -254,7 +254,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.aggregateVersion").value(sanctionVersion));
         assertThat(count("select count(*) from identity.account_sanctions where id = ?", sanctionId)).isOne();
-        assertThat(count("select count(*) from identity.sessions where account_id = ? and revoked_at is null",
+        assertThat(count("select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is null",
                 accountId)).isZero();
         assertThat(count("select count(*) from operations.audit_events "
                 + "where target_domain = 'ACCOUNT_SANCTION' and correlation_id = ?", CORRELATION))
@@ -269,7 +269,7 @@ class AccountOperationsFullJourneyIntegrationTest {
                 where account_id = ? and event_type = 'SANCTIONED_LOGIN_SUCCEEDED'
                   and reason_code = 'ACTIVE_ACCOUNT_SANCTION'
                 """, accountId)).isOne();
-        mvc.perform(get("/api/v1/auth/sessions")
+        mvc.perform(post("/api/v1/auth/refresh")
                         .cookie(appealSession.refreshCookie())
                         .header("X-Correlation-Id", CORRELATION))
                 .andExpect(status().isForbidden())

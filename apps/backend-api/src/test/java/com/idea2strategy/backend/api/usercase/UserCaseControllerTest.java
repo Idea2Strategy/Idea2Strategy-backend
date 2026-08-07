@@ -78,7 +78,6 @@ class UserCaseControllerTest {
                 }
                 return ACCOUNT;
             }
-            @Override public UUID sessionId() { return id(9); }
             @Override public boolean activeSanction() { return true; }
         };
 
@@ -91,7 +90,6 @@ class UserCaseControllerTest {
         CustomerAccessPrincipal principal = new CustomerAccessPrincipal() {
             @Override public UUID accountId() { return ACCOUNT; }
             @Override public UUID accountId(CustomerAccessScope accessScope) { return ACCOUNT; }
-            @Override public UUID sessionId() { return id(9); }
             @Override public boolean activeSanction() { return false; }
         };
         return MockMvcBuilders.standaloneSetup(new UserCaseController(service, principal))

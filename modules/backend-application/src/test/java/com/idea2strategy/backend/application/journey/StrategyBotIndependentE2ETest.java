@@ -79,7 +79,7 @@ class StrategyBotIndependentE2ETest {
                 repository,
                 repository,
                 repository,
-                new TestSessionPrincipal(OWNER_ID, SESSION_ID),
+                new TestSessionPrincipal(OWNER_ID),
                 new FixedIdGenerator(STRATEGY_ID),
                 clock,
                 new RecordingDomainEventPublisher());

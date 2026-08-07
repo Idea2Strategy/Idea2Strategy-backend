@@ -126,7 +126,7 @@ class BasicStrategyDraftCommandServiceTest {
                 repository,
                 repository,
                 repository,
-                new TestSessionPrincipal(OWNER_ID, SESSION_ID),
+                new TestSessionPrincipal(OWNER_ID),
                 new FixedIdGenerator(STRATEGY_ID),
                 java.time.Clock.fixed(CREATED_AT, ZoneOffset.UTC),
                 events);

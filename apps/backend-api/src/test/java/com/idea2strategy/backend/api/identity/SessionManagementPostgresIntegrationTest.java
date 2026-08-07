@@ -1,8 +1,6 @@
 package com.idea2strategy.backend.api.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.AuthenticationSession;
 import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
 import com.idea2strategy.backend.application.identity.SessionManagementService;
@@ -68,7 +66,7 @@ class SessionManagementPostgresIntegrationTest {
     }
 
     @Test
-    void validatesListsAndRevokesAnOpaqueSessionWithoutReturningItsDigest() {
+    void rotatesAndRevokesARefreshTokenFamilyWithoutReturningItsDigest() {
         Fixture fixture = fixture();
         commands.createSession(fixture.session());
 
@@ -91,10 +89,6 @@ class SessionManagementPostgresIntegrationTest {
         assertThat(queries.findByTokenDigest(fixture.session().tokenDigest())).isEmpty();
         assertThat(queries.findByTokenDigest(replacementDigest)).isPresent();
 
-        var service = new SessionManagementService(
-                queries, commands, Clock.fixed(NOW.plusSeconds(31), ZoneOffset.UTC));
-        service.authenticate(replacementDigest, UUID.randomUUID());
-
         assertThat(commands.revoke(
                         fixture.accountId(),
                         fixture.session().id(),
@@ -103,27 +97,15 @@ class SessionManagementPostgresIntegrationTest {
                         NOW.plusSeconds(60)))
                 .isTrue();
         assertThat(queries.findActiveByAccountId(fixture.accountId(), NOW)).isEmpty();
-        assertThatThrownBy(() -> service.authenticate(replacementDigest, UUID.randomUUID()))
-                .isInstanceOf(AuthenticationRejectedException.class);
         assertThat(jdbc.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'SESSION_REVOKED'",
-                        Integer.class,
-                        fixture.accountId()))
-                .isEqualTo(1);
-        assertThat(jdbc.queryForObject(
-                        "select count(*) from identity.authentication_events where account_id = ? and event_type = 'SESSION_VALIDATED'",
-                        Integer.class,
-                        fixture.accountId()))
-                .isEqualTo(1);
-        assertThat(jdbc.queryForObject(
-                        "select count(*) from identity.authentication_events where account_id = ? and event_type = 'SESSION_REJECTED' and reason_code = 'REVOKED'",
                         Integer.class,
                         fixture.accountId()))
                 .isEqualTo(1);
     }
 
     @Test
-    void replacesTheOldestActiveSessionAtTheConfiguredLimit() {
+    void permitsMultipleRefreshTokenFamiliesWithoutAConcurrentLoginLimit() {
         Fixture fixture = fixture();
         commands.createSession(fixture.session());
         var replacement = new AuthenticationSession(
@@ -138,31 +120,20 @@ class SessionManagementPostgresIntegrationTest {
                 NOW.plusSeconds(3610));
         UUID correlationId = UUID.randomUUID();
 
-        commands.completeLogin(
-                replacement,
-                new AuthenticationSuccess(
-                        fixture.accountId(), fixture.loginId(), correlationId, NOW.plusSeconds(10)),
-                1);
+        commands.completeLogin(replacement, new AuthenticationSuccess(
+                fixture.accountId(), fixture.loginId(), correlationId, NOW.plusSeconds(10)));
 
         assertThat(queries.findActiveByAccountId(fixture.accountId(), NOW.plusSeconds(10)))
-                .singleElement()
-                .satisfies(active -> assertThat(active.sessionId()).isEqualTo(replacement.id()));
+                .extracting(active -> active.sessionId())
+                .containsExactlyInAnyOrder(fixture.session().id(), replacement.id());
         assertThat(jdbc.queryForObject(
-                        "select revoke_reason_code from identity.sessions where id = ?",
-                        String.class,
-                        fixture.session().id()))
-                .isEqualTo("SESSION_LIMIT_REPLACED");
-        assertThat(jdbc.queryForObject(
-                        "select count(*) from identity.authentication_events "
-                                + "where account_id = ? and event_type = 'SESSION_REVOKED' "
-                                + "and reason_code = 'SESSION_LIMIT_REPLACED'",
-                        Integer.class,
-                        fixture.accountId()))
-                .isEqualTo(1);
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is null",
+                        Integer.class, fixture.accountId()))
+                .isEqualTo(2);
     }
 
     @Test
-    void concurrentLoginsReplaceInsteadOfRejectingWhileKeepingTheConfiguredLimit() {
+    void concurrentLoginsBothSucceedAndLogoutAllRevokesEveryFamily() {
         Fixture fixture = fixture();
         var first = fixture.session();
         var second = new AuthenticationSession(
@@ -186,14 +157,7 @@ class SessionManagementPostgresIntegrationTest {
         } catch (Exception exception) {
             throw new AssertionError(exception);
         }
-        assertThat(queries.findActiveByAccountId(fixture.accountId(), NOW)).hasSize(1);
-        assertThat(jdbc.queryForObject(
-                        "select count(*) from identity.authentication_events "
-                                + "where account_id = ? and event_type = 'SESSION_REVOKED' "
-                                + "and reason_code = 'SESSION_LIMIT_REPLACED'",
-                        Integer.class,
-                        fixture.accountId()))
-                .isEqualTo(1);
+        assertThat(queries.findActiveByAccountId(fixture.accountId(), NOW)).hasSize(2);
 
         commands.revokeAll(fixture.accountId(), "LOGOUT_ALL", UUID.randomUUID(), NOW.plusSeconds(1));
         assertThat(jdbc.queryForObject(
@@ -210,10 +174,9 @@ class SessionManagementPostgresIntegrationTest {
         try {
             commands.completeLogin(
                     session,
-                    new AuthenticationSuccess(fixture.accountId(), fixture.loginId(), UUID.randomUUID(), NOW),
-                    1);
+                    new AuthenticationSuccess(fixture.accountId(), fixture.loginId(), UUID.randomUUID(), NOW));
             return true;
-        } catch (AuthenticationRejectedException exception) {
+        } catch (RuntimeException exception) {
             return false;
         }
     }

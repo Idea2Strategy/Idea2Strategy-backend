@@ -15,6 +15,10 @@ public final class DatabaseAccessPolicy {
             "(?i)CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"
                     + "\"?(?<schema>[a-z_][a-z0-9_]*)\"?\\s*\\.\\s*"
                     + "\"?(?<table>[a-z_][a-z0-9_]*)\"?");
+    private static final Pattern DROP_TABLE = Pattern.compile(
+            "(?i)DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?"
+                    + "\"?(?<schema>[a-z_][a-z0-9_]*)\"?\\s*\\.\\s*"
+                    + "\"?(?<table>[a-z_][a-z0-9_]*)\"?");
     private static final Pattern APPLICATION_DDL_GRANT = Pattern.compile(
             "(?is)\\bGRANT\\s+CREATE\\b.*?\\bTO\\s+idea2strategy_(?:backend|batch|trading|backtest|pipeline)\\b");
     private static final Pattern APPLICATION_OWNERSHIP = Pattern.compile(
@@ -67,6 +71,10 @@ public final class DatabaseAccessPolicy {
                 // table name, so repeated declarations cannot change owners and the ACL manifest
                 // must retain exactly one entry.
                 ownership.putIfAbsent(table, owner);
+            }
+            var dropped = DROP_TABLE.matcher(sql);
+            while (dropped.find()) {
+                ownership.remove(new QualifiedTable(dropped.group("schema"), dropped.group("table")));
             }
         }
         if (ownership.isEmpty()) {

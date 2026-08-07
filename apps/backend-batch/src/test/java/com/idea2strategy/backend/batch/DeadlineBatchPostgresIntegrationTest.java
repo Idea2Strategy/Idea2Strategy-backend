@@ -96,7 +96,7 @@ class DeadlineBatchPostgresIntegrationTest {
         assertThat(text("select status::text from identity.account_sanctions where id = ?", SANCTION))
                 .isEqualTo("EXPIRED");
         assertThat(jdbc.queryForObject(
-                "select revoked_at is not null from identity.sessions where id = ?",
+                        "select revoked_at is not null from identity.refresh_token_families where id = ?",
                 Boolean.class, SESSION)).isTrue();
         assertThat(count("select count(*) from operations.audit_events "
                 + "where idempotency_key like 'delegated-token-expiry:%'")).isGreaterThanOrEqualTo(1);
@@ -127,9 +127,9 @@ class DeadlineBatchPostgresIntegrationTest {
         jdbc.update("insert into identity.login_identities "
                         + "(id, account_id, provider_id, status, activated_at) values (?, ?, 21101, 'ACTIVE', ?)",
                 LOGIN_IDENTITY, ACCOUNT, past);
-        jdbc.update("insert into identity.sessions "
+        jdbc.update("insert into identity.refresh_token_families "
                         + "(id, account_id, authenticated_by_login_identity_id, auth_epoch_at_issue, "
-                        + "token_digest, digest_key_version, issued_at, last_seen_at, expires_at) "
+                        + "current_token_digest, digest_key_version, issued_at, last_rotated_at, expires_at) "
                         + "values (?, ?, ?, 1, ?, 1, ?, ?, ?)",
                 SESSION, ACCOUNT, LOGIN_IDENTITY, "a21b-session-" + SESSION, past, past, expired);
     }

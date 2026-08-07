@@ -14,8 +14,4 @@ public interface IdentityCommandPort {
         recordLoginSuccess(success);
     }
 
-    default void completeLogin(
-            AuthenticationSession session, AuthenticationSuccess success, int maxActiveSessions) {
-        completeLogin(session, success);
-    }
 }

@@ -121,7 +121,7 @@ class IdentityPersistenceIntegrationTest {
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessage("Email verification is required");
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ?",
+                        "select count(*) from identity.refresh_token_families where account_id = ?",
                         Integer.class,
                         signup.accountId()))
                 .isZero();
@@ -141,9 +141,9 @@ class IdentityPersistenceIntegrationTest {
                 "person@example.com", "a sufficiently long passphrase", "Chrome", UUID.randomUUID()));
 
         assertThat(login.accountId()).isEqualTo(signup.accountId());
-        assertThat(login.sessionToken()).startsWith("raw-session-token-");
+        assertThat(login.refreshTokenSecret()).startsWith("raw-session-token-");
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ?",
+                        "select count(*) from identity.refresh_token_families where account_id = ?",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -205,7 +205,7 @@ class IdentityPersistenceIntegrationTest {
                 signup.accountId(), loginId, correlationId, NOW.plusSeconds(30)));
 
         assertThat(jdbcTemplate.queryForObject(
-                "select count(*) from identity.sessions where account_id = ?", Integer.class, signup.accountId()))
+                "select count(*) from identity.refresh_token_families where account_id = ?", Integer.class, signup.accountId()))
                 .isZero();
         assertThat(jdbcTemplate.queryForObject("""
                         select count(*) from identity.authentication_events
@@ -314,7 +314,7 @@ class IdentityPersistenceIntegrationTest {
                         pendingId))
                 .isEqualTo("ACTIVE");
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is not null",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -345,9 +345,9 @@ class IdentityPersistenceIntegrationTest {
 
         assertThat(result.accountId()).isEqualTo(signup.accountId());
         assertThat(jdbcTemplate.queryForObject(
-                        "select credential_version_at_issue from identity.sessions where id = ?",
+                        "select credential_version_at_issue from identity.refresh_token_families where id = ?",
                         Long.class,
-                        result.sessionId()))
+                        result.refreshTokenFamilyId()))
                 .isNull();
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_IDENTITY_REPLACED'",
@@ -364,7 +364,7 @@ class IdentityPersistenceIntegrationTest {
                         signup.accountId()))
                 .isEqualTo(2L);
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is not null",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
@@ -423,7 +423,7 @@ class IdentityPersistenceIntegrationTest {
                         signup.accountId()))
                 .isEqualTo(2L);
         assertThat(jdbcTemplate.queryForObject(
-                        "select count(*) from identity.sessions where account_id = ? and revoked_at is not null",
+                        "select count(*) from identity.refresh_token_families where account_id = ? and revoked_at is not null",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);

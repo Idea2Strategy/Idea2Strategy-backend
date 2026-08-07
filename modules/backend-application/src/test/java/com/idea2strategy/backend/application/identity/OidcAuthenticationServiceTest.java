@@ -86,7 +86,7 @@ class OidcAuthenticationServiceTest {
                 "Chrome",
                 UUID.fromString("13000000-0000-4000-8000-000000000001")));
 
-        assertThat(result.sessionToken()).isEqualTo("session-token");
+        assertThat(result.refreshTokenSecret()).isEqualTo("session-token");
         assertThat(result.expiresAt()).isEqualTo(NOW.plus(Duration.ofDays(30)));
         assertThat(commands.sessions).singleElement().satisfies(session -> {
             assertThat(session.accountId()).isEqualTo(accountId);
@@ -111,7 +111,6 @@ class OidcAuthenticationServiceTest {
                 () -> new SessionToken("session-token", "session-digest"),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Duration.ofHours(12),
-                5,
                 lookup -> false,
                 registrations,
                 raw -> protectedEmail,
@@ -132,7 +131,6 @@ class OidcAuthenticationServiceTest {
                 () -> new SessionToken("session-token-2", "session-digest-2"),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 Duration.ofHours(12),
-                5,
                 lookup -> true,
                 new RecordingOidcCommands(),
                 raw -> protectedEmail,

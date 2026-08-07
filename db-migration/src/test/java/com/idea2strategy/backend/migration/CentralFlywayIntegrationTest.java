@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import org.flywaydb.core.Flyway;
@@ -57,11 +57,16 @@ class CentralFlywayIntegrationTest {
                 assertFalse(roles.getBoolean("rolinherit"));
             }
 
-            String baseline;
-            try (var input = getClass().getClassLoader().getResourceAsStream("db/migration/V1__initial_schema.sql")) {
-                baseline = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-            }
-            var ownership = DatabaseAccessPolicy.verifyBaselineOwnership(baseline);
+            var ownership = DatabaseAccessPolicy.ownershipManifest(bundle.orderedFileNames().stream()
+                    .filter(name -> name.startsWith("V") && name.endsWith(".sql"))
+                    .map(name -> {
+                        try {
+                            return Files.readString(bundle.directory().resolve(name));
+                        } catch (java.io.IOException exception) {
+                            throw new java.io.UncheckedIOException(exception);
+                        }
+                    })
+                    .toList());
             for (var role : DatabaseAccessPolicy.ApplicationRole.values()) {
                 for (var table : ownership.tables()) {
                     for (var access : java.util.List.of(

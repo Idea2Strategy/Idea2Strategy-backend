@@ -1,6 +1,6 @@
 package com.idea2strategy.backend.api.identity;
 
-import com.idea2strategy.backend.application.identity.SessionManagementService;
+import com.idea2strategy.backend.application.identity.CustomerAccessValidationService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
@@ -16,7 +16,7 @@ public class RequestPrincipalConfiguration {
     BearerSessionCurrentPrincipal bearerSessionCurrentPrincipal(
             HttpServletRequest request,
             CustomerJwtCodec jwt,
-            SessionManagementService sessions) {
-        return new BearerSessionCurrentPrincipal(request, jwt, sessions);
+            CustomerAccessValidationService validation) {
+        return new BearerSessionCurrentPrincipal(request, jwt, validation);
     }
 }

@@ -11,7 +11,7 @@ public interface BasicStrategyDraftCommandPort {
     StrategyDraftReplaceResult replaceDocument(
             StrategyDocument document,
             long expectedEditSequence,
-            UUID sessionId,
+            UUID accountId,
             String leaseTokenDigest,
             Instant now);
 }

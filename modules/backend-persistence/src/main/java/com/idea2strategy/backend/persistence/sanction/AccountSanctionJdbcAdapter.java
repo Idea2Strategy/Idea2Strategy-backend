@@ -111,7 +111,7 @@ public class AccountSanctionJdbcAdapter implements
         }
         if (effect.revokeAllSessions()) {
             jdbc.update("""
-                    update identity.sessions
+                    update identity.refresh_token_families
                     set revoked_at = ?, revoke_reason_code = ?
                     where account_id = ? and revoked_at is null
                     """, Timestamp.from(effect.occurredAt()), effect.reasonCode(), effect.accountId());

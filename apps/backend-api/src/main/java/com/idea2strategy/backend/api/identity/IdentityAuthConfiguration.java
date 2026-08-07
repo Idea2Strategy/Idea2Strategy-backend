@@ -6,6 +6,7 @@ import com.idea2strategy.backend.application.identity.AccountPreferencesService;
 import com.idea2strategy.backend.application.identity.AccountLifecycleCandidateQueryPort;
 import com.idea2strategy.backend.application.identity.AccountLifecycleCommandPort;
 import com.idea2strategy.backend.application.identity.AccountLifecycleService;
+import com.idea2strategy.backend.application.identity.CustomerAccessValidationService;
 import com.idea2strategy.backend.application.identity.LifecyclePasswordStepUpService;
 import com.idea2strategy.backend.application.identity.LifecycleOidcStepUpService;
 import com.idea2strategy.backend.application.identity.HmacOidcSubjectProtector;
@@ -86,7 +87,8 @@ public class IdentityAuthConfiguration {
     }
 
     @Bean
-    HmacSessionTokens sessionTokens(@Value("${identity.crypto.session-hmac-key}") String key) {
+    HmacSessionTokens sessionTokens(
+            @Value("${identity.crypto.refresh-token-hmac-key:${identity.crypto.session-hmac-key}}") String key) {
         return new HmacSessionTokens(decode(key));
     }
 
@@ -187,8 +189,7 @@ public class IdentityAuthConfiguration {
             AesGcmEmailProtector emailProtector,
             HmacSessionTokens sessionTokens,
             Clock identityClock,
-            @Value("${identity.session.lifetime:PT720H}") Duration sessionLifetime,
-            @Value("${identity.session.max-active-sessions:5}") int maxActiveSessions) {
+            @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime) {
         return new EmailAuthenticationService(
                 queries,
                 commands,
@@ -196,8 +197,12 @@ public class IdentityAuthConfiguration {
                 emailProtector,
                 sessionTokens,
                 identityClock,
-                sessionLifetime,
-                maxActiveSessions);
+                refreshLifetime);
+    }
+
+    @Bean
+    CustomerAccessValidationService customerAccessValidationService(IdentityJooqQueryAdapter queries) {
+        return new CustomerAccessValidationService(queries);
     }
 
     @Bean
@@ -206,8 +211,8 @@ public class IdentityAuthConfiguration {
             IdentityJpaCommandAdapter commands,
             HmacSessionTokens sessionTokens,
             Clock identityClock,
-            @Value("${identity.session.lifetime:PT720H}") Duration sessionLifetime) {
-        return new SessionManagementService(queries, commands, identityClock, sessionTokens, sessionLifetime);
+            @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime) {
+        return new SessionManagementService(queries, commands, identityClock, sessionTokens, refreshLifetime);
     }
 
     @Bean
@@ -278,8 +283,7 @@ public class IdentityAuthConfiguration {
             HmacOidcSubjectProtector subjectProtector,
             HmacSessionTokens sessionTokens,
             Clock identityClock,
-            @Value("${identity.session.lifetime:PT720H}") Duration sessionLifetime,
-            @Value("${identity.session.max-active-sessions:5}") int maxActiveSessions,
+            @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime,
             AesGcmEmailProtector emailProtector,
             @Value("${identity.preferences.default-language:ko}") String defaultLanguage,
             @Value("${identity.preferences.default-timezone:America/New_York}") String defaultTimezone) {
@@ -289,8 +293,7 @@ public class IdentityAuthConfiguration {
                 subjectProtector,
                 sessionTokens,
                 identityClock,
-                sessionLifetime,
-                maxActiveSessions,
+                refreshLifetime,
                 queries,
                 commands,
                 emailProtector,

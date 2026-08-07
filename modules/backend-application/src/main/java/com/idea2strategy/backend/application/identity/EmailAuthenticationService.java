@@ -15,7 +15,6 @@ public final class EmailAuthenticationService {
     private final SessionTokenIssuer tokenIssuer;
     private final Clock clock;
     private final Duration sessionLifetime;
-    private final int maxActiveSessions;
 
     public EmailAuthenticationService(
             IdentityQueryPort queryPort,
@@ -24,7 +23,7 @@ public final class EmailAuthenticationService {
             EmailLookup emailLookup,
             SessionTokenIssuer tokenIssuer,
             Clock clock) {
-        this(queryPort, commandPort, passwordVerifier, emailLookup, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME, 5);
+        this(queryPort, commandPort, passwordVerifier, emailLookup, tokenIssuer, clock, DEFAULT_SESSION_LIFETIME);
     }
 
     public EmailAuthenticationService(
@@ -34,8 +33,7 @@ public final class EmailAuthenticationService {
             EmailLookup emailLookup,
             SessionTokenIssuer tokenIssuer,
             Clock clock,
-            Duration sessionLifetime,
-            int maxActiveSessions) {
+            Duration sessionLifetime) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.passwordVerifier = Objects.requireNonNull(passwordVerifier, "passwordVerifier");
@@ -46,10 +44,6 @@ public final class EmailAuthenticationService {
         if (sessionLifetime.isZero() || sessionLifetime.isNegative()) {
             throw new IllegalArgumentException("sessionLifetime must be positive");
         }
-        if (maxActiveSessions < 1) {
-            throw new IllegalArgumentException("maxActiveSessions must be positive");
-        }
-        this.maxActiveSessions = maxActiveSessions;
     }
 
     public LoginResult login(LoginCommand command) {
@@ -87,9 +81,10 @@ public final class EmailAuthenticationService {
         commandPort.completeLogin(
                 session,
                 new AuthenticationSuccess(
-                        account.accountId(), account.loginIdentityId(), command.correlationId(), now),
-                maxActiveSessions);
-        return new LoginResult(account.accountId(), sessionId, token.rawToken(), expiresAt);
+                        account.accountId(), account.loginIdentityId(), command.correlationId(), now));
+        return new LoginResult(
+                account.accountId(), account.loginIdentityId(), account.authEpoch(), account.credentialVersion(),
+                sessionId, token.rawToken(), expiresAt);
     }
 
     private void reject(PasswordLoginAccount account, LoginCommand command, String reason, String message) {
