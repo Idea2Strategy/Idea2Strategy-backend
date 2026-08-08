@@ -294,13 +294,21 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             return;
         }
 
+        // aggregate_id is the bot, not the run. SqsOutboxMessagePublisher publishes this column
+        // verbatim as the envelope aggregateId, and the BASIC consumer requires it to equal the
+        // payload botId — a row written under runId is rejected as TRANSPORT_ENVELOPE_MISMATCH and
+        // dead-lettered before a single attempt is recorded (backend #243). The release's own
+        // idempotency key material already declares the aggregate this way
+        // (OfficialBacktestRequest.forRelease), and every other strategy-bot producer
+        // (BotRunCommandJooqAdapter, BotStopCommandJooqAdapter) uses the bot id too; this insert was
+        // the lone outlier. backtest.runs.id stays runId — only the transport aggregate changes.
         dsl.execute(
                 "insert into operations.outbox_messages "
                         + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
                         + "payload_document, idempotency_key, created_at) "
                         + "values (?, 'strategy-bot', ?, 1, ?, ?, ?::jsonb, ?, ?::timestamptz) "
                 + "on conflict (idempotency_key) do nothing",
-                request.metadata().messageId(), request.runId(), request.metadata().messageType(),
+                request.metadata().messageId(), request.botId(), request.metadata().messageType(),
                 request.metadata().contractVersion(), payload, idempotencyKey, queuedAt);
     }
 
