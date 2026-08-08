@@ -63,6 +63,17 @@ public final class DatabaseAccessPolicy {
             new QualifiedTable("competition", "participations"),
             new QualifiedTable("bot", "bots"));
 
+    /**
+     * The only {@code bot} tables the backtest worker reads.
+     *
+     * <p>Derived from the executed SQL in {@code backtest_engine/production.py}, not from the one
+     * table a failure happened to report first. A sweep of every {@code FROM}/{@code JOIN} in that
+     * package found exactly these two in {@code bot}; fixing only the reported one would have failed
+     * again on the other at the next attempt.
+     */
+    private static final Set<String> BACKTEST_BOT_READ_TABLES =
+            Set.of("launch_contract_plans", "bots");
+
     /** Tables {@code backend-batch} appends to outside the schemas it owns. */
     private static final Set<QualifiedTable> BATCH_INSERTED_TABLES = Set.of(
             new QualifiedTable("competition", "room_events"),
@@ -313,6 +324,14 @@ public final class DatabaseAccessPolicy {
         }
         if (("strategy".equals(schema) || "market_data".equals(schema)) && access == Access.READ) {
             return true;
+        }
+        // Before executing anything the worker resolves what to run and who owns it:
+        //   SELECT plan_document    FROM bot.launch_contract_plans WHERE plan_checksum = :checksum
+        //   SELECT owner_account_id FROM bot.bots                  WHERE id = :bot_id ...
+        // Two tables, read only. Widening the schema would hand the worker the bot lifecycle and its
+        // runtime state, which it never touches — the bot aggregate is written by backend and batch.
+        if ("bot".equals(schema)) {
+            return access == Access.READ && BACKTEST_BOT_READ_TABLES.contains(table);
         }
         // The request intake claims a transactional consumer receipt before it runs anything, so it
         // reads the producer's outbox row and owns its own receipt row. Two tables only — widening the

@@ -324,4 +324,53 @@ class DatabaseAccessPolicyTest {
                     "batch has no write path into " + target.schema() + "." + target.table());
         }
     }
+    @Test
+    void grantsTheBacktestRoleTheBotReadsItsExecutorPerforms() {
+        // The worker resolves the compiled plan and the run owner before executing anything:
+        //   SELECT plan_document   FROM bot.launch_contract_plans WHERE plan_checksum = :checksum
+        //   SELECT owner_account_id FROM bot.bots                 WHERE id = :bot_id ...
+        // Without these the handler dies with permission denied for schema bot, which is what
+        // hjcud's controlled INT03 reproduction recorded as
+        // failure_code=HANDLER_ERROR:ProgrammingError on run cfca9ae2 (root #447).
+        for (var table : List.of("launch_contract_plans", "bots")) {
+            assertTrue(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            DatabaseAccessPolicy.Access.READ,
+                            "bot",
+                            table),
+                    "the backtest executor reads bot." + table);
+        }
+    }
+
+    @Test
+    void keepsTheBacktestRoleOutOfTheRestOfTheBotSchema() {
+        // Widening the whole schema would hand the worker the bot lifecycle and its runtime state.
+        // It reads two rows to resolve what to execute and who owns it; nothing else.
+        for (var table : List.of("flows", "continuation_deadlines", "bot_events", "launch_snapshots",
+                "runtime_state_values", "evaluation_runs")) {
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            DatabaseAccessPolicy.Access.READ,
+                            "bot",
+                            table),
+                    "the backtest executor has no reason to read bot." + table);
+        }
+        // Read-only: the worker never writes the bot aggregate.
+        for (var access : List.of(
+                DatabaseAccessPolicy.Access.INSERT,
+                DatabaseAccessPolicy.Access.UPDATE,
+                DatabaseAccessPolicy.Access.DELETE)) {
+            for (var table : List.of("launch_contract_plans", "bots")) {
+                assertFalse(
+                        DatabaseAccessPolicy.allows(
+                                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                                access,
+                                "bot",
+                                table),
+                        access + " on bot." + table + " is not part of executing a backtest");
+            }
+        }
+    }
 }
