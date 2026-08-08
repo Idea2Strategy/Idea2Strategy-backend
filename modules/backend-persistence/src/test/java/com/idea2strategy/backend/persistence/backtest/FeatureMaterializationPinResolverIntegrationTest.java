@@ -135,7 +135,14 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
         jdbc.update("update market_data.feature_definitions set definition_hash = ? where id = ?",
                 HASH, FEATURE);
-        jdbc.update("update market_data.feeds set id = ? where id = ?", bareFeed, FEED);
+        // The manifest references the seeded feed, so the replacement has to exist before the
+        // manifest can point at it. Its code must differ to satisfy the feed identity index.
+        jdbc.update("insert into market_data.feeds (id, provider_id, code, data_kind, resolution, "
+                        + "timezone_name, feed_version, created_at, retired_at) "
+                        + "select ?, provider_id, code || '-BARE', data_kind, resolution, "
+                        + "timezone_name, feed_version, created_at, retired_at "
+                        + "from market_data.feeds where id = ?",
+                bareFeed, FEED);
         jdbc.update("update market_data.dataset_manifests set feed_id = ? where id = ?", bareFeed, MANIFEST);
 
         var pins = resolver.resolve(plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF);
