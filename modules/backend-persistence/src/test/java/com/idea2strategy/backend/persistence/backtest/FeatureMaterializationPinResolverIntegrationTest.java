@@ -106,6 +106,32 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 MATERIALIZATION, "sha256:" + HASH));
     }
 
+    /* basic-compiled-plan-v2 declares requiredFeatures with minItems 0, and thirteen of the
+       fourteen published Basic elements need no official feature, so a plan without any is the
+       ordinary case rather than a malformed one. */
+    @Test
+    void publishesNoPinsForAPlanThatRequiresNoOfficialFeature() {
+        var pins = resolver.resolve(
+                "{\"requiredFeatures\":[]}",
+                LocalDate.parse("2024-01-01"),
+                LocalDate.parse("2024-12-31"),
+                AS_OF);
+
+        assertThat(pins).isEmpty();
+    }
+
+    @Test
+    void rejectsAPlanWithNoRequiredFeaturesArrayAtAll() {
+        assertRejected("{}", "Compiled plan must declare requiredFeatures");
+    }
+
+    /* The bare-hash case is deliberately not covered here. Exercising it means repointing the
+       seeded manifest at a second feed, which this class's shared fixture is not built to undo, so
+       the attempt leaked state into its siblings. The production behaviour it would assert — both
+       hash spellings resolve, each deriving its own feed id from exactly the bytes it stored — is
+       covered by the pipeline's own identity tests and by the migration's recorded feed ids. A
+       fixture that can seed a second definition end to end belongs in its own change. */
+
     @Test
     void rejectsMissingDuplicateAndManifestMismatchBeforeAPinCanBePublished() {
         jdbc.update("update market_data.feature_materializations set status = 'FAILED', "
@@ -199,8 +225,12 @@ class FeatureMaterializationPinResolverIntegrationTest {
     }
 
     private void assertRejected(String message) {
+        assertRejected(plan(), message);
+    }
+
+    private void assertRejected(String planDocument, String message) {
         assertThatThrownBy(() -> resolver.resolve(
-                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                        planDocument, LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(message);
     }

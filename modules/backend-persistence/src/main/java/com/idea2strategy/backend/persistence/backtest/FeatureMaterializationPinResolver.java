@@ -34,7 +34,6 @@ public final class FeatureMaterializationPinResolver {
     private static final String FEATURE_PIPELINE_CODE = "MATERIALIZE_FEATURE_OUTPUT";
     private static final Pattern SHORTHAND = Pattern.compile("(?<amount>[1-9][0-9]*)(?<unit>[smhd])");
     private static final Pattern SHA_256 = Pattern.compile("(?:sha256:)?[0-9a-f]{64}");
-    private static final Pattern CANONICAL_SHA_256 = Pattern.compile("sha256:[0-9a-f]{64}");
 
     private final DSLContext dsl;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -165,7 +164,13 @@ public final class FeatureMaterializationPinResolver {
         String calculatorVersion = candidate.get("calculator_version", String.class);
         String definitionResolution = candidate.get("definition_resolution", String.class);
         String featureCode = candidate.get("feature_code", String.class);
-        if (definitionHash == null || !CANONICAL_SHA_256.matcher(definitionHash).matches()) {
+        /* Both hash spellings are canonical, because the pipeline changed convention and both
+           forms are live. The legacy 1m RSI definition is stored prefixed; the production
+           per-resolution definitions are stored as bare hex, which is what
+           market_pipeline_lib.features.hashing enforces. The value is passed to
+           deterministicUuid unchanged either way: the pipeline derived the feed id from exactly
+           the bytes it stored, so normalising here would break the feed-id match instead. */
+        if (definitionHash == null || !SHA_256.matcher(definitionHash).matches()) {
             throw mismatch("feature definition hash");
         }
         UUID expectedFeedId = deterministicUuid(
@@ -330,7 +335,11 @@ public final class FeatureMaterializationPinResolver {
             throw new IllegalStateException("Compiled plan is not valid JSON", exception);
         }
         JsonNode required = root.path("requiredFeatures");
-        if (!required.isArray() || required.isEmpty()) {
+        /* The array must be present, and may be empty. basic-compiled-plan-v2 declares
+           minItems 0, and thirteen of the fourteen published Basic elements need no official
+           feature at all, so demanding at least one refused release for every strategy built
+           without an RSI block. An absent array is still a malformed plan. */
+        if (!required.isArray()) {
             throw new IllegalStateException("Compiled plan must declare requiredFeatures");
         }
         List<Requirement> result = new ArrayList<>();
