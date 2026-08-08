@@ -81,7 +81,7 @@ class IdentityPersistenceIntegrationTest {
     void signupFailsClosedWhenAnActiveBindingKeyVersionIsMissingAndAcceptsACompleteRing() {
         var tokenSequence = new AtomicInteger();
         registrationService(tokenSequence).signup(new SignupCommand(
-                "old-key-owner@example.com", "a sufficiently long passphrase",
+                "old-key-owner@example.com", "ValidPass!2026",
                 UUID.randomUUID(), "192.0.2.0/24"));
 
         var incomplete = registrationService(tokenSequence, raw -> {
@@ -91,7 +91,7 @@ class IdentityPersistenceIntegrationTest {
                     List.of(new IdentifierFingerprint("lookup-v2:" + normalized, (short) 2)));
         });
         assertThatThrownBy(() -> incomplete.signup(new SignupCommand(
-                        "new-owner@example.com", "a sufficiently long passphrase",
+                        "new-owner@example.com", "ValidPass!2026",
                         UUID.randomUUID(), "192.0.2.0/24")))
                 .isInstanceOf(DuplicateEmailException.class);
 
@@ -104,7 +104,7 @@ class IdentityPersistenceIntegrationTest {
                             new IdentifierFingerprint("lookup:" + normalized, (short) 1)));
         });
         assertThat(complete.signup(new SignupCommand(
-                "new-owner@example.com", "a sufficiently long passphrase",
+                "new-owner@example.com", "ValidPass!2026",
                 UUID.randomUUID(), "192.0.2.0/24")).accountId()).isNotNull();
     }
 
@@ -113,10 +113,10 @@ class IdentityPersistenceIntegrationTest {
         var tokenSequence = new AtomicInteger();
         var registration = registrationService(tokenSequence);
         var signup = registration.signup(new SignupCommand(
-                " Person@Example.com ", "a sufficiently long passphrase", UUID.randomUUID(), "192.0.2.0/24"));
+                " Person@Example.com ", "ValidPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
 
         assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
-                        "person@example.com", "a sufficiently long passphrase", UUID.randomUUID())))
+                        "person@example.com", "ValidPass!2026", UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class)
                 .hasMessage("Email verification is required");
         assertThat(jdbcTemplate.queryForObject(
@@ -131,7 +131,7 @@ class IdentityPersistenceIntegrationTest {
                 .isEqualTo(1);
 
         var replacement = registration.signup(new SignupCommand(
-                "person@example.com", "a different sufficiently long passphrase",
+                "person@example.com", "DifferentPass!2026",
                 UUID.randomUUID(), "192.0.2.0/24"));
         assertThat(replacement.accountId()).isEqualTo(signup.accountId());
         assertThatThrownBy(() -> registration.verify(
@@ -139,7 +139,7 @@ class IdentityPersistenceIntegrationTest {
                 .hasMessage("Verification token is no longer valid");
         registration.verify(new VerifyEmailCommand(replacement.verificationToken(), UUID.randomUUID()));
         var login = authenticationService().login(new LoginCommand(
-                "person@example.com", "a different sufficiently long passphrase", UUID.randomUUID()));
+                "person@example.com", "DifferentPass!2026", UUID.randomUUID()));
 
         assertThat(login.accountId()).isEqualTo(signup.accountId());
         assertThat(login.refreshTokenSecret()).startsWith("raw-session-token-");
@@ -177,7 +177,7 @@ class IdentityPersistenceIntegrationTest {
                         """,
                         String.class,
                         signup.accountId()))
-                .isEqualTo("hash:a different sufficiently long passphrase");
+                .isEqualTo("hash:DifferentPass!2026");
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_FAILED'",
                         Integer.class,
@@ -188,7 +188,7 @@ class IdentityPersistenceIntegrationTest {
                         new VerifyEmailCommand(replacement.verificationToken(), UUID.randomUUID())))
                 .hasMessage("Verification token is no longer valid");
         assertThatThrownBy(() -> registration.signup(new SignupCommand(
-                        "person@example.com", "another sufficiently long passphrase", UUID.randomUUID(), null)))
+                        "person@example.com", "AnotherPass!2026", UUID.randomUUID(), null)))
                 .isInstanceOf(DuplicateEmailException.class);
     }
 
@@ -196,7 +196,7 @@ class IdentityPersistenceIntegrationTest {
     void stepUpUpdatesAuthenticationFreshnessButEmitsNoLoginEventOrSession() {
         var registration = registrationService(new AtomicInteger());
         var signup = registration.signup(new SignupCommand(
-                "step-up@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null));
+                "step-up@example.com", "ValidPass!2026", UUID.randomUUID(), null));
         registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
         UUID loginId = jdbcTemplate.queryForObject(
                 "select id from identity.login_identities where account_id = ?", UUID.class, signup.accountId());
@@ -236,13 +236,13 @@ class IdentityPersistenceIntegrationTest {
         var registration = registrationService(new AtomicInteger());
         var signup = registration.signup(new SignupCommand(
                 "oidc-person@example.com",
-                "a sufficiently long passphrase",
+                "ValidPass!2026",
                 UUID.randomUUID(),
                 "192.0.2.0/24"));
         registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
         authenticationService().login(new LoginCommand(
                 "oidc-person@example.com",
-                "a sufficiently long passphrase",
+                "ValidPass!2026",
                 UUID.randomUUID()));
         UUID passwordLoginId = jdbcTemplate.queryForObject(
                 "select id from identity.login_identities where account_id = ? and status = 'ACTIVE'",
@@ -384,13 +384,13 @@ class IdentityPersistenceIntegrationTest {
         var registration = registrationService(new AtomicInteger());
         var signup = registration.signup(new SignupCommand(
                 "recover-person@example.com",
-                "the original sufficiently long passphrase",
+                "OriginalPass!2026",
                 UUID.randomUUID(),
                 "192.0.2.0/24"));
         registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
         authenticationService().login(new LoginCommand(
                 "recover-person@example.com",
-                "the original sufficiently long passphrase",
+                "OriginalPass!2026",
                 UUID.randomUUID()));
 
         var recovery = passwordRecoveryService();
@@ -400,9 +400,9 @@ class IdentityPersistenceIntegrationTest {
         var start = new CountDownLatch(1);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> resetAfter(start, recovery, delivery.rawToken(),
-                    "the first replacement passphrase"));
+                    "FirstReset!2026"));
             var second = executor.submit(() -> resetAfter(start, recovery, delivery.rawToken(),
-                    "the second replacement passphrase"));
+                    "SecondReset!2026"));
             start.countDown();
 
             assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
@@ -432,7 +432,7 @@ class IdentityPersistenceIntegrationTest {
                 .isEqualTo(1);
         assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
                         "recover-person@example.com",
-                        "the original sufficiently long passphrase",
+                        "OriginalPass!2026",
                         UUID.randomUUID())))
                 .isInstanceOf(AuthenticationRejectedException.class);
     }
@@ -442,13 +442,13 @@ class IdentityPersistenceIntegrationTest {
         var registration = registrationService(new AtomicInteger());
         var signup = registration.signup(new SignupCommand(
                 "codes-person@example.com",
-                "the original sufficiently long passphrase",
+                "OriginalPass!2026",
                 UUID.randomUUID(),
                 "192.0.2.0/24"));
         registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
         authenticationService().login(new LoginCommand(
                 "codes-person@example.com",
-                "the original sufficiently long passphrase",
+                "OriginalPass!2026",
                 UUID.randomUUID()));
 
         var recovery = passwordRecoveryService();
@@ -465,8 +465,8 @@ class IdentityPersistenceIntegrationTest {
         var start = new CountDownLatch(1);
         String code = replacement.recoveryCodes().getFirst();
         try (var executor = Executors.newFixedThreadPool(2)) {
-            var first = executor.submit(() -> recoverAfter(start, recovery, code, "first code replacement passphrase"));
-            var second = executor.submit(() -> recoverAfter(start, recovery, code, "second code replacement passphrase"));
+            var first = executor.submit(() -> recoverAfter(start, recovery, code, "FirstCode!2026"));
+            var second = executor.submit(() -> recoverAfter(start, recovery, code, "SecondCode!2026"));
             start.countDown();
             assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
         }
@@ -549,7 +549,7 @@ class IdentityPersistenceIntegrationTest {
                 """);
         var registration = registrationService(new AtomicInteger());
         var old = registration.signup(new SignupCommand(
-                "oidc-old-key@example.com", "a sufficiently long passphrase",
+                "oidc-old-key@example.com", "ValidPass!2026",
                 UUID.randomUUID(), "192.0.2.0/24"));
         registration.verify(new VerifyEmailCommand(old.verificationToken(), UUID.randomUUID()));
         jdbcTemplate.update("""
@@ -561,7 +561,7 @@ class IdentityPersistenceIntegrationTest {
                 NOW.atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC));
 
         var target = registration.signup(new SignupCommand(
-                "oidc-new-key@example.com", "a sufficiently long passphrase",
+                "oidc-new-key@example.com", "ValidPass!2026",
                 UUID.randomUUID(), "192.0.2.0/24"));
         registration.verify(new VerifyEmailCommand(target.verificationToken(), UUID.randomUUID()));
         UUID passwordLoginId = jdbcTemplate.queryForObject("""
