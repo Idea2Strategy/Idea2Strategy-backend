@@ -59,7 +59,7 @@ class AccountHttpPersistenceJourneyIntegrationTest {
             "abcdefabcdefabcdefabcdefabcdefab".getBytes(StandardCharsets.UTF_8);
     private static final UUID CORRELATION = id(1);
     private static final String EMAIL = "a22-http@example.com";
-    private static final String PASSWORD = "correct horse battery staple 2026!";
+    private static final String PASSWORD = "CorrectHorse!2026";
     private static final String OPERATOR_SUBJECT = "a22-operator-subject";
     private static final String CATALOG = "a22-rbac-v1";
     private static final UUID ACTOR = id(40);
