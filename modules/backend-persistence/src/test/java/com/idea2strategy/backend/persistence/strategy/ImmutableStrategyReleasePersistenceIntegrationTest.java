@@ -249,16 +249,33 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.input_datasets")).isEqualTo(1);
         assertThat(count("backtest.input_feature_materializations")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
+        // The transport aggregate for a BASIC official backtest is the bot, not the run. The BASIC
+        // consumer rejects the envelope as TRANSPORT_ENVELOPE_MISMATCH when aggregate_id is not the
+        // payload botId, and SqsOutboxMessagePublisher publishes this column verbatim — so a row
+        // written under runId is dead-lettered before any attempt is recorded (backend #243).
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages where aggregate_id = ?",
+                        Integer.class,
+                        request.runId()))
+                .as("the run id must not be used as the strategy-bot transport aggregate")
+                .isZero();
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
-                                + "where aggregate_id = ?", String.class, request.runId()))
+                                + "where aggregate_id = ?", String.class, BOT_ID))
                 .isEqualTo(DATASET_ID.toString());
         var transported = OBJECT_MAPPER.readValue(
                 jdbc.queryForObject(
                         "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()),
+                        BOT_ID),
                 StrategyBotContractFixtures.OfficialBacktestRequest.class);
+        // Tie the row's identity to the payload rather than to a constant. This is the assertion the
+        // defect would have failed: the envelope and the body must name the same aggregate.
+        assertThat(jdbc.queryForObject(
+                        "select aggregate_id::text from operations.outbox_messages where owner_domain = 'strategy-bot'",
+                        String.class))
+                .as("transport aggregate identity must agree with the payload botId")
+                .isEqualTo(transported.botId());
         assertThat(transported.metadata().contractVersion()).isEqualTo("strategy-bot.v1");
         assertThat(transported.metadata().messageType()).isEqualTo("OFFICIAL_BACKTEST_REQUESTED");
         assertThat(transported.metadata().messageId()).isEqualTo(request.metadata().messageId().toString());
@@ -291,22 +308,22 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(jdbc.queryForObject(
                         "select event_schema_version from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().contractVersion());
         assertThat(jdbc.queryForObject(
                         "select event_type from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().messageType());
         assertThat(jdbc.queryForObject(
                         "select id::text from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().messageId());
         assertThat(jdbc.queryForObject(
                         "select idempotency_key from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().idempotencyKey());
         assertThat("sha256:" + jdbc.queryForObject(
                         "select snapshot_hash from bot.launch_snapshots where bot_id = ?",
