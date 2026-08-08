@@ -12,6 +12,7 @@ import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.LoginFailure;
 import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
+import com.idea2strategy.backend.application.identity.PendingRegistrationReplacement;
 import com.idea2strategy.backend.application.identity.PendingOidcLink;
 import com.idea2strategy.backend.application.identity.PendingOidcRegistration;
 import com.idea2strategy.backend.application.identity.PendingPasswordReset;
@@ -298,6 +299,64 @@ public class IdentityJpaCommandAdapter
                 "verify:" + correlationId,
                 now);
         return VerificationOutcome.VERIFIED;
+    }
+
+    @Override
+    @Transactional
+    public void replacePendingRegistration(PendingRegistrationReplacement replacement) {
+        Object[] account = (Object[]) entityManager.createNativeQuery("""
+                        select account.lifecycle_status::text, login.id
+                        from identity.accounts account
+                        join identity.login_identities login on login.account_id = account.id
+                        join identity.auth_providers provider on provider.id = login.provider_id
+                        join identity.password_credentials credential on credential.login_identity_id = login.id
+                        where account.id = :accountId and provider.code = 'PASSWORD'
+                        for update of account, login, credential
+                        """)
+                .setParameter("accountId", replacement.accountId())
+                .getSingleResult();
+        if (!"PENDING_VERIFICATION".equals(account[0])) {
+            throw new IllegalStateException("Only pending accounts can replace registration credentials");
+        }
+        UUID loginId = (UUID) account[1];
+        OffsetDateTime now = utc(replacement.requestedAt());
+        entityManager.createNativeQuery("""
+                        update identity.password_credentials
+                        set password_hash = :hash, hash_scheme = :scheme,
+                            hash_parameters = cast(:parameters as jsonb),
+                            credential_version = credential_version + 1,
+                            password_changed_at = :now
+                        where login_identity_id = :loginId
+                        """)
+                .setParameter("hash", replacement.password().encodedHash())
+                .setParameter("scheme", replacement.password().scheme())
+                .setParameter("parameters", replacement.password().parametersJson())
+                .setParameter("now", now)
+                .setParameter("loginId", loginId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.email_verification_requests set revoked_at = :now
+                        where account_id = :accountId and consumed_at is null and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", replacement.accountId())
+                .executeUpdate();
+        insertVerification(
+                replacement.requestId(),
+                replacement.accountId(),
+                replacement.tokenDigest(),
+                replacement.requestedAt(),
+                replacement.expiresAt(),
+                replacement.requestIpPrefix());
+        insertAuthenticationEvent(
+                replacement.accountId(),
+                "EMAIL_VERIFICATION_REISSUED",
+                loginId,
+                "USER",
+                null,
+                replacement.correlationId(),
+                "pending-signup-reissue:" + replacement.correlationId(),
+                now);
     }
 
     @Override

@@ -110,9 +110,10 @@ public final class EmailRegistrationService {
         var now = clock.instant();
         var expiresAt = now.plus(VERIFICATION_LIFETIME);
         VerificationToken token = tokenIssuer.issue();
-        commandPort.replaceVerification(new VerificationReplacement(
+        commandPort.replacePendingRegistration(new PendingRegistrationReplacement(
                 UUID.randomUUID(),
                 existing.accountId(),
+                passwordHasher.hash(command.password()),
                 token.digest(),
                 now,
                 expiresAt,

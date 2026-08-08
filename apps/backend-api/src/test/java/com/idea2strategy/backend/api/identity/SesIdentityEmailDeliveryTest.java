@@ -53,7 +53,7 @@ class SesIdentityEmailDeliveryTest {
                 .contains("본인이 요청하지 않았다면");
         assertThat(messages.get(1).destination().toAddresses()).containsExactly("person@example.com");
         assertThat(messages.get(2).content().simple().body().text().data())
-                .contains("https://ideatostrategy.com/account?resetToken=reset-secret");
+                .contains("https://ideatostrategy.com/password-reset?token=reset-secret");
         assertThat(listener.toString()).doesNotContain("person@example.com", "secret");
     }
 

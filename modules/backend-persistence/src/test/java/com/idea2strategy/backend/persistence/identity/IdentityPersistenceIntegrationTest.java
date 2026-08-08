@@ -139,7 +139,7 @@ class IdentityPersistenceIntegrationTest {
                 .hasMessage("Verification token is no longer valid");
         registration.verify(new VerifyEmailCommand(replacement.verificationToken(), UUID.randomUUID()));
         var login = authenticationService().login(new LoginCommand(
-                "person@example.com", "a sufficiently long passphrase", UUID.randomUUID()));
+                "person@example.com", "a different sufficiently long passphrase", UUID.randomUUID()));
 
         assertThat(login.accountId()).isEqualTo(signup.accountId());
         assertThat(login.refreshTokenSecret()).startsWith("raw-session-token-");
@@ -177,7 +177,7 @@ class IdentityPersistenceIntegrationTest {
                         """,
                         String.class,
                         signup.accountId()))
-                .isEqualTo("hash:a sufficiently long passphrase");
+                .isEqualTo("hash:a different sufficiently long passphrase");
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_FAILED'",
                         Integer.class,

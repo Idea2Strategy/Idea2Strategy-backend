@@ -8,5 +8,7 @@ public interface RegistrationCommandPort {
 
     VerificationOutcome consumeVerification(String tokenDigest, Instant consumedAt, UUID correlationId);
 
+    void replacePendingRegistration(PendingRegistrationReplacement replacement);
+
     void replaceVerification(VerificationReplacement replacement);
 }
