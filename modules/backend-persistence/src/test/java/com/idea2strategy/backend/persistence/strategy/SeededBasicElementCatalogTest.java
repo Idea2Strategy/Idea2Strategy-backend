@@ -54,16 +54,17 @@ class SeededBasicElementCatalogTest {
                 "select catalog_version, language_version, data_requirement_version, retired_at "
                         + "from strategy.element_catalog_versions");
 
-        assertThat(versions).hasSize(3);
+        assertThat(versions).hasSize(4);
         assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
-            assertThat(version.get("catalog_version"))
-                    .isEqualTo("basic-elements:2026-08-08-live-bars");
+            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-08");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
         });
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-04"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-07"))
+                .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
+        assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-08-live-bars"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
     }
 
@@ -200,18 +201,63 @@ class SeededBasicElementCatalogTest {
                 });
     }
 
-    /** The full catalog evaluates its rolling event state directly and declares no fake feature dependency. */
+    /** Only RSI_CROSS consumes the one official historical feature; other blocks stay raw-market operations. */
     @Test
-    void doesNotDeclareUnrelatedFeatureDependencies() {
+    void declaresOnlyTheOfficialRsiFeatureDependency() {
         List<String> declared = jdbc.queryForList("""
-                select jsonb_array_elements_text(execution_contract -> 'backtest' -> 'features')
+                select element_code || ':' || feature
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                cross join lateral jsonb_array_elements_text(
+                    execution_contract -> 'backtest' -> 'features') feature
+                where version.retired_at is null
+                order by 1
+                """, String.class);
+
+        assertThat(declared).containsExactly("BASIC_RSI_CROSS:RSI_14");
+    }
+
+    @Test
+    void publishesOnlyProductionResolutionsWithoutPerElementBacktestFeeds() {
+        List<String> resolutionEnums = jdbc.queryForList("""
+                select distinct jsonb_array_elements_text(parameter_schema #> '{properties,resolution,enum}')
                 from strategy.element_definitions element
                 join strategy.element_catalog_versions version
                   on version.id = element.element_catalog_version_id
                 where version.retired_at is null
+                  and parameter_schema #> '{properties,resolution,enum}' is not null
+                order by 1
                 """, String.class);
+        assertThat(resolutionEnums).containsExactly("1d", "1h", "30m", "4h");
 
-        assertThat(declared).isEmpty();
+        Integer feedDeclarations = jdbc.queryForObject("""
+                select count(*)
+                from strategy.element_definitions element
+                join strategy.element_catalog_versions version
+                  on version.id = element.element_catalog_version_id
+                where version.retired_at is null
+                  and execution_contract #> '{backtest,feeds}' is not null
+                """, Integer.class);
+        assertThat(feedDeclarations).isZero();
+
+        UUID activeCatalog = jdbc.queryForObject(
+                "select id from strategy.element_catalog_versions where retired_at is null",
+                UUID.class);
+        // Feature definitions are owned by Data Pipeline and enter production through the root
+        // canonical bundle assembler. This repository's central-only fixture must not duplicate
+        // that contribution under the same Flyway version.
+        assertThat(catalogAdapter.findFeatures(activeCatalog))
+                .isEmpty();
+
+        assertThat(jdbc.queryForList("""
+                select jsonb_array_elements_text(parameter_schema #> '{properties,executionMode,enum}')
+                from strategy.element_definitions
+                where element_catalog_version_id = '0f4a0000-0000-4000-8000-000000000001'::uuid
+                  and element_code = 'BASIC_EQUAL_ALLOCATION_ORDER'
+                order by 1
+                """, String.class)).containsExactly(
+                        "1회만", "대기 후 재실행", "대기 후 재진입", "주기마다");
     }
 
     private String portType(String elementCode, String column, String port) {

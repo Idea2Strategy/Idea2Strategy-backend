@@ -12,6 +12,15 @@ Idea2Strategy의 사용자 API, 운영 작업, 알림, 관리자 MCP를 담당�
 
 전략 실시간 평가·가상 체결은 `trading-engine`, 백테스트 계산은 `backtest-engine`, 시장 데이터 가공은 `data-pipeline`의 책임입니다.
 
+## Production Basic catalog
+
+활성 카탈로그 `basic-elements:2026-08-08`은 UI의 14개 Basic 블록을 모두 컴파일하며, 새 전략의
+봉 주기는 `30m`, `1h`, `4h`, `1d`로 제한합니다. 실행 계약의 `$resolution`은 저장된 각 블록
+파라미터로 해석되고, 한 전략에서 둘 이상의 주기를 혼용하면 릴리스 전에 거부됩니다.
+이전 카탈로그와 migration은 이미 릴리스된 bot의 재현성을 위해 변경하지 않고 retired 상태로
+보존합니다. 실제 계산과 owner-scoped 취소 API는 `backtest-engine`, 실시간 가상 주문 후보와
+부분 포지션 sizing은 `trading-engine`이 담당합니다.
+
 Gradle 멀티프로젝트 골격은 다음과 같습니다.
 
 ```text

@@ -112,7 +112,11 @@ class StrategyBotCompiledPlanAssemblerTest {
         ((com.fasterxml.jackson.databind.node.ObjectNode) oneHour.path("steps").get(0))
                 .set("parameters", parse("{\"resolution\":\"1h\"}"));
 
-        ContractPlan plan = assemble(planWith(thirtyMinutes, oneHour));
+        ContractPlan plan = assembleWithCatalog(
+                planWith(thirtyMinutes, oneHour),
+                catalog(
+                        feature("RSI_14", "rsi:1.0.0", "30m", 15),
+                        feature("RSI_14", "rsi:1.0.0", "1h", 15)));
 
         assertThat(parse(plan.planDocument()).path("requiredFeatures"))
                 .extracting(node -> node.path("resolution").asText())
@@ -196,7 +200,7 @@ class StrategyBotCompiledPlanAssemblerTest {
     void refusesAFeatureThatDeclaresNoWarmupHistory() {
         assertThatThrownBy(() -> assemble(
                         planWith(buyFlow("buy", List.of(AAPL))),
-                        feature("RSI_14", "rsi:1.0.0", "1m", 1)))
+                        feature("RSI_14", "rsi:1.0.0", "30m", 1)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("declares no warm-up history");
     }
@@ -311,7 +315,7 @@ class StrategyBotCompiledPlanAssemblerTest {
         return node;
     }
 
-    private BasicStrategyCatalog catalog(StrategyFeatureDefinition feature) {
+    private BasicStrategyCatalog catalog(StrategyFeatureDefinition... features) {
         return new BasicStrategyCatalog(
                 new ElementCatalogVersion(
                         CATALOG_ID, "basic/v1", "basic-semantic/v1", "basic-elements:2026-08-04",
@@ -324,7 +328,7 @@ class StrategyBotCompiledPlanAssemblerTest {
                         element("BASIC_EQUAL_ALLOCATION_ORDER", "EMIT_ORDER_CANDIDATE",
                                 "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\",\"side\":\"$container\"}",
                                 "[]")),
-                List.of(feature),
+                List.of(features),
                 List.of(
                         new SupportedInstrument(AAPL, "STOCK", "XNAS", "USD", "AAPL"),
                         new SupportedInstrument(MSFT, "STOCK", "XNAS", "USD", "MSFT")));
@@ -333,7 +337,8 @@ class StrategyBotCompiledPlanAssemblerTest {
     private static StrategyFeatureDefinition feature(
             String code, String calculatorVersion, String resolution, int historyPoints) {
         return new StrategyFeatureDefinition(
-                FEATURE_ID, CATALOG_ID, code, calculatorVersion, resolution, "{\"period\":14}",
+                UUID.nameUUIDFromBytes((code + "@" + resolution).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                CATALOG_ID, code, calculatorVersion, resolution, "{\"period\":14}",
                 "NUMBER", historyPoints, HASH_B);
     }
 
