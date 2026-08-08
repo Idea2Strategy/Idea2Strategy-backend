@@ -29,6 +29,10 @@ import com.idea2strategy.backend.persistence.botcontrol.BotRunCommandJooqAdapter
 import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.AnonymousLeaderboardJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaCommandAdapter;
+import com.idea2strategy.backend.persistence.competition.CompetitionLiveRoomRulesJpaEntity;
+import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaEntity;
+import com.idea2strategy.backend.persistence.competition.CompetitionRoomRulesJpaEntity;
+import com.idea2strategy.backend.persistence.competition.CompetitionRoomScheduleJpaEntity;
 import com.idea2strategy.backend.persistence.competition.OperatorRoomJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.OwnedRoomManagementJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJooqAdapter;
@@ -54,10 +58,26 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "spring.datasource", name = "url")
+// Spring Boot 의 기본 엔티티 스캔은 @EntityScan 이 하나라도 선언되면 그것으로 대체된다. 다른
+// 설정(IdentityAuthConfiguration, StrategyDraftConfiguration)이 이미 선언하고 있으므로, 방
+// 엔티티를 여기서 함께 선언하지 않으면 persistence unit 에 들어가지 못한다. 그러면 검증은 전부
+// 통과한 뒤 저장 시점에 "does not belong to this persistence unit" 으로 실패하고, 방을 만들 수
+// 없다.
+//
+// @EnableJpaRepositories 는 함께 두지 않는다. 이 경로의 쓰기는
+// CompetitionRoomJpaCommandAdapter 가 EntityManager 로 직접 하고, 이 패키지의 Spring Data
+// 리포지터리들은 package-private 으로 캡슐화되어 있어 밖에서 참조할 대상이 아니다.
+@EntityScan(basePackageClasses = {
+    CompetitionRoomJpaEntity.class,
+    CompetitionRoomRulesJpaEntity.class,
+    CompetitionLiveRoomRulesJpaEntity.class,
+    CompetitionRoomScheduleJpaEntity.class
+})
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
     OperatorRoomJooqAdapter.class,
