@@ -105,7 +105,7 @@ public final class SesIdentityEmailDelivery {
     }
 
     private String resetUrl(String token) {
-        return baseUrl + "/account?resetToken=" + encode(token);
+        return baseUrl + "/password-reset?token=" + encode(token);
     }
 
     private static String textBody(String action, String url, Instant expiresAt) {
