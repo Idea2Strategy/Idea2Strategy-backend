@@ -106,6 +106,43 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 MATERIALIZATION, "sha256:" + HASH));
     }
 
+    /* basic-compiled-plan-v2 declares requiredFeatures with minItems 0, and thirteen of the
+       fourteen published Basic elements need no official feature, so a plan without any is the
+       ordinary case rather than a malformed one. */
+    @Test
+    void publishesNoPinsForAPlanThatRequiresNoOfficialFeature() {
+        var pins = resolver.resolve(
+                "{\"requiredFeatures\":[]}",
+                LocalDate.parse("2024-01-01"),
+                LocalDate.parse("2024-12-31"),
+                AS_OF);
+
+        assertThat(pins).isEmpty();
+    }
+
+    @Test
+    void rejectsAPlanWithNoRequiredFeaturesArrayAtAll() {
+        assertRejected("{}", "Compiled plan must declare requiredFeatures");
+    }
+
+    /* The pipeline stores the production per-resolution definitions as bare hex and derives the
+       feed id from exactly those bytes, while the legacy 1m definition is stored prefixed. Both
+       spellings have to resolve, and each must keep deriving its own feed id. */
+    @Test
+    void resolvesADefinitionHashStoredWithoutTheSha256Prefix() {
+        UUID bareFeed = FeatureMaterializationPinResolver.deterministicUuid(
+                "feature-output-feed", HASH, "rsi:1.0.0", "1d",
+                FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
+        jdbc.update("update market_data.feature_definitions set definition_hash = ? where id = ?",
+                HASH, FEATURE);
+        jdbc.update("update market_data.feeds set id = ? where id = ?", bareFeed, FEED);
+        jdbc.update("update market_data.dataset_manifests set feed_id = ? where id = ?", bareFeed, MANIFEST);
+
+        var pins = resolver.resolve(plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF);
+
+        assertThat(pins).containsExactly(new BacktestRunInputPinWriter.FeaturePin(MATERIALIZATION, HASH));
+    }
+
     @Test
     void rejectsMissingDuplicateAndManifestMismatchBeforeAPinCanBePublished() {
         jdbc.update("update market_data.feature_materializations set status = 'FAILED', "
@@ -199,8 +236,12 @@ class FeatureMaterializationPinResolverIntegrationTest {
     }
 
     private void assertRejected(String message) {
+        assertRejected(plan(), message);
+    }
+
+    private void assertRejected(String planDocument, String message) {
         assertThatThrownBy(() -> resolver.resolve(
-                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                        planDocument, LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining(message);
     }
