@@ -35,7 +35,13 @@ class CustomerJwtCodecTest {
         assertThat(codec.verifyRefresh(refresh).familyId()).isEqualTo(REFRESH_FAMILY);
         assertThat(codec.verifyRefresh(refresh).tokenSecret()).isEqualTo("refresh-token-secret");
         assertThatThrownBy(() -> codec.verifyAccess(refresh)).isInstanceOf(AuthenticationRejectedException.class);
-        assertThatThrownBy(() -> codec.verifyAccess(access.substring(0, access.length() - 1) + "x"))
+        // Tampering has to change the token. Appending a literal 'x' did not when the signature
+        // already ended in one, and the signing key is generated per run, so this assertion failed
+        // about one run in sixty-four — it blocked backend #257's CI with an unrelated red.
+        char last = access.charAt(access.length() - 1);
+        String tampered = access.substring(0, access.length() - 1) + (last == 'x' ? 'y' : 'x');
+        assertThat(tampered).isNotEqualTo(access);
+        assertThatThrownBy(() -> codec.verifyAccess(tampered))
                 .isInstanceOf(AuthenticationRejectedException.class);
     }
 
