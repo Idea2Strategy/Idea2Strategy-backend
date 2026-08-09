@@ -36,6 +36,7 @@ class AssembledCompiledPlanContractTest {
     private static final UUID AAPL = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final String HASH_A = "a".repeat(64);
     private static final String HASH_B = "b".repeat(64);
+    private static final Instant RELEASED_AT = Instant.parse("2026-08-04T13:30:00Z");
 
     @Test
     void theAssembledPlanSatisfiesEveryContractFieldRule() throws Exception {
@@ -102,12 +103,46 @@ class AssembledCompiledPlanContractTest {
         assertThat(StrategyBotContractFixtures.calculatePlanChecksum(plan)).isEqualTo(plan.planChecksum());
     }
 
+    /**
+     * The supported-universe version is a published contract value, not a fact about today.
+     *
+     * <p>It used to be the release date in the market zone, so every market day minted a version the
+     * consumer had never implemented, and the run failed
+     * {@code INSTRUMENT_CATALOG_VERSION_UNSUPPORTED} before simulation (backend #257). Two releases on
+     * different dates must therefore publish the same version.
+     */
+    @Test
+    void twoReleasesOnDifferentDatesPublishTheSameInstrumentCatalogVersion() throws Exception {
+        String july = assembledAt(Instant.parse("2026-07-31T13:30:00Z"));
+        String august = assembledAt(Instant.parse("2026-08-09T13:30:00Z"));
+
+        assertThat(august).isEqualTo(july);
+        assertThat(august).contains(
+                "\"instrumentCatalogVersion\":\"" + StrategyBotCompiledPlanAssembler.PUBLISHED_INSTRUMENT_CATALOG_VERSION + "\"");
+        assertThat(august).doesNotContain("us-supported-universe:2026-08-09");
+    }
+
+    /**
+     * Cross-repository parity, through the artifact both sides already share.
+     *
+     * <p>The consumer's implemented list lives in {@code backtest_engine/basic_runtime.py} as
+     * {@code INSTRUMENT_CATALOG_VERSIONS}, which this repository cannot read. What it can read is the
+     * pinned contract sample the two repositories agree on, and that sample names the same version —
+     * so asserting the producer matches the sample is the parity check that is actually available here.
+     * A version bump that touches only one of the two fails this.
+     */
+    @Test
+    void theProducerPublishesTheVersionThePinnedContractSampleNames() {
+        assertThat(StrategyBotCompiledPlanAssembler.PUBLISHED_INSTRUMENT_CATALOG_VERSION)
+                .isEqualTo(StrategyBotContractFixtures.standard().compiledPlan().instrumentCatalogVersion());
+    }
+
     /** Trailing zeros a caller writes are the same amount, so they must produce the same plan. */
     @Test
     void everySpellingOfOneAmountProducesOneChecksum() throws Exception {
-        String scaleLess = assembledWith(new BigDecimal("100000"));
-        String alreadyScaled = assembledWith(new BigDecimal("100000.00000000"));
-        String overScaled = assembledWith(new BigDecimal("100000.000000000000"));
+        String scaleLess = assembledWith(new BigDecimal("100000"), RELEASED_AT);
+        String alreadyScaled = assembledWith(new BigDecimal("100000.00000000"), RELEASED_AT);
+        String overScaled = assembledWith(new BigDecimal("100000.000000000000"), RELEASED_AT);
 
         assertThat(alreadyScaled).isEqualTo(scaleLess);
         assertThat(overScaled).isEqualTo(scaleLess);
@@ -116,16 +151,20 @@ class AssembledCompiledPlanContractTest {
     /** Precision the contract cannot carry is a caller error, never something to round away. */
     @Test
     void anAmountFinerThanTheContractScaleIsRefused() {
-        assertThatThrownBy(() -> assembledWith(new BigDecimal("100000.000000005")))
+        assertThatThrownBy(() -> assembledWith(new BigDecimal("100000.000000005"), RELEASED_AT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("more precision than");
     }
 
     private static String assembled() throws Exception {
-        return assembledWith(new BigDecimal("100000"));
+        return assembledWith(new BigDecimal("100000"), Instant.parse("2026-08-04T13:30:00Z"));
     }
 
-    private static String assembledWith(BigDecimal initialCashAmount) throws Exception {
+    private static String assembledAt(Instant releasedAt) throws Exception {
+        return assembledWith(new BigDecimal("100000"), releasedAt);
+    }
+
+    private static String assembledWith(BigDecimal initialCashAmount, Instant releasedAt) throws Exception {
         var flow = new Flow(
                 FLOW_ID, "buy", CATALOG_ID, PLAN_ID, "{}", "{}", HASH_A, HASH_B, HASH_A,
                 List.of(AAPL), List.of(), 0);
@@ -140,7 +179,7 @@ class AssembledCompiledPlanContractTest {
                         HASH_A,
                         HASH_B,
                         "basic-launch-snapshot.v1",
-                        Instant.parse("2026-08-04T13:30:00Z"))
+                        releasedAt)
                 .planDocument();
     }
 
