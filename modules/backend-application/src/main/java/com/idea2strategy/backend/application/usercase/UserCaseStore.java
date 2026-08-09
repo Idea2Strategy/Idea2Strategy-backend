@@ -11,6 +11,10 @@ public interface UserCaseStore {
 
     Optional<UserCaseView> findOwned(UUID accountId, UUID caseId);
 
+    UserCasePage findOwnedPage(UUID accountId, String cursor, int limit);
+
+    Optional<UserCaseDetailView> findOwnedDetail(UUID accountId, UUID caseId);
+
     record CommandResult(Outcome outcome, UserCaseView view) {
         public enum Outcome {
             APPLIED,

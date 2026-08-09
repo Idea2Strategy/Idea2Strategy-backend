@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.notification.NotificationChannel;
 import com.idea2strategy.backend.application.notification.NotificationQueryService;
-import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
+import com.idea2strategy.backend.application.notification.EmailNotificationPreferenceService;
 import com.idea2strategy.backend.application.notification.NotificationRequest;
 import com.idea2strategy.backend.application.notification.NotificationService;
 import com.idea2strategy.backend.application.notification.NotificationUnavailableException;
@@ -66,6 +66,7 @@ class NotificationPersistenceIntegrationTest {
         jdbc.update("delete from operations.outbox_consumer_receipts");
         jdbc.update("delete from operations.outbox_messages");
         jdbc.update("delete from operations.notifications");
+        jdbc.update("delete from operations.account_email_notification_preferences");
         jdbc.update("delete from operations.notification_preferences");
         jdbc.update("delete from operations.notification_policies");
         gateway.results.clear();
@@ -105,38 +106,37 @@ class NotificationPersistenceIntegrationTest {
     void preferenceCanSuppressEmailButNeverTheOwnedInAppRecord() {
         UUID owner = account();
         policy("BOT_UPDATE", "v1", false, "[\"APP\",\"EMAIL\"]");
-        jdbc.update("""
-                insert into operations.notification_preferences
-                    (account_id, event_type, channel, enabled, updated_at, policy_version)
-                values (?, 'BOT_UPDATE', 'APP', true, clock_timestamp(), 'v1'),
-                       (?, 'BOT_UPDATE', 'EMAIL', false, clock_timestamp(), 'v1')
-                """, owner, owner);
 
-        var receipt = service().create(new NotificationRequest(owner, "BOT_UPDATE", "template-v2", "ko",
+        var optedOut = service().create(new NotificationRequest(owner, "BOT_UPDATE", "template-v2", "ko",
                 "bot-event", "bot-hash", Map.of(), UUID.randomUUID()));
-        assertThat(receipt.channels()).containsExactly(NotificationChannel.APP);
+        assertThat(optedOut.channels()).containsExactly(NotificationChannel.APP);
         assertThat(count("select count(*) from operations.outbox_messages")).isZero();
+
+        new EmailNotificationPreferenceService(adapter,
+                Clock.fixed(Instant.parse("2026-08-02T15:00:00Z"), ZoneOffset.UTC))
+                .replace(owner, true);
+        var optedIn = service().create(new NotificationRequest(owner, "BOT_UPDATE", "template-v2", "ko",
+                "bot-event-2", "bot-hash-2", Map.of(), UUID.randomUUID()));
+        assertThat(optedIn.channels()).containsExactlyInAnyOrder(NotificationChannel.APP, NotificationChannel.EMAIL);
+        assertThat(count("select count(*) from operations.outbox_messages")).isEqualTo(1);
     }
 
     @Test
-    void preferenceManagementIsPolicyVersionedAndAccountOwned() {
+    void emailPreferenceDefaultsToOffAndIsPersistedPerAccount() {
         UUID owner = account();
         UUID other = account();
-        policy("BOT_UPDATE", "v1", false, "[\"APP\",\"EMAIL\"]");
-        var preferences = new NotificationPreferenceService(
-                adapter, adapter, Clock.fixed(Instant.parse("2026-08-02T15:00:00Z"), ZoneOffset.UTC));
+        var preferences = new EmailNotificationPreferenceService(
+                adapter, Clock.fixed(Instant.parse("2026-08-02T15:00:00Z"), ZoneOffset.UTC));
 
-        preferences.replace(owner, "BOT_UPDATE", java.util.Set.of(NotificationChannel.APP));
+        assertThat(preferences.get(owner).enabled()).isFalse();
+        assertThat(preferences.get(other).enabled()).isFalse();
+        preferences.replace(owner, true);
 
-        assertThat(preferences.list(owner)).singleElement().satisfies(preference -> {
-            assertThat(preference.policyVersion()).isEqualTo("v1");
-            assertThat(preference.enabledChannels()).containsExactly(NotificationChannel.APP);
-        });
-        assertThat(preferences.list(other)).singleElement().satisfies(preference ->
-                assertThat(preference.enabledChannels()).containsExactly(NotificationChannel.APP));
+        assertThat(preferences.get(owner).enabled()).isTrue();
+        assertThat(preferences.get(other).enabled()).isFalse();
         assertThat(count("""
-                select count(*) from operations.notification_preferences
-                where account_id = ? and policy_version = 'v1'
+                select count(*) from operations.account_email_notification_preferences
+                where account_id = ? and enabled
                 """, owner)).isEqualTo(1);
     }
 

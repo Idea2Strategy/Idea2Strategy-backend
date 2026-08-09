@@ -53,6 +53,55 @@ public final class DatabaseAccessPolicy {
     private static final Set<String> TRADING_BOT_TABLES = Set.of(
             "bot_events", "evaluation_runs", "runtime_state_values", "runtime_state_changes");
 
+    /**
+     * Tables {@code backend-batch} updates outside the schemas it owns. See
+     * {@link #allowsBatchScheduledWrite}: these are also the tables its {@code ... for update}
+     * statements lock, and PostgreSQL requires UPDATE on every table a FOR UPDATE names.
+     *
+     * <p>{@code bot.continuation_deadlines} is here for the lock alone — no batch adapter issues an
+     * UPDATE against it. {@code PrivateContinuationTransitionJooqAdapter} selects it {@code for
+     * update} and {@code BotStopCommandJooqAdapter} names it in {@code for update of b, d}, which is
+     * enough for PostgreSQL to demand the privilege. Derived by extracting every write and every lock
+     * target from the seven adapters the batch instantiates and comparing them against the deployed
+     * role, rather than by waiting for the third instance of this trap to fail in a release.
+     */
+    private static final Set<QualifiedTable> BATCH_UPDATED_TABLES = Set.of(
+            new QualifiedTable("competition", "rooms"),
+            new QualifiedTable("competition", "participations"),
+            new QualifiedTable("bot", "bots"),
+            new QualifiedTable("bot", "continuation_deadlines"),
+            new QualifiedTable("identity", "accounts"),
+            new QualifiedTable("identity", "account_closure_runs"),
+            new QualifiedTable("identity", "account_sanctions"),
+            new QualifiedTable("identity", "account_sanction_heads"),
+            new QualifiedTable("identity", "refresh_token_families"));
+
+    /**
+     * The only {@code bot} tables the backtest worker reads.
+     *
+     * <p>Derived from the executed SQL in {@code backtest_engine/production.py}, not from the one
+     * table a failure happened to report first. A sweep of every {@code FROM}/{@code JOIN} in that
+     * package found exactly these two in {@code bot}; fixing only the reported one would have failed
+     * again on the other at the next attempt.
+     */
+    private static final Set<String> BACKTEST_BOT_READ_TABLES =
+            Set.of("launch_contract_plans", "bots");
+
+    /** Tables {@code backend-batch} appends to outside the schemas it owns. */
+    private static final Set<QualifiedTable> BATCH_INSERTED_TABLES = Set.of(
+            new QualifiedTable("competition", "room_events"),
+            new QualifiedTable("competition", "participation_events"),
+            new QualifiedTable("competition", "backtest_period_runs"),
+            new QualifiedTable("competition", "live_evaluation_segments"),
+            new QualifiedTable("bot", "continuation_deadlines"),
+            new QualifiedTable("backtest", "runs"),
+            new QualifiedTable("identity", "account_closure_runs"),
+            new QualifiedTable("identity", "account_closure_readiness"),
+            new QualifiedTable("identity", "account_sanction_heads"),
+            new QualifiedTable("identity", "account_sanction_events"),
+            new QualifiedTable("identity", "account_sanction_command_receipts"),
+            new QualifiedTable("identity", "account_security_states"));
+
     private DatabaseAccessPolicy() {}
 
     public static OwnershipManifest verifyBaselineOwnership(String baselineSql) {
@@ -214,7 +263,51 @@ public final class DatabaseAccessPolicy {
                             "input_datasets",
                             "input_feature_materializations",
                             "run_input_pins").contains(table));
-            case BATCH -> access == Access.READ || Set.of("performance", "operations").contains(schema);
+            case BATCH -> access == Access.READ
+                    || Set.of("performance", "operations").contains(schema)
+                    || allowsBatchScheduledWrite(access, schema, table);
+        };
+    }
+
+    /**
+     * The writes {@code backend-batch}'s scheduled jobs actually perform, outside the two schemas it
+     * owns outright.
+     *
+     * <p>Derived from the write statements and the lock targets of every adapter the batch application
+     * imports, which {@code RoleGrantsCoverExecutedSqlTest} now recomputes from those sources on every
+     * build rather than leaving this list to be maintained by hand. Read access already comes from the
+     * {@code Access.READ} branch above, so only the mutations are listed.
+     *
+     * <p>The sanction entries belong to sanction expiry, which is the one identity job Development runs.
+     * A {@code SUSPENSION} that expired at 05:00 stayed {@code ACTIVE} for three hours because the batch
+     * role could only read {@code identity}: its first statement is an upsert into
+     * {@code account_sanction_heads}, and PostgreSQL reported the denial in SQLState class 42, which
+     * Spring surfaced as {@code BadSqlGrammarException} — an exception that names a syntax problem for
+     * what was a privilege problem (#264). {@code refresh_token_families} is here because expiring a
+     * sanction revokes the sessions it suspended.
+     *
+     * <p>The {@code identity} entries below belong to account closure. {@code AccountClosureJpaStore} appends
+     * to {@code account_closure_runs} and {@code account_closure_readiness}, marks a run closed, and
+     * locks the account row it is finalizing with {@code select ... from identity.accounts ... for
+     * update}; {@code AccountLifecycleJpaCommandAdapter}, imported alongside it, is what advances the
+     * lifecycle. Those jobs sit behind {@code idea2strategy.batch.account-closure.enabled}, which
+     * Development leaves off, so the gap had never fired — enabling the flag would have been the first
+     * time anyone found out.
+     *
+     * <p>No adapter deletes, so {@code DELETE} is deliberately absent: the batch may append events and
+     * advance state, never remove a room, bot or run.
+     *
+     * <p>{@code competition.rooms}, {@code competition.participations} and {@code bot.bots} need
+     * {@code UPDATE} for a second reason beyond their update statements. These adapters take
+     * {@code ... for update}, and PostgreSQL requires {@code UPDATE} on every table a {@code FOR UPDATE}
+     * names. That is the same trap as backend #241 with the opposite resolution — there the lock was
+     * unnecessary and was removed, here the locks are load-bearing so the privilege has to match.
+     */
+    private static boolean allowsBatchScheduledWrite(Access access, String schema, String table) {
+        return switch (access) {
+            case UPDATE -> BATCH_UPDATED_TABLES.contains(new QualifiedTable(schema, table));
+            case INSERT -> BATCH_INSERTED_TABLES.contains(new QualifiedTable(schema, table));
+            default -> false;
         };
     }
 
@@ -266,6 +359,27 @@ public final class DatabaseAccessPolicy {
         }
         if (("strategy".equals(schema) || "market_data".equals(schema)) && access == Access.READ) {
             return true;
+        }
+        // Before executing anything the worker resolves what to run and who owns it:
+        //   SELECT plan_document    FROM bot.launch_contract_plans WHERE plan_checksum = :checksum
+        //   SELECT owner_account_id FROM bot.bots                  WHERE id = :bot_id ...
+        // Two tables, read only. Widening the schema would hand the worker the bot lifecycle and its
+        // runtime state, which it never touches — the bot aggregate is written by backend and batch.
+        if ("bot".equals(schema)) {
+            return access == Access.READ && BACKTEST_BOT_READ_TABLES.contains(table);
+        }
+        // The request intake claims a transactional consumer receipt before it runs anything, so it
+        // reads the producer's outbox row and owns its own receipt row. Two tables only — widening the
+        // whole operations schema would hand the worker the audit trail and the operator case tables,
+        // which it has no reason to see.
+        if ("operations".equals(schema)) {
+            if ("outbox_messages".equals(table)) {
+                return access == Access.READ;
+            }
+            // The intake selects, inserts and updates receipts. It never deletes one, so DELETE stays
+            // out even though the backend, batch and trading roles hold it on this table.
+            return "outbox_consumer_receipts".equals(table)
+                    && (access == Access.READ || access == Access.INSERT || access == Access.UPDATE);
         }
         return "storage".equals(schema)
                 && "objects".equals(table)

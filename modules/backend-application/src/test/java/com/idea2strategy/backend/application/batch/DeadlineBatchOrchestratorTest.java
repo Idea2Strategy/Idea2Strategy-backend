@@ -107,12 +107,74 @@ class DeadlineBatchOrchestratorTest {
 
     private static RunCommand command(Set<BatchCategory> categories, int limit) {
         return new RunCommand(UUID.randomUUID(), UUID.randomUUID(), "batch-worker-1",
-                "batch-policy-v1", Duration.ofMinutes(1), limit, categories);
+                "batch-policy-v1", Duration.ofMinutes(1), limit, 3, categories);
+    }
+
+    /**
+     * A thrown provider must leave both a cause and, at the attempt limit, a terminal disposition.
+     *
+     * <p>Neither held before #264. The exception was discarded, and the result was always retryable, so
+     * one deterministic failure produced 180 identical {@code UNCLASSIFIED_EXECUTION_FAILURE} audit
+     * rows over three hours in Development while an expired sanction stayed {@code ACTIVE}. The loop
+     * ended only because a release replaced the instance.
+     */
+    @Test
+    void aThrownProviderCarriesItsCauseAndStopsRetryingAtTheAttemptLimit() {
+        var failures = new ArrayList<Failure>();
+        var port = new FakePort(BatchCategory.SANCTION, List.of(
+                itemOnAttempt(BatchCategory.SANCTION, "first-attempt", "k1", 1),
+                itemOnAttempt(BatchCategory.SANCTION, "last-attempt", "k2", 3)));
+        port.executeFailure.add("first-attempt");
+        port.executeFailure.add("last-attempt");
+        var orchestrator = new DeadlineBatchOrchestrator(
+                List.of(port), failures::add, summary -> { }, 10);
+
+        var summary = orchestrator.run(new RunCommand(
+                UUID.randomUUID(), UUID.randomUUID(), "batch-worker-1", "batch-policy-v1",
+                Duration.ofMinutes(1), 10, 3, Set.of(BatchCategory.SANCTION)));
+
+        assertThat(summary.retryHandovers()).isEqualTo(1);
+        assertThat(summary.deadLetters()).isEqualTo(1);
+        assertThat(failures).allSatisfy(failure -> {
+            // The audit vocabulary stays closed; the cause rides alongside it.
+            assertThat(failure.failureCode()).isEqualTo("UNCLASSIFIED_EXECUTION_FAILURE");
+            assertThat(failure.diagnostic())
+                    .contains("IllegalStateException")
+                    .contains("provider failed");
+        });
+        assertThat(failures).extracting(Failure::disposition).containsExactly(
+                BatchFailureHandoffPort.FailureDisposition.RETRY,
+                BatchFailureHandoffPort.FailureDisposition.DEAD_LETTER);
+    }
+
+    /** A classified failure carries no diagnostic, so nothing new appears in ordinary logs. */
+    @Test
+    void aClassifiedFailureCarriesNoDiagnostic() {
+        var failures = new ArrayList<Failure>();
+        var port = new FakePort(BatchCategory.SANCTION,
+                List.of(item(BatchCategory.SANCTION, "retry", "k1")));
+        port.results.put("retry", ItemResult.retryable("TEMPORARY_PROVIDER_FAILURE"));
+        var orchestrator = new DeadlineBatchOrchestrator(
+                List.of(port), failures::add, summary -> { }, 10);
+
+        orchestrator.run(new RunCommand(
+                UUID.randomUUID(), UUID.randomUUID(), "batch-worker-1", "batch-policy-v1",
+                Duration.ofMinutes(1), 10, 3, Set.of(BatchCategory.SANCTION)));
+
+        assertThat(failures).singleElement().satisfies(failure -> {
+            assertThat(failure.failureCode()).isEqualTo("TEMPORARY_PROVIDER_FAILURE");
+            assertThat(failure.diagnostic()).isNull();
+        });
     }
 
     private static WorkItem item(BatchCategory category, String id, String key) {
+        return itemOnAttempt(category, id, key, 1);
+    }
+
+    private static WorkItem itemOnAttempt(
+            BatchCategory category, String id, String key, int attemptNumber) {
         return new WorkItem(category, id, DATABASE_NOW.minusSeconds(1), key,
-                UUID.randomUUID(), 1);
+                UUID.randomUUID(), attemptNumber);
     }
 
     private static final class FakePort implements BatchCategoryPort {

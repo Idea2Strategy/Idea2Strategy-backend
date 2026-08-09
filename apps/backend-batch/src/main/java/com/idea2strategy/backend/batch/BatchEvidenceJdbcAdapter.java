@@ -12,9 +12,13 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 public class BatchEvidenceJdbcAdapter implements BatchFailureHandoffPort, BatchRunEvidencePort {
+    private static final Logger LOG = LoggerFactory.getLogger(BatchEvidenceJdbcAdapter.class);
+
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
 
@@ -25,6 +29,18 @@ public class BatchEvidenceJdbcAdapter implements BatchFailureHandoffPort, BatchR
 
     @Override
     public void handoff(Failure failure) {
+        // The audit row keeps the stable reason code; the cause is logged beside it. Without this an
+        // expired sanction retried every minute for three hours and the only record was 180 identical
+        // UNCLASSIFIED_EXECUTION_FAILURE rows with nothing saying what had failed (#264). Logging is
+        // the adapter's job because the application module deliberately has no logger.
+        if (failure.diagnostic() != null) {
+            LOG.error(
+                    "Batch item failed: category={} itemId={} attempt={} disposition={} code={} "
+                            + "runId={} correlationId={} cause={}",
+                    failure.category(), failure.itemId(), failure.attemptNumber(),
+                    failure.disposition(), failure.failureCode(), failure.runId(),
+                    failure.correlationId(), failure.diagnostic());
+        }
         record(failure.runId(), failure.correlationId(), "BATCH_" + failure.disposition(),
                 failure.category().name(), failure.itemId(), failure.failureCode(),
                 "batch-failure:" + failure.runId() + ":" + failure.category() + ":" + failure.itemId()

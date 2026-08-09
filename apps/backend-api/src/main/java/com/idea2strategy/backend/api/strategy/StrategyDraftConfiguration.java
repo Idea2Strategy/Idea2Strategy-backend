@@ -6,6 +6,7 @@ import com.idea2strategy.backend.application.strategy.BasicStructureCatalogQuery
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
 import com.idea2strategy.backend.application.strategy.SecureStrategyEditLeaseTokenGenerator;
 import com.idea2strategy.backend.application.strategy.StrategyCopyCommandService;
+import com.idea2strategy.backend.application.strategy.StrategyDeletionCommandService;
 import com.idea2strategy.backend.application.strategy.StrategyDocumentQueryService;
 import com.idea2strategy.backend.application.strategy.StrategyEditLeaseService;
 import com.idea2strategy.backend.application.strategy.StrategyValidationQueryService;
@@ -13,6 +14,7 @@ import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalo
 import com.idea2strategy.backend.persistence.strategy.BasicStrategyDraftJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.strategy.BasicStructureCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJpaEntity;
+import com.idea2strategy.backend.persistence.strategy.StrategyDeletionJooqAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentSpringDataRepository;
 import com.idea2strategy.backend.persistence.strategy.StrategyEditLeaseJpaCommandAdapter;
@@ -55,11 +57,18 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
     StrategyJooqQueryAdapter.class,
     StrategyDocumentJooqQueryAdapter.class,
     StrategyEditLeaseJpaCommandAdapter.class,
+    StrategyDeletionJooqAdapter.class,
     StrategyValidationRunJpaCommandAdapter.class,
     StrategyValidationRunJooqQueryAdapter.class,
     StrategyReleaseInputCatalogJooqQueryAdapter.class
 })
 public class StrategyDraftConfiguration {
+    @Bean
+    StrategyDeletionCommandService strategyDeletionCommandService(
+            StrategyDeletionJooqAdapter deletionAdapter, CurrentPrincipal principal) {
+        return new StrategyDeletionCommandService(deletionAdapter, principal, Clock.systemUTC());
+    }
+
     @Bean
     BasicStrategyDraftCommandService basicStrategyDraftCommandService(
             BasicStrategyDraftJpaCommandAdapter commandAdapter,

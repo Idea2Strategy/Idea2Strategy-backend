@@ -82,7 +82,16 @@ class ImmutableStrategyReleaseCommandServiceTest {
         assertThat(releases.validatedSemanticHash).isEqualTo(document.semanticHash());
         assertThat(releases.backtestRequest.botId()).isEqualTo(RELEASE_ID);
         assertThat(releases.backtestRequest.expectedSnapshotHash()).isEqualTo("sha256:" + release.snapshotHash());
-        assertThat(releases.backtestRequest.compiledPlanChecksum()).isEqualTo("sha256:" + planPort.saved.planHash());
+        // This assertion used to require the internal CompiledFlowPlan.planHash(), which is a digest of
+        // a different artifact than the one the release writes to bot.launch_contract_plans. The consumer
+        // resolves the request's checksum against exactly that table, so the old expectation codified
+        // root #439: the request named a row that was never stored and execution failed with
+        // JobNotSatisfiable before the simulation started.
+        assertThat(releases.backtestRequest.compiledPlanChecksum())
+                .isEqualTo(release.contractPlan().planChecksum());
+        // And the two really are different digests here, so the assertion above cannot pass by accident.
+        assertThat(release.contractPlan().planChecksum())
+                .isNotEqualTo("sha256:" + planPort.saved.planHash());
         assertThat(releases.backtestRequest.datasetManifestId()).isEqualTo(DATASET_ID);
         assertThat(releases.backtestRequest.assumptionsVersion()).isEqualTo("accounting/v1");
         assertThat(releases.backtestRequest.requestReason()).isEqualTo("STRATEGY_RELEASE");
@@ -121,7 +130,11 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 .contains("\"requirementId\":\"rsi-14-pt30m\"")
                 .contains("\"requiredObservations\":14")
                 .contains("\"key\":\"" + release.partition().id() + "\"")
-                .contains("\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-01\"");
+                // Not the release date. This assertion used to read us-supported-universe:2026-08-01,
+                // which is the release instant this test uses — it was pinning the defect backend #257
+                // fixed, because the consumer only implements versions it was actually built for.
+                .contains("\"instrumentCatalogVersion\":\""
+                        + StrategyBotCompiledPlanAssembler.PUBLISHED_INSTRUMENT_CATALOG_VERSION + "\"");
     }
 
     /**

@@ -35,7 +35,16 @@ class CustomerJwtCodecTest {
         assertThat(codec.verifyRefresh(refresh).familyId()).isEqualTo(REFRESH_FAMILY);
         assertThat(codec.verifyRefresh(refresh).tokenSecret()).isEqualTo("refresh-token-secret");
         assertThatThrownBy(() -> codec.verifyAccess(refresh)).isInstanceOf(AuthenticationRejectedException.class);
-        assertThatThrownBy(() -> codec.verifyAccess(access.substring(0, access.length() - 1) + "x"))
+        // Change the first encoded signature character, whose six bits all belong to the
+        // decoded signature. Mutating the final Base64URL character can change only unused
+        // padding bits and therefore occasionally decode to the original signature.
+        int signatureStart = access.lastIndexOf('.') + 1;
+        char first = access.charAt(signatureStart);
+        String tampered = access.substring(0, signatureStart)
+                + (first == 'x' ? 'y' : 'x')
+                + access.substring(signatureStart + 1);
+        assertThat(tampered).isNotEqualTo(access);
+        assertThatThrownBy(() -> codec.verifyAccess(tampered))
                 .isInstanceOf(AuthenticationRejectedException.class);
     }
 

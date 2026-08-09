@@ -1,15 +1,12 @@
 package com.idea2strategy.backend.api.notification;
 
 import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
-import com.idea2strategy.backend.application.notification.NotificationChannel;
-import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
-import com.idea2strategy.backend.application.notification.NotificationPreferenceView;
+import com.idea2strategy.backend.application.notification.EmailNotificationPreferenceService;
+import com.idea2strategy.backend.application.notification.EmailNotificationPreferenceView;
 import com.idea2strategy.backend.application.notification.NotificationQueryPort.NotificationPage;
 import com.idea2strategy.backend.application.notification.NotificationQueryService;
 import com.idea2strategy.backend.application.notification.NotificationService;
 import java.time.Instant;
-import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,17 +28,17 @@ import org.springframework.web.bind.annotation.RestController;
 public class NotificationController {
     private final NotificationQueryService queries;
     private final NotificationService notifications;
-    private final NotificationPreferenceService preferences;
+    private final EmailNotificationPreferenceService emailPreferences;
     private final CustomerAccessPrincipal principal;
 
     public NotificationController(
             NotificationQueryService queries,
             NotificationService notifications,
-            NotificationPreferenceService preferences,
+            EmailNotificationPreferenceService emailPreferences,
             CustomerAccessPrincipal principal) {
         this.queries = queries;
         this.notifications = notifications;
-        this.preferences = preferences;
+        this.emailPreferences = emailPreferences;
         this.principal = principal;
     }
 
@@ -65,26 +62,24 @@ public class NotificationController {
         return ResponseEntity.noContent().build();
     }
 
-    @GetMapping("/preferences")
-    public List<NotificationPreferenceView> preferences(
+    @GetMapping("/email-preference")
+    public EmailNotificationPreferenceView emailPreference(
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        return preferences.list(accountId(authorization, correlationId));
+        return emailPreferences.get(accountId(authorization, correlationId));
     }
 
-    @PutMapping("/preferences/{typeCode}")
-    public NotificationPreferenceView replacePreference(
-            @PathVariable String typeCode,
-            @RequestBody ReplacePreferenceRequest request,
+    @PutMapping("/email-preference")
+    public EmailNotificationPreferenceView replaceEmailPreference(
+            @RequestBody ReplaceEmailPreferenceRequest request,
             @RequestHeader("Authorization") String authorization,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationId) {
-        return preferences.replace(
-                accountId(authorization, correlationId), typeCode, request.enabledChannels());
+        return emailPreferences.replace(accountId(authorization, correlationId), request.enabled());
     }
 
     private UUID accountId(String authorization, String correlationId) {
         return principal.accountId();
     }
 
-    public record ReplacePreferenceRequest(Set<NotificationChannel> enabledChannels) {}
+    public record ReplaceEmailPreferenceRequest(boolean enabled) {}
 }

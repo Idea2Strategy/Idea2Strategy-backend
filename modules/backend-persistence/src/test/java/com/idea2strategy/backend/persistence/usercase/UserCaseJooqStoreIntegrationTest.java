@@ -111,6 +111,50 @@ class UserCaseJooqStoreIntegrationTest {
     }
 
     @Test
+    void listsOwnedCasesWithOpaqueCursorAndReturnsOnlyUserVisibleHistory() {
+        var first = store.submit(new UserCaseCommand(
+                ACCOUNT, UserCaseType.INQUIRY, "첫 문의", "첫 문의 내용", List.of(),
+                "list-1", "1".repeat(64), UUID.randomUUID()), NOW).view();
+        var second = store.submit(new UserCaseCommand(
+                ACCOUNT, UserCaseType.REPORT, "두 번째 문의", "두 번째 문의 내용", List.of(),
+                "list-2", "2".repeat(64), UUID.randomUUID()), NOW.plusSeconds(1)).view();
+        UUID visibleEvent = UUID.randomUUID();
+        jdbc.update("""
+                insert into operations.case_events
+                    (id, case_id, account_id, event_sequence, previous_event_id, actor_type,
+                     actor_id, event_type, resulting_status, visibility, reason_code,
+                     correlation_id, payload_document, created_at)
+                values (?, ?, ?, 2, ?, 'OPERATOR', ?, 'RESOLVED', 'RESOLVED',
+                        'USER_VISIBLE', 'INTERNAL_ONLY', ?,
+                        '{"customerMessage":"확인 후 처리를 완료했습니다."}'::jsonb, ?)
+                """, visibleEvent, second.id(), ACCOUNT, head(second.id()), ACCOUNT,
+                UUID.randomUUID(), NOW.plusSeconds(2).atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into operations.case_events
+                    (id, case_id, account_id, event_sequence, previous_event_id, actor_type,
+                     actor_id, event_type, resulting_status, visibility, reason_code,
+                     correlation_id, payload_document, created_at)
+                values (?, ?, ?, 3, ?, 'OPERATOR', ?, 'ASSIGNED', 'RESOLVED',
+                        'OPERATOR_ONLY', 'SECRET_REASON', ?, '{}'::jsonb, ?)
+                """, UUID.randomUUID(), second.id(), ACCOUNT, visibleEvent, ACCOUNT,
+                UUID.randomUUID(), NOW.plusSeconds(3).atOffset(ZoneOffset.UTC));
+
+        var firstPage = store.findOwnedPage(ACCOUNT, null, 1);
+        var nextPage = store.findOwnedPage(ACCOUNT, firstPage.nextCursor(), 1);
+        var detail = store.findOwnedDetail(ACCOUNT, second.id()).orElseThrow();
+
+        assertThat(firstPage.items()).extracting(item -> item.subject())
+                .containsExactly("두 번째 문의");
+        assertThat(firstPage.nextCursor()).isNotBlank().doesNotContain(second.id().toString());
+        assertThat(nextPage.items()).extracting(item -> item.subject()).containsExactly("첫 문의");
+        assertThat(detail.description()).isEqualTo("두 번째 문의 내용");
+        assertThat(detail.history()).hasSize(2);
+        assertThat(detail.history().getLast().message()).isEqualTo("확인 후 처리를 완료했습니다.");
+        assertThat(detail.history().toString()).doesNotContain("INTERNAL_ONLY", "SECRET_REASON");
+        assertThat(store.findOwnedDetail(OTHER_ACCOUNT, first.id())).isEmpty();
+    }
+
+    @Test
     void unavailableOrUnownedEvidenceUsesOneNonEnumeratingFailureWithoutSideEffects() {
         UserCaseEvidenceReference unavailable =
                 new UserCaseEvidenceReference(OBJECT, "UNKNOWN_SOURCE", SOURCE);

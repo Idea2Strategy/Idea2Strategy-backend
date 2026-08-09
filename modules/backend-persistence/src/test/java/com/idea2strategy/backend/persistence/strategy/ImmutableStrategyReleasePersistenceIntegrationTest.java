@@ -60,6 +60,10 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final String HASH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static final String HASH_C = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     private static final String HASH_D = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    /** The published contract plan digest. Distinct from every other fixture hash on purpose:
+     * it used to reuse HASH_C, the digest the caller passed separately, so a request naming the
+     * wrong artifact still matched and root #439 went undetected here. */
+    private static final String PLAN_CHECKSUM = "sha256:" + "e".repeat(64);
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -89,11 +93,20 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void prepareValidatedStrategyAndPinnedPolicies() {
         var at = NOW.atOffset(ZoneOffset.UTC);
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
+        // A real policy document, not '{}'. The producer guard reads periodStart, periodEnd,
+        // marketDataSchemaVersion and timezone from it, and an empty document is exactly the shape it
+        // must refuse — a policy that does not say what it is compatible with cannot be checked
+        // against a manifest (root #471). The window covers the market manifest's 2025 period stated
+        // as local midnight in the policy timezone, which is how the two are compared.
         jdbc.update(
                 "insert into backtest.execution_policy_versions "
                         + "(version, policy_artifact_hash, policy_document, locked_at) "
-                        + "values ('backtest-policy-v1', ?, '{}'::jsonb, ?)",
-                HASH_A, at);
+                        + "values ('backtest-policy-v1', ?, ?::jsonb, ?)",
+                HASH_A,
+                "{\"version\":\"backtest-policy-v1\",\"periodStart\":\"2025-01-01T05:00:00Z\","
+                        + "\"periodEnd\":\"2026-01-01T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
+                        + "\"timezone\":\"America/New_York\"}",
+                at);
         jdbc.update(
                 "insert into strategy.element_catalog_versions "
                         + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
@@ -204,7 +217,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() throws Exception {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
-                release, HASH_C, DATASET_ID, "backtest-policy-v1");
+                release, DATASET_ID, "backtest-policy-v1");
 
         jdbc.update("update strategy.element_catalog_versions set retired_at = ? where id = ?",
                 NOW.atOffset(ZoneOffset.UTC), CATALOG_ID);
@@ -225,6 +238,8 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.input_bundles")).isZero();
         assertThat(count("operations.outbox_messages")).isZero();
         jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", HASH_B, FEATURE_PIPELINE_ID);
+
+        assertIncompatiblePolicyAndManifestAreRefused(release, request);
 
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
@@ -249,16 +264,33 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.input_datasets")).isEqualTo(1);
         assertThat(count("backtest.input_feature_materializations")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
+        // The transport aggregate for a BASIC official backtest is the bot, not the run. The BASIC
+        // consumer rejects the envelope as TRANSPORT_ENVELOPE_MISMATCH when aggregate_id is not the
+        // payload botId, and SqsOutboxMessagePublisher publishes this column verbatim — so a row
+        // written under runId is dead-lettered before any attempt is recorded (backend #243).
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages where aggregate_id = ?",
+                        Integer.class,
+                        request.runId()))
+                .as("the run id must not be used as the strategy-bot transport aggregate")
+                .isZero();
         assertThat(jdbc.queryForObject(
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
-                                + "where aggregate_id = ?", String.class, request.runId()))
+                                + "where aggregate_id = ?", String.class, BOT_ID))
                 .isEqualTo(DATASET_ID.toString());
         var transported = OBJECT_MAPPER.readValue(
                 jdbc.queryForObject(
                         "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()),
+                        BOT_ID),
                 StrategyBotContractFixtures.OfficialBacktestRequest.class);
+        // Tie the row's identity to the payload rather than to a constant. This is the assertion the
+        // defect would have failed: the envelope and the body must name the same aggregate.
+        assertThat(jdbc.queryForObject(
+                        "select aggregate_id::text from operations.outbox_messages where owner_domain = 'strategy-bot'",
+                        String.class))
+                .as("transport aggregate identity must agree with the payload botId")
+                .isEqualTo(transported.botId());
         assertThat(transported.metadata().contractVersion()).isEqualTo("strategy-bot.v1");
         assertThat(transported.metadata().messageType()).isEqualTo("OFFICIAL_BACKTEST_REQUESTED");
         assertThat(transported.metadata().messageId()).isEqualTo(request.metadata().messageId().toString());
@@ -267,7 +299,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(transported.runId()).isEqualTo(request.runId().toString());
         assertThat(transported.executionPolicyVersion()).isEqualTo("backtest-policy-v1");
         assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_D);
-        assertThat(transported.compiledPlanChecksum()).isEqualTo("sha256:" + HASH_C);
+        assertThat(transported.compiledPlanChecksum()).isEqualTo(PLAN_CHECKSUM);
         assertThat(transported.datasetManifestId()).isEqualTo(DATASET_ID.toString());
         assertThat(transported.expectedDatasetHash()).isEqualTo("sha256:" + HASH_D);
         assertThat(transported.featureMaterializations()).containsExactly(
@@ -284,29 +316,29 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         request.runId()))
                 .containsEntry("input_bundle_fingerprint", transported.requestHash())
                 .containsEntry("input_contract_version", "strategy-bot.v1")
-                .containsEntry("compiled_plan_checksum", "sha256:" + HASH_C)
+                .containsEntry("compiled_plan_checksum", PLAN_CHECKSUM)
                 .containsEntry("strategy_snapshot_hash", "sha256:" + HASH_D)
                 .containsEntry("execution_policy_version", "backtest-policy-v1")
                 .containsEntry("bundle_hash", transported.requestHash());
         assertThat(jdbc.queryForObject(
                         "select event_schema_version from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().contractVersion());
         assertThat(jdbc.queryForObject(
                         "select event_type from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().messageType());
         assertThat(jdbc.queryForObject(
                         "select id::text from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().messageId());
         assertThat(jdbc.queryForObject(
                         "select idempotency_key from operations.outbox_messages where aggregate_id = ?",
                         String.class,
-                        request.runId()))
+                        BOT_ID))
                 .isEqualTo(transported.metadata().idempotencyKey());
         assertThat("sha256:" + jdbc.queryForObject(
                         "select snapshot_hash from bot.launch_snapshots where bot_id = ?",
@@ -346,6 +378,83 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 .isTrue();
     }
 
+    /**
+     * An official request whose policy and manifest cannot describe the same replay must leave nothing
+     * behind.
+     *
+     * <p>The producer published any available manifest against any locked policy, so a ten-year policy
+     * met a one-month manifest and a {@code market-bars-v2} policy met {@code market-bars/1} objects.
+     * The consumer only found out after the run, its input pins and its Outbox row were already durable,
+     * which is what made the frozen input set unreplayable (root #471). Each case below asserts the four
+     * durable tables stay empty, because a guard that rejects after writing is not a guard.
+     *
+     * <p>Called from the aggregate test rather than standing alone: this class seeds its fixtures once
+     * per test and does not clean between them, and every case here has to run before anything durable
+     * exists.
+     */
+    private void assertIncompatiblePolicyAndManifestAreRefused(
+            ImmutableStrategyRelease release, OfficialBacktestRequest request) {
+        // 1. The manifest states a schema the policy does not.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "market-bars-v2");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("does not match the execution policy schema");
+        assertNothingDurable();
+
+        // 2. The manifest period reaches outside the policy window.
+        setPolicyDocument("2025-06-01T04:00:00Z", "2025-07-01T04:00:00Z", "v1");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("is not inside the execution policy period");
+        assertNothingDurable();
+
+        // 3. A RAW manifest would measure the strategy against unadjusted splits and dividends.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+        jdbc.update("update market_data.dataset_manifests set data_layer = 'RAW' where id = ?", DATASET_ID);
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("must be ADJUSTED");
+        assertNothingDurable();
+        jdbc.update("update market_data.dataset_manifests set data_layer = 'ADJUSTED' where id = ?", DATASET_ID);
+
+        // 4. A policy retired at the release instant is no longer selectable, locked_at notwithstanding.
+        jdbc.update("update backtest.execution_policy_versions set retired_at = ? where version = ?",
+                NOW.atOffset(ZoneOffset.UTC), "backtest-policy-v1");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("must be locked and not retired");
+        assertNothingDurable();
+        jdbc.update("update backtest.execution_policy_versions set retired_at = null where version = ?",
+                "backtest-policy-v1");
+
+        // A policy that states nothing cannot be checked, so it cannot be used.
+        jdbc.update("update backtest.execution_policy_versions set policy_document = '{}'::jsonb "
+                + "where version = ?", "backtest-policy-v1");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("does not state its period and market data schema");
+        assertNothingDurable();
+
+        // Restore the compatible pair so the caller can go on to prove the success path.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+    }
+
+    private void setPolicyDocument(String periodStart, String periodEnd, String schemaVersion) {
+        jdbc.update(
+                "update backtest.execution_policy_versions set policy_document = ?::jsonb where version = ?",
+                "{\"version\":\"backtest-policy-v1\",\"periodStart\":\"" + periodStart + "\","
+                        + "\"periodEnd\":\"" + periodEnd + "\",\"marketDataSchemaVersion\":\""
+                        + schemaVersion + "\",\"timezone\":\"America/New_York\"}",
+                "backtest-policy-v1");
+    }
+
+    private void assertNothingDurable() {
+        assertThat(count("bot.bots")).isZero();
+        assertThat(count("backtest.runs")).isZero();
+        assertThat(count("backtest.input_bundles")).isZero();
+        assertThat(count("operations.outbox_messages")).isZero();
+    }
+
     private int count(String table) {
         return jdbc.queryForObject("select count(*) from " + table, Integer.class);
     }
@@ -369,7 +478,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
 
     private static ImmutableStrategyRelease.ContractPlan contractPlan() {
         return new ImmutableStrategyRelease.ContractPlan(
-                "strategy-bot.v1", "basic-compiled-plan.v1", "sha256:" + "c".repeat(64),
+                "strategy-bot.v1", "basic-compiled-plan.v1", PLAN_CHECKSUM,
                 "{\"contractVersion\":\"strategy-bot.v1\",\"requiredFeatures\":[{"
                         + "\"requirementId\":\"rsi-14-pt1m\",\"featureId\":\"" + FEATURE_ID + "\","
                         + "\"featureVersion\":\"1.0.0\",\"instruments\":[\"" + INSTRUMENT_ID + "\"],"

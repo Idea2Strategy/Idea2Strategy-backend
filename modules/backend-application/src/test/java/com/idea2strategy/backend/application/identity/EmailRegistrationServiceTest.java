@@ -23,20 +23,20 @@ class EmailRegistrationServiceTest {
         var service = service(false, commands);
 
         SignupResult result = service.signup(new SignupCommand(
-                " Person@Example.com ", "a sufficiently long passphrase", UUID.randomUUID(), "192.0.2.0/24"));
+                " Person@Example.com ", "ValidPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
 
         assertThat(result.verificationToken()).isEqualTo("raw-verification-token");
         assertThat(commands.registrations).singleElement().satisfies(registration -> {
             assertThat(registration.email().normalized()).isEqualTo("person@example.com");
             assertThat(registration.email().ciphertext()).isEqualTo("ciphertext:person@example.com");
             assertThat(registration.email().lookupHmac()).isEqualTo("lookup:person@example.com");
-            assertThat(registration.password().encodedHash()).isEqualTo("hash:a sufficiently long passphrase");
+            assertThat(registration.password().encodedHash()).isEqualTo("hash:ValidPass!2026");
             assertThat(registration.verificationTokenDigest()).isEqualTo("digest:raw-verification-token");
             assertThat(registration.preferences().languageCode()).isEqualTo("ko");
             assertThat(registration.preferences().timezoneName()).isEqualTo("America/New_York");
             assertThat(registration.preferences().themePreference()).isEqualTo(ThemePreference.SYSTEM);
             assertThat(registration.preferences().updatedAt()).isEqualTo(NOW);
-            assertThat(registration.toString()).doesNotContain("a sufficiently long passphrase");
+            assertThat(registration.toString()).doesNotContain("ValidPass!2026");
         });
     }
 
@@ -46,7 +46,7 @@ class EmailRegistrationServiceTest {
         var service = service(false, commands, new AccountPreferenceDefaults("en", "America/Chicago", ThemePreference.SYSTEM));
 
         service.signup(new SignupCommand(
-                "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null));
+                "person@example.com", "ValidPass!2026", UUID.randomUUID(), null));
 
         assertThat(commands.registrations).singleElement().satisfies(registration -> {
             assertThat(registration.preferences().languageCode()).isEqualTo("en");
@@ -58,13 +58,13 @@ class EmailRegistrationServiceTest {
     @Test
     void duplicateEmailAndShortPasswordAreRejected() {
         assertThatThrownBy(() -> service(true, new RecordingRegistrationPort()).signup(new SignupCommand(
-                        "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null)))
+                        "person@example.com", "ValidPass!2026", UUID.randomUUID(), null)))
                 .isInstanceOf(DuplicateEmailException.class);
 
         assertThatThrownBy(() -> service(false, new RecordingRegistrationPort()).signup(new SignupCommand(
                         "person@example.com", "too-short", UUID.randomUUID(), null)))
                 .isInstanceOf(PasswordPolicyException.class)
-                .hasMessageContaining("15");
+                .hasMessageContaining("10");
     }
 
     @Test
@@ -92,7 +92,7 @@ class EmailRegistrationServiceTest {
                 new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM));
 
         SignupResult result = service.signup(new SignupCommand(
-                "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), "192.0.2.0/24"));
+                "person@example.com", "ValidPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
 
         assertThat(result.accountId()).isEqualTo(accountId);
         assertThat(result.verificationToken()).isEqualTo("raw-verification-token");
@@ -128,7 +128,7 @@ class EmailRegistrationServiceTest {
                         new RecordingRegistrationPort(),
                         new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM))
                 .signup(new SignupCommand(
-                        "person@example.com", "a sufficiently long passphrase", UUID.randomUUID(), null)))
+                        "person@example.com", "ValidPass!2026", UUID.randomUUID(), null)))
                 .isInstanceOf(DuplicateEmailException.class);
     }
 

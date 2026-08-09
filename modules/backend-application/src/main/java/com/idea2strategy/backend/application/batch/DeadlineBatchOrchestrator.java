@@ -25,6 +25,7 @@ public final class DeadlineBatchOrchestrator {
             String runtimePolicyVersion,
             Duration leaseDuration,
             int perCategoryLimit,
+            int maximumAttempts,
             Set<BatchCategory> categories) {
         public RunCommand {
             Objects.requireNonNull(runId, "runId");
@@ -37,6 +38,9 @@ public final class DeadlineBatchOrchestrator {
             }
             if (perCategoryLimit < 1) {
                 throw new IllegalArgumentException("perCategoryLimit must be positive");
+            }
+            if (maximumAttempts < 1) {
+                throw new IllegalArgumentException("maximumAttempts must be positive");
             }
             categories = Set.copyOf(categories);
             if (categories.isEmpty()) throw new IllegalArgumentException("categories must not be empty");
@@ -141,20 +145,30 @@ public final class DeadlineBatchOrchestrator {
                     continue;
                 }
                 ItemResult result;
+                String diagnostic = null;
                 try {
                     result = Objects.requireNonNull(
                             port.execute(item, command.runId(), command.correlationId()), "item result");
                 } catch (RuntimeException failure) {
-                    result = ItemResult.retryable("UNCLASSIFIED_EXECUTION_FAILURE");
+                    // The exception used to be discarded here. An expired sanction then retried every
+                    // minute for three hours, recorded 180 identical UNCLASSIFIED_EXECUTION_FAILURE
+                    // audit rows, and nothing anywhere said what had failed (#264). The cause travels
+                    // with the handoff so the adapter can log it, and the retry is bounded by the
+                    // attempt limit the runtime policy already declares — a deterministic failure must
+                    // stop being retried rather than repeat until an instance replacement ends it.
+                    diagnostic = describe(failure);
+                    result = item.attemptNumber() >= command.maximumAttempts()
+                            ? ItemResult.permanent("UNCLASSIFIED_EXECUTION_FAILURE")
+                            : ItemResult.retryable("UNCLASSIFIED_EXECUTION_FAILURE");
                 }
                 if (result.status() == ItemStatus.COMPLETED) completed++;
                 else if (result.status() == ItemStatus.ALREADY_COMPLETED) already++;
                 else if (result.status() == ItemStatus.RETRYABLE_FAILURE) {
                     retry++;
-                    handoff(command, item, result.failureCode(), FailureDisposition.RETRY);
+                    handoff(command, item, result.failureCode(), diagnostic, FailureDisposition.RETRY);
                 } else {
                     dead++;
-                    handoff(command, item, result.failureCode(), FailureDisposition.DEAD_LETTER);
+                    handoff(command, item, result.failureCode(), diagnostic, FailureDisposition.DEAD_LETTER);
                 }
             }
             return new CategorySummary(category, page.databaseNow(), page.nextCursor(),
@@ -166,11 +180,32 @@ public final class DeadlineBatchOrchestrator {
     }
 
     private void handoff(
-            RunCommand command, WorkItem item, String failureCode, FailureDisposition disposition) {
+            RunCommand command,
+            WorkItem item,
+            String failureCode,
+            String diagnostic,
+            FailureDisposition disposition) {
         failureHandoff.handoff(new Failure(
                 item.category(), item.itemId(), item.idempotencyKey(), item.attemptNumber(),
-                item.claimToken(), failureCode, disposition, command.runtimePolicyVersion(),
-                command.runId(), command.correlationId()));
+                item.claimToken(), failureCode, diagnostic, disposition,
+                command.runtimePolicyVersion(), command.runId(), command.correlationId()));
+    }
+
+    /**
+     * The exception, small enough to log on one line and free of anything a message might carry from a
+     * row. The type is what usually identifies the fault; the message is truncated rather than dropped
+     * because a bare type name was not enough to explain the sanction that would not expire (#264).
+     */
+    private static String describe(RuntimeException failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) {
+            return failure.getClass().getName();
+        }
+        String flattened = message.replaceAll("\\s+", " ").trim();
+        if (flattened.length() > 300) {
+            flattened = flattened.substring(0, 300) + "…";
+        }
+        return failure.getClass().getName() + ": " + flattened;
     }
 
     private static RunSummary aggregate(RunCommand command, List<CategorySummary> summaries) {

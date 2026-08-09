@@ -14,18 +14,40 @@ import org.jooq.DSLContext;
 public final class BacktestRunInputPinWriter {
     private BacktestRunInputPinWriter() {}
 
+    /**
+     * 이미 고정된 입력 핀이 있는지 읽는다.
+     *
+     * <p>행 잠금(<code>for update of p, b</code>)이 없다. 세 가지가 그것을 대신한다.
+     *
+     * <ol>
+     *   <li>{@code pin} 이 시작에서 실행하는 per-run advisory transaction lock 이 같은
+     *       {@code run_id} 에 대한 동시 시도를 직렬화한다.
+     *   <li>이 두 테이블은 append-only 다. 프로덕션 코드에 UPDATE·DELETE 가 없고, 마이그레이션의
+     *       테이블 주석도 immutable 이라고 적는다. 읽은 뒤 바뀔 행이 없으므로 잠글 대상이 없다.
+     *   <li>{@code run_input_pins.run_id} 가 PRIMARY KEY 이고 {@code input_bundle_id} 가 UNIQUE 다.
+     *       advisory lock 을 어떤 이유로 우회한 경쟁이 있어도 제약에서 실패하고, 조용히 중복되지
+     *       않는다.
+     * </ol>
+     *
+     * <p>그리고 행 잠금은 최소권한 계약과 충돌했다. PostgreSQL 은 {@code FOR UPDATE} 가 지목한
+     * 테이블에 UPDATE 권한을 요구하는데, {@code idea2strategy_backend} 는 이 두 테이블에
+     * {@code SELECT, INSERT} 만 갖는다. 그래서 공식 릴리스가 배포 환경에서
+     * {@code permission denied for table run_input_pins} 로 실패했다(backend #241).
+     */
+    static final String EXISTING_PIN_SQL =
+            "select p.input_bundle_id, p.input_bundle_fingerprint, p.input_contract_version, "
+                    + "p.compiled_plan_checksum, p.strategy_snapshot_hash, p.execution_policy_version, "
+                    + "b.bundle_hash from backtest.run_input_pins p "
+                    + "join backtest.input_bundles b on b.id = p.input_bundle_id "
+                    + "where p.run_id = ?";
+
+
     public static void pin(DSLContext dsl, RunInputPin pin) {
         Objects.requireNonNull(dsl, "dsl");
         Objects.requireNonNull(pin, "pin");
         dsl.fetchOne("select pg_advisory_xact_lock(hashtextextended(?::text, 0))", pin.runId());
 
-        var existing = dsl.fetchOne(
-                "select p.input_bundle_id, p.input_bundle_fingerprint, p.input_contract_version, "
-                        + "p.compiled_plan_checksum, p.strategy_snapshot_hash, p.execution_policy_version, "
-                        + "b.bundle_hash from backtest.run_input_pins p "
-                        + "join backtest.input_bundles b on b.id = p.input_bundle_id "
-                        + "where p.run_id = ? for update of p, b",
-                pin.runId());
+        var existing = dsl.fetchOne(EXISTING_PIN_SQL, pin.runId());
         if (existing != null) {
             if (!pin.bundleId().equals(existing.get("input_bundle_id", UUID.class))
                     || !pin.inputBundleFingerprint().equals(existing.get("input_bundle_fingerprint", String.class))

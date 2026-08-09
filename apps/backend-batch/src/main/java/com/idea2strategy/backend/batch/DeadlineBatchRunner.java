@@ -19,6 +19,7 @@ class DeadlineBatchRunner {
     private final String runtimePolicyVersion;
     private final Duration leaseDuration;
     private final int batchSize;
+    private final int maximumAttempts;
     private final Set<BatchCategory> categories;
 
     DeadlineBatchRunner(
@@ -27,6 +28,7 @@ class DeadlineBatchRunner {
             String runtimePolicyVersion,
             Duration leaseDuration,
             int batchSize,
+            int maximumAttempts,
             Set<BatchCategory> categories) {
         this.orchestrator = Objects.requireNonNull(orchestrator, "orchestrator");
         this.workerId = requireText(workerId, "workerId");
@@ -37,6 +39,8 @@ class DeadlineBatchRunner {
         }
         if (batchSize < 1) throw new IllegalArgumentException("batchSize must be positive");
         this.batchSize = batchSize;
+        if (maximumAttempts < 1) throw new IllegalArgumentException("maximumAttempts must be positive");
+        this.maximumAttempts = maximumAttempts;
         this.categories = Set.copyOf(Objects.requireNonNull(categories, "categories"));
         if (this.categories.isEmpty()) throw new IllegalArgumentException("categories must not be empty");
     }
@@ -46,7 +50,7 @@ class DeadlineBatchRunner {
         UUID runId = UUID.randomUUID();
         var summary = orchestrator.run(new RunCommand(
                 runId, UUID.randomUUID(), workerId, runtimePolicyVersion,
-                leaseDuration, batchSize, categories));
+                leaseDuration, batchSize, maximumAttempts, categories));
         log.info("Deadline batch completed: runId={}, claimed={}, completed={}, alreadyCompleted={}, failures={}",
                 runId, summary.claimed(), summary.completed(), summary.alreadyCompleted(),
                 summary.categoryFailures() + summary.retryHandovers() + summary.deadLetters());

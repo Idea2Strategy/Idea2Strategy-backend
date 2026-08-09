@@ -1,7 +1,7 @@
 package com.idea2strategy.backend.api.notification;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
+import com.idea2strategy.backend.application.notification.EmailNotificationPreferenceService;
 import com.idea2strategy.backend.application.notification.NotificationQueryService;
 import com.idea2strategy.backend.application.notification.NotificationService;
 import com.idea2strategy.backend.persistence.notification.NotificationPersistenceAdapter;
@@ -39,8 +39,8 @@ public class NotificationApiConfiguration {
     }
 
     @Bean
-    NotificationPreferenceService notificationPreferenceService(
+    EmailNotificationPreferenceService emailNotificationPreferenceService(
             NotificationPersistenceAdapter adapter, Clock identityClock) {
-        return new NotificationPreferenceService(adapter, adapter, identityClock);
+        return new EmailNotificationPreferenceService(adapter, identityClock);
     }
 }

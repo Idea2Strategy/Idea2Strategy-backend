@@ -11,6 +11,7 @@ import com.idea2strategy.backend.application.caseoperations.OperatorCaseQuerySer
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseQueuePort;
 import com.idea2strategy.backend.application.caseoperations.OperatorCaseQueueRequest;
 import com.idea2strategy.backend.application.operatorrbac.CurrentOperatorRbacContext;
+import com.idea2strategy.backend.application.operatorrbac.OperatorAuthorizationDenials;
 import com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext;
 import com.idea2strategy.backend.application.usercase.UserCaseStatus;
 import com.idea2strategy.backend.application.usercase.UserCaseType;
@@ -87,7 +88,7 @@ public class OperatorCaseController {
         List<UUID> evidence = request.evidenceIds() == null ? List.of() : List.copyOf(request.evidenceIds());
         OperatorCaseCommand command = new OperatorCaseCommand(
                 action, current(), caseId, request.expectedVersion(), request.assigneeOperatorId(),
-                guards.activeGuard().permissionFor(action), request.reasonCode(), evidence,
+                guards.activeGuard().permissionFor(action), request.reasonCode(), request.customerMessage(), evidence,
                 request.sanctionId(), request.sanctionType(), request.sanctionExpiresAt(),
                 request.expectedSanctionVersion(), correlation, idempotencyKey,
                 hash(action, caseId, request, evidence));
@@ -116,6 +117,9 @@ public class OperatorCaseController {
                 Objects.toString(request.sanctionType(), ""),
                 Objects.toString(request.sanctionExpiresAt(), ""),
                 Long.toString(request.expectedSanctionVersion()));
+        if (request.customerMessage() != null && !request.customerMessage().isBlank()) {
+            material += "\n" + request.customerMessage().trim();
+        }
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(material.getBytes(StandardCharsets.UTF_8)));
@@ -125,7 +129,10 @@ public class OperatorCaseController {
     }
 
     private static int rejectedStatus(String code) {
-        if (code.contains("PERMISSION") || code.contains("MFA")) return 403;
+        // Classified, not guessed. The substring form that used to live here matched PERMISSION and
+        // MFA, which meant RBAC_CATALOG_NOT_ACTIVE — a refusal, because no permission resolves
+        // without an active catalog — fell through to 422 and described the request as malformed.
+        if (OperatorAuthorizationDenials.isAuthorizationDenial(code)) return 403;
         if (code.contains("STALE") || code.contains("ALREADY")) return 409;
         if (code.contains("NOT_AVAILABLE")) return 404;
         return 422;
@@ -135,6 +142,7 @@ public class OperatorCaseController {
             long expectedVersion,
             UUID assigneeOperatorId,
             String reasonCode,
+            String customerMessage,
             List<UUID> evidenceIds,
             UUID sanctionId,
             AccountSanctionState.Type sanctionType,

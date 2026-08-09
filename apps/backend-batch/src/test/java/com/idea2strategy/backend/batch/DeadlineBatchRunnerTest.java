@@ -34,7 +34,7 @@ class DeadlineBatchRunnerTest {
                 .toList();
         var orchestrator = new DeadlineBatchOrchestrator(ports, ignored -> {}, ignored -> {}, 25);
         var runner = new DeadlineBatchRunner(
-                orchestrator, "batch-worker-a", "deadline-policy-v3", Duration.ofSeconds(90), 25,
+                orchestrator, "batch-worker-a", "deadline-policy-v3", Duration.ofSeconds(90), 25, 3,
                 java.util.Set.of(BatchCategory.values()));
 
         runner.run();
@@ -56,7 +56,7 @@ class DeadlineBatchRunnerTest {
         var orchestrator = new DeadlineBatchOrchestrator(
                 List.of(session), ignored -> {}, summaries::add, 10);
         var runner = new DeadlineBatchRunner(
-                orchestrator, "worker", "policy-v1", Duration.ofMinutes(1), 10,
+                orchestrator, "worker", "policy-v1", Duration.ofMinutes(1), 10, 3,
                 java.util.Set.of(BatchCategory.REFRESH_TOKEN_FAMILY));
 
         runner.run();

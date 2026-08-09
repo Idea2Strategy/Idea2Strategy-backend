@@ -6,10 +6,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.idea2strategy.backend.application.usercase.UserCaseCommand;
+import com.idea2strategy.backend.application.usercase.UserCaseDetailView;
 import com.idea2strategy.backend.application.usercase.UserCaseEvidenceOwnershipPort;
 import com.idea2strategy.backend.application.usercase.UserCaseEvidenceReference;
+import com.idea2strategy.backend.application.usercase.UserCaseHistoryItem;
+import com.idea2strategy.backend.application.usercase.UserCasePage;
 import com.idea2strategy.backend.application.usercase.UserCaseStatus;
 import com.idea2strategy.backend.application.usercase.UserCaseStore;
+import com.idea2strategy.backend.application.usercase.UserCaseSummary;
 import com.idea2strategy.backend.application.usercase.UserCaseSupplementCommand;
 import com.idea2strategy.backend.application.usercase.UserCaseType;
 import com.idea2strategy.backend.application.usercase.UserCaseView;
@@ -17,7 +21,9 @@ import com.idea2strategy.backend.application.usercase.VerifiedUserCaseEvidence;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -170,6 +176,134 @@ public class UserCaseJooqStore implements UserCaseStore {
                 row.get("case_version", Long.class), evidenceIds(accountId, caseId),
                 row.get("updated_at", OffsetDateTime.class).toInstant()));
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserCasePage findOwnedPage(UUID accountId, String cursor, int limit) {
+        Cursor decoded = decodeCursor(cursor);
+        StringBuilder sql = new StringBuilder("""
+                select id, case_type::text as case_type, status::text as status,
+                       subject, created_at, updated_at
+                from operations.cases where account_id = ?
+                """);
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(accountId);
+        if (decoded != null) {
+            sql.append(" and (created_at < ?::timestamptz or (created_at = ?::timestamptz and id < ?))");
+            OffsetDateTime at = utc(decoded.createdAt());
+            arguments.add(at);
+            arguments.add(at);
+            arguments.add(decoded.id());
+        }
+        sql.append(" order by created_at desc, id desc limit ?");
+        arguments.add(limit + 1);
+        List<UserCaseSummary> rows = dsl.fetch(sql.toString(), arguments.toArray()).map(row ->
+                new UserCaseSummary(
+                        row.get("id", UUID.class),
+                        UserCaseType.valueOf(row.get("case_type", String.class)),
+                        UserCaseStatus.valueOf(row.get("status", String.class)),
+                        row.get("subject", String.class),
+                        row.get("created_at", OffsetDateTime.class).toInstant(),
+                        row.get("updated_at", OffsetDateTime.class).toInstant()));
+        List<UserCaseSummary> items = rows.stream().limit(limit).toList();
+        String next = rows.size() > limit && !items.isEmpty()
+                ? encodeCursor(items.getLast().createdAt(), items.getLast().id())
+                : null;
+        return new UserCasePage(items, next);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<UserCaseDetailView> findOwnedDetail(UUID accountId, UUID caseId) {
+        Record row = dsl.fetchOne("""
+                select id, case_type::text as case_type, status::text as status, subject,
+                       created_at, updated_at, response_deadline_at
+                from operations.cases where account_id = ? and id = ?
+                """, accountId, caseId);
+        if (row == null) {
+            return Optional.empty();
+        }
+        List<Record> events = dsl.fetch("""
+                select actor_type::text as actor_type, event_type::text as event_type,
+                       resulting_status::text as resulting_status,
+                       payload_document::text as payload_document, created_at
+                from operations.case_events
+                where account_id = ? and case_id = ? and visibility = 'USER_VISIBLE'
+                order by event_sequence
+                """, accountId, caseId);
+        String description = events.stream()
+                .filter(event -> "SUBMITTED".equals(event.get("event_type", String.class)))
+                .findFirst()
+                .map(event -> payloadText(event, "description"))
+                .orElse("");
+        List<UserCaseHistoryItem> history = events.stream().map(this::historyItem).toList();
+        OffsetDateTime deadline = row.get("response_deadline_at", OffsetDateTime.class);
+        return Optional.of(new UserCaseDetailView(
+                row.get("id", UUID.class),
+                UserCaseType.valueOf(row.get("case_type", String.class)),
+                UserCaseStatus.valueOf(row.get("status", String.class)),
+                row.get("subject", String.class), description,
+                row.get("created_at", OffsetDateTime.class).toInstant(),
+                row.get("updated_at", OffsetDateTime.class).toInstant(),
+                deadline == null ? null : deadline.toInstant(), history));
+    }
+
+    private UserCaseHistoryItem historyItem(Record event) {
+        String actorType = event.get("actor_type", String.class);
+        String eventType = event.get("event_type", String.class);
+        String customerMessage = payloadText(event, "customerMessage");
+        String message = customerMessage.isBlank() ? defaultMessage(eventType) : customerMessage;
+        UserCaseHistoryItem.Actor actor = switch (actorType) {
+            case "ACCOUNT" -> UserCaseHistoryItem.Actor.CUSTOMER;
+            case "OPERATOR" -> UserCaseHistoryItem.Actor.SUPPORT;
+            default -> UserCaseHistoryItem.Actor.SYSTEM;
+        };
+        return new UserCaseHistoryItem(
+                actor,
+                UserCaseStatus.valueOf(event.get("resulting_status", String.class)),
+                message,
+                event.get("created_at", OffsetDateTime.class).toInstant());
+    }
+
+    private String payloadText(Record event, String field) {
+        try {
+            return json.readTree(event.get("payload_document", String.class)).path(field).asText("");
+        } catch (JsonProcessingException exception) {
+            return "";
+        }
+    }
+
+    private static String defaultMessage(String eventType) {
+        return switch (eventType) {
+            case "SUBMITTED" -> "문의를 접수했습니다.";
+            case "INFORMATION_REQUESTED" -> "고객지원팀에서 추가 정보가 필요하다고 안내했습니다.";
+            case "EVIDENCE_ADDED" -> "추가 자료를 전달했습니다.";
+            case "RESOLVED", "SANCTION_APPLIED", "SANCTION_RELEASED" -> "문의 처리가 완료되었습니다.";
+            case "REJECTED" -> "고객지원팀의 검토 결과를 확인해 주세요.";
+            case "RESPONSE_DEADLINE_EXPIRED" -> "추가 정보 제출 기간이 지나 검토 단계로 전환되었습니다.";
+            default -> "문의 상태가 변경되었습니다.";
+        };
+    }
+
+    private static String encodeCursor(Instant createdAt, UUID id) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                (createdAt + "|" + id).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Cursor decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            String[] parts = decoded.split("\\|", 2);
+            return new Cursor(Instant.parse(parts[0]), UUID.fromString(parts[1]));
+        } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException exception) {
+            throw new com.idea2strategy.backend.application.usercase.UserCaseRejectedException("INVALID_CURSOR");
+        }
+    }
+
+    private record Cursor(Instant createdAt, UUID id) {}
 
     private List<VerifiedUserCaseEvidence> verify(
             UUID accountId, List<UserCaseEvidenceReference> requested, Instant now) {

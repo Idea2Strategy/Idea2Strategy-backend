@@ -221,7 +221,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         String idempotencyKey = request.metadata().idempotencyKey();
 
         var dataset = dsl.fetchOne(
-                "select dataset_hash, period_start::date as period_start, period_end::date as period_end "
+                "select dataset_hash, period_start::date as period_start, period_end::date as period_end, "
+                        + "schema_version, data_layer::text as data_layer "
                         + "from market_data.dataset_manifests "
                         + "where id = ? and status = 'AVAILABLE' and available_at is not null "
                         + "and available_at <= ?::timestamptz",
@@ -230,14 +231,18 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset must be available at the release instant");
         }
-        boolean policyAvailable = dsl.fetchOne(
-                "select 1 from backtest.execution_policy_versions "
-                        + "where version = ? and locked_at <= ?::timestamptz",
-                request.executionPolicyVersion(), release.releasedAt().atOffset(ZoneOffset.UTC)) != null;
-        if (!policyAvailable) {
+        var policy = dsl.fetchOne(
+                "select policy_document from backtest.execution_policy_versions "
+                        + "where version = ? and locked_at <= ?::timestamptz "
+                        + "and (retired_at is null or retired_at > ?::timestamptz)",
+                request.executionPolicyVersion(),
+                release.releasedAt().atOffset(ZoneOffset.UTC),
+                release.releasedAt().atOffset(ZoneOffset.UTC));
+        if (policy == null) {
             throw new ImmutableStrategyReleaseRejectedException(
-                    "Official backtest execution policy must be locked at the release instant");
+                    "Official backtest execution policy must be locked and not retired at the release instant");
         }
+        requireCompatibleOfficialInput(policy.get("policy_document", String.class), dataset);
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
         String expectedDatasetHash = prefixed(dataset.get("dataset_hash", String.class));
         java.time.LocalDate periodStart = dataset.get("period_start", java.time.LocalDate.class);
@@ -294,13 +299,21 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             return;
         }
 
+        // aggregate_id is the bot, not the run. SqsOutboxMessagePublisher publishes this column
+        // verbatim as the envelope aggregateId, and the BASIC consumer requires it to equal the
+        // payload botId — a row written under runId is rejected as TRANSPORT_ENVELOPE_MISMATCH and
+        // dead-lettered before a single attempt is recorded (backend #243). The release's own
+        // idempotency key material already declares the aggregate this way
+        // (OfficialBacktestRequest.forRelease), and every other strategy-bot producer
+        // (BotRunCommandJooqAdapter, BotStopCommandJooqAdapter) uses the bot id too; this insert was
+        // the lone outlier. backtest.runs.id stays runId — only the transport aggregate changes.
         dsl.execute(
                 "insert into operations.outbox_messages "
                         + "(id, owner_domain, aggregate_id, aggregate_sequence, event_type, event_schema_version, "
                         + "payload_document, idempotency_key, created_at) "
                         + "values (?, 'strategy-bot', ?, 1, ?, ?, ?::jsonb, ?, ?::timestamptz) "
                 + "on conflict (idempotency_key) do nothing",
-                request.metadata().messageId(), request.runId(), request.metadata().messageType(),
+                request.metadata().messageId(), request.botId(), request.metadata().messageType(),
                 request.metadata().contractVersion(), payload, idempotencyKey, queuedAt);
     }
 
@@ -376,6 +389,75 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                 .forEach(feature -> material.append('\n').append(feature.featureMaterializationId())
                         .append('\n').append(feature.lockedResultHash()));
         return "sha256:" + StrategyDocumentJson.sha256(material.toString());
+    }
+
+    /**
+     * Refuses an official request whose policy and pinned manifest cannot describe the same replay.
+     *
+     * <p>The producer used to publish any available manifest against any locked policy, and the
+     * consumer discovered the disagreement after the run was already durable: a ten-year policy
+     * window against a one-month manifest, and a policy declaring {@code market-bars-v2} against
+     * objects carrying {@code market-bars/1} (root #471). Checking here, before any of
+     * {@code backtest.runs}, the input pins or the Outbox row exists, is what keeps an incompatible
+     * combination from becoming a frozen input set nobody can replay.
+     *
+     * <p>The comparison is by calendar date in the policy's own timezone. A legacy
+     * {@code market-bars/1} manifest labels its period with UTC dates while the policy states local
+     * midnight, so comparing instants would reject a pair that does describe the same days; the
+     * consumer resolves it the same way (backtest-engine #87). Both ends are inclusive of the
+     * manifest and must lie inside the policy window.
+     */
+    private void requireCompatibleOfficialInput(String policyDocument, org.jooq.Record dataset) {
+        final com.fasterxml.jackson.databind.JsonNode document;
+        try {
+            document = objectMapper.readTree(policyDocument);
+        } catch (JsonProcessingException exception) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest execution policy document is unreadable");
+        }
+        String policySchema = document.path("marketDataSchemaVersion").asText(null);
+        String policyTimezone = document.path("timezone").asText(null);
+        String policyStart = document.path("periodStart").asText(null);
+        String policyEnd = document.path("periodEnd").asText(null);
+        if (policySchema == null || policyTimezone == null || policyStart == null || policyEnd == null) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest execution policy does not state its period and market data schema");
+        }
+
+        String manifestSchema = dataset.get("schema_version", String.class);
+        if (!policySchema.equals(manifestSchema)) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest dataset schema " + manifestSchema
+                            + " does not match the execution policy schema " + policySchema);
+        }
+
+        // Official Basic runs replay adjusted prices. A RAW manifest would silently measure a strategy
+        // against unadjusted splits and dividends.
+        String dataLayer = dataset.get("data_layer", String.class);
+        if (!"ADJUSTED".equals(dataLayer)) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest dataset must be ADJUSTED, not " + dataLayer);
+        }
+
+        java.time.ZoneId zone;
+        try {
+            zone = java.time.ZoneId.of(policyTimezone);
+        } catch (java.time.DateTimeException exception) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest execution policy timezone is invalid: " + policyTimezone);
+        }
+        java.time.LocalDate policyFirstDay =
+                OffsetDateTime.parse(policyStart).atZoneSameInstant(zone).toLocalDate();
+        java.time.LocalDate policyLastDay =
+                OffsetDateTime.parse(policyEnd).atZoneSameInstant(zone).toLocalDate();
+        java.time.LocalDate manifestFirstDay = dataset.get("period_start", java.time.LocalDate.class);
+        java.time.LocalDate manifestLastDay = dataset.get("period_end", java.time.LocalDate.class);
+        if (manifestFirstDay.isBefore(policyFirstDay) || manifestLastDay.isAfter(policyLastDay)) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest dataset period " + manifestFirstDay + ".." + manifestLastDay
+                            + " is not inside the execution policy period "
+                            + policyFirstDay + ".." + policyLastDay);
+        }
     }
 
     private static String prefixed(String value) {

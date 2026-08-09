@@ -15,8 +15,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -82,13 +80,28 @@ public final class StrategyBotCompiledPlanAssembler {
      */
     public static final String PLAN_SCHEMA_VERSION = "basic-compiled-plan.v2";
 
-    /**
-     * The supported universe is a query over listing and symbol effectivity observed on one market
-     * date, not a published artifact, so the date is what identifies the slice a plan was built
-     * against. New York is the market whose calendar decides it.
-     */
     private static final String INSTRUMENT_CATALOG_PREFIX = "us-supported-universe:";
-    private static final ZoneId MARKET_ZONE = ZoneId.of("America/New_York");
+
+    /**
+     * The supported-universe version the consumer actually implements.
+     *
+     * <p>This used to be the release date in the New York market zone, on the reasoning that the
+     * universe is a query over listing effectivity rather than a published artifact. That produced a
+     * new contract version every market day, and the Backtest runtime whitelists only the versions it
+     * implements — deliberately, because accepting an arbitrary {@code us-supported-universe:*} would
+     * let official instrument ids be silently re-pointed. So a release on 2026-08-09 published
+     * {@code us-supported-universe:2026-08-09}, the consumer implemented
+     * {@code us-supported-universe:2026-07-31}, and the run failed
+     * {@code INSTRUMENT_CATALOG_VERSION_UNSUPPORTED} before simulation (backend #257, INT03 run
+     * 9d4a31d5).
+     *
+     * <p>It is a published contract value on both sides, so it is pinned rather than derived: the
+     * consumer's list lives in {@code backtest_engine/basic_runtime.py} as
+     * {@code INSTRUMENT_CATALOG_VERSIONS}, and the two must name the same version. The value moves
+     * only when a new universe is actually published, in the same change that adds it to the consumer.
+     */
+    public static final String PUBLISHED_INSTRUMENT_CATALOG_VERSION =
+            INSTRUMENT_CATALOG_PREFIX + "2026-07-31";
 
     private static final String TERMINAL_OPERATION = "EMIT_ORDER_CANDIDATE";
     private static final Pattern PLACEHOLDER = Pattern.compile("^\\$(?<name>[A-Za-z][A-Za-z0-9_]*)$");
@@ -96,6 +109,16 @@ public final class StrategyBotCompiledPlanAssembler {
             Pattern.compile("^(?<amount>[1-9][0-9]*)(?<unit>[smhd])$");
     private static final String CONTAINER_PLACEHOLDER = "container";
     private static final Set<String> LIVE_RESOLUTIONS = Set.of("30m", "1h", "4h", "1d");
+
+    /**
+     * The compiled-plan contract spells money as a fixed 8-decimal string
+     * ({@code ^-?[0-9]{1,16}\.[0-9]{8}$}), and the public release API accepts any scale a caller
+     * writes. A release requesting {@code 100000} therefore produced a plan the Backtest runtime
+     * rejected before simulation, and the run failed with a contract violation rather than a result
+     * (backend #255, INT03 run 66956d2d). Normalizing at this producer boundary keeps one amount to
+     * one spelling for every caller — API, CLI or UI — instead of loosening the consumer's contract.
+     */
+    private static final int MONEY_SCALE = 8;
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
@@ -142,7 +165,7 @@ public final class StrategyBotCompiledPlanAssembler {
         root.put("contractVersion", CONTRACT_VERSION);
         root.put("schemaVersion", PLAN_SCHEMA_VERSION);
         root.put("elementCatalogVersion", catalog.version().catalogVersion());
-        root.put("instrumentCatalogVersion", instrumentCatalogVersion(releasedAt));
+        root.put("instrumentCatalogVersion", PUBLISHED_INSTRUMENT_CATALOG_VERSION);
         root.put("compilerVersion", requiredText(planRoot, "compilerVersion"));
         root.put("requiredFeatureSetHash", prefixed(requiredText(planRoot, "requiredFeatureSetHash")));
 
@@ -164,7 +187,7 @@ public final class StrategyBotCompiledPlanAssembler {
         version.put("semanticHash", prefixed(semanticHash));
         version.put("snapshotHash", prefixed(snapshotHash));
         snapshot.put("mode", "BASIC");
-        snapshot.put("initialCashAmount", initialCashAmount.toPlainString());
+        snapshot.put("initialCashAmount", moneyAmount(initialCashAmount));
         snapshot.put("currency", "USD");
         ArrayNode partitions = snapshot.putArray("partitions");
         ObjectNode partition = partitions.addObject();
@@ -445,10 +468,6 @@ public final class StrategyBotCompiledPlanAssembler {
         return normalized;
     }
 
-    private static String instrumentCatalogVersion(Instant releasedAt) {
-        return INSTRUMENT_CATALOG_PREFIX + LocalDate.ofInstant(releasedAt, MARKET_ZONE);
-    }
-
     /**
      * The checksum material, which is deliberately built from the assembled values rather than from
      * the serialised document: the consumer recomputes it from the fields it decoded, so anything the
@@ -521,6 +540,25 @@ public final class StrategyBotCompiledPlanAssembler {
 
     private static String prefixed(String hash) {
         return hash.startsWith("sha256:") ? hash : "sha256:" + hash;
+    }
+
+    /**
+     * The contract's fixed 8-decimal spelling of an amount. See {@link #MONEY_SCALE}.
+     *
+     * <p>{@link java.math.RoundingMode#UNNECESSARY} rather than a rounding mode: an amount carrying
+     * more than eight decimals is a caller error, and silently discarding the remainder would make
+     * the plan disagree with the release that asked for it. The checksum reads this field back out of
+     * the document, so normalizing here is also what keeps the checksum a function of one spelling.
+     */
+    private static String moneyAmount(BigDecimal amount) {
+        try {
+            return amount.setScale(MONEY_SCALE, java.math.RoundingMode.UNNECESSARY).toPlainString();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(
+                    "initialCashAmount " + amount.toPlainString() + " carries more precision than the "
+                            + "compiled-plan contract's " + MONEY_SCALE + " decimal places",
+                    exception);
+        }
     }
 
     private static String requiredText(JsonNode parent, String field) {

@@ -116,7 +116,8 @@ class StrategyReleaseControllerTest {
                         StrategyDraftController.class,
                         StrategyDocumentController.class,
                         StrategyCopyController.class,
-                        StrategyValidationController.class);
+                        StrategyValidationController.class,
+                        StrategyDeletionController.class);
     }
 
     private static String validRequest() {

@@ -206,4 +206,181 @@ class DatabaseAccessPolicyTest {
                         MigrationOwner.TRADING,
                         "DROP VIEW IF EXISTS identity.active_accounts"));
     }
+    @Test
+    void grantsTheBacktestRoleTheOperationsAccessItsRequestIntakeExecutes() {
+        // backtest_request_intake claims a transactional receipt before running anything. Without
+        // operations access the claim raises InsufficientPrivilege, the exception escapes poll_once,
+        // and the SQS message is retried forever instead of dead-lettered — so backtest.runs stays
+        // QUEUED with zero attempts and nothing reports why (backend #246).
+        //
+        // This was unreachable until backend #243: handle() checks the transport envelope before it
+        // claims, and every message failed the envelope check first.
+        for (var access : List.of(
+                DatabaseAccessPolicy.Access.READ,
+                DatabaseAccessPolicy.Access.INSERT,
+                DatabaseAccessPolicy.Access.UPDATE)) {
+            assertTrue(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            access,
+                            "operations",
+                            "outbox_consumer_receipts"),
+                    "the intake selects, inserts and updates its own receipts: " + access);
+        }
+        assertTrue(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                DatabaseAccessPolicy.Access.READ,
+                "operations",
+                "outbox_messages"));
+
+        // The intake never deletes a receipt. The other three roles hold DELETE on this table; the
+        // backtest role must not inherit it just because the rule was widened.
+        assertFalse(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                DatabaseAccessPolicy.Access.DELETE,
+                "operations",
+                "outbox_consumer_receipts"));
+        // Reading the outbox is enough; the consumer never writes the producer's rows.
+        assertFalse(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                DatabaseAccessPolicy.Access.UPDATE,
+                "operations",
+                "outbox_messages"));
+        // Widening operations must not hand over the rest of the schema.
+        for (var table : List.of("audit_events", "operator_accounts", "cases")) {
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            DatabaseAccessPolicy.Access.READ,
+                            "operations",
+                            table),
+                    "the intake has no reason to read operations." + table);
+        }
+    }
+
+    @Test
+    void grantsTheBatchRoleTheWritesItsScheduledJobsPerform() {
+        // Derived from the write statements of the six adapters backend-batch imports. Without these
+        // the room schedule transition is refused every ten seconds, a room never leaves DRAFT, and
+        // the whole competition lane stalls (backend #246).
+        //
+        // bot.bots and competition.rooms need UPDATE for a second reason: these adapters take
+        // `... for update`, and PostgreSQL requires UPDATE on every table a FOR UPDATE names. That is
+        // the same trap as #241 with the opposite fix — there the lock was unnecessary and was
+        // removed; here the locks are needed, so the privilege must match.
+        //
+        // bot.continuation_deadlines is the third instance of that trap and the clearest one: no batch
+        // adapter updates it, yet PrivateContinuationTransitionJooqAdapter selects it `for update` and
+        // BotStopCommandJooqAdapter names it in `for update of b, d`. A privilege table derived from
+        // UPDATE statements alone would miss it, so it is derived from the locks as well (#251).
+        for (var target : List.of(
+                new DatabaseAccessPolicy.QualifiedTable("competition", "rooms"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "participations"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "bots"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"))) {
+            assertTrue(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BATCH,
+                            DatabaseAccessPolicy.Access.UPDATE,
+                            target.schema(),
+                            target.table()),
+                    "batch updates " + target.schema() + "." + target.table());
+        }
+        for (var target : List.of(
+                new DatabaseAccessPolicy.QualifiedTable("competition", "room_events"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "participation_events"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "backtest_period_runs"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "live_evaluation_segments"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"),
+                new DatabaseAccessPolicy.QualifiedTable("backtest", "runs"))) {
+            assertTrue(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BATCH,
+                            DatabaseAccessPolicy.Access.INSERT,
+                            target.schema(),
+                            target.table()),
+                    "batch inserts into " + target.schema() + "." + target.table());
+        }
+
+        // No adapter deletes. Keep the widening from turning into blanket write access.
+        for (var target : List.of(
+                new DatabaseAccessPolicy.QualifiedTable("competition", "rooms"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "bots"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"),
+                new DatabaseAccessPolicy.QualifiedTable("backtest", "runs"))) {
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BATCH,
+                            DatabaseAccessPolicy.Access.DELETE,
+                            target.schema(),
+                            target.table()),
+                    "no batch adapter deletes from " + target.schema() + "." + target.table());
+        }
+        // Tables the batch only reads must stay read-only. identity.accounts left this list on
+        // 2026-08-09: the account-closure job the batch application wires locks that row with
+        // `select ... for update` while finalizing a CLOSING account, so asserting it read-only was
+        // asserting that a job in this repository could not run (#456).
+        for (var target : List.of(
+                new DatabaseAccessPolicy.QualifiedTable("competition", "scoring_template_versions"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "room_schedules"),
+                new DatabaseAccessPolicy.QualifiedTable("identity", "account_preferences"),
+                new DatabaseAccessPolicy.QualifiedTable("strategy", "strategies"))) {
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BATCH,
+                            DatabaseAccessPolicy.Access.UPDATE,
+                            target.schema(),
+                            target.table()),
+                    "batch has no write path into " + target.schema() + "." + target.table());
+        }
+    }
+    @Test
+    void grantsTheBacktestRoleTheBotReadsItsExecutorPerforms() {
+        // The worker resolves the compiled plan and the run owner before executing anything:
+        //   SELECT plan_document   FROM bot.launch_contract_plans WHERE plan_checksum = :checksum
+        //   SELECT owner_account_id FROM bot.bots                 WHERE id = :bot_id ...
+        // Without these the handler dies with permission denied for schema bot, which is what
+        // hjcud's controlled INT03 reproduction recorded as
+        // failure_code=HANDLER_ERROR:ProgrammingError on run cfca9ae2 (root #447).
+        for (var table : List.of("launch_contract_plans", "bots")) {
+            assertTrue(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            DatabaseAccessPolicy.Access.READ,
+                            "bot",
+                            table),
+                    "the backtest executor reads bot." + table);
+        }
+    }
+
+    @Test
+    void keepsTheBacktestRoleOutOfTheRestOfTheBotSchema() {
+        // Widening the whole schema would hand the worker the bot lifecycle and its runtime state.
+        // It reads two rows to resolve what to execute and who owns it; nothing else.
+        for (var table : List.of("flows", "continuation_deadlines", "bot_events", "launch_snapshots",
+                "runtime_state_values", "evaluation_runs")) {
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            DatabaseAccessPolicy.Access.READ,
+                            "bot",
+                            table),
+                    "the backtest executor has no reason to read bot." + table);
+        }
+        // Read-only: the worker never writes the bot aggregate.
+        for (var access : List.of(
+                DatabaseAccessPolicy.Access.INSERT,
+                DatabaseAccessPolicy.Access.UPDATE,
+                DatabaseAccessPolicy.Access.DELETE)) {
+            for (var table : List.of("launch_contract_plans", "bots")) {
+                assertFalse(
+                        DatabaseAccessPolicy.allows(
+                                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                                access,
+                                "bot",
+                                table),
+                        access + " on bot." + table + " is not part of executing a backtest");
+            }
+        }
+    }
 }

@@ -74,9 +74,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Import(AccountOperationsFullJourneyIntegrationTest.OperatorJwtTestConfiguration.class)
 class AccountOperationsFullJourneyIntegrationTest {
     private static final UUID CORRELATION = id(1);
-    private static final String PASSWORD = "correct horse battery staple 2026!";
-    private static final String RESET_PASSWORD = "another correct horse staple 2027!";
-    private static final String CODE_PASSWORD = "recovery code horse staple 2028!";
+    private static final String PASSWORD = "CorrectHorse!2026";
+    private static final String RESET_PASSWORD = "ResetHorse!2027";
+    private static final String CODE_PASSWORD = "RecoveryHorse!2028";
     private static final String OPERATOR_SUBJECT = "a22f-operator-subject";
     private static final String CATALOG = "a22f-rbac-v1";
     private static final UUID OPERATOR = id(10);
