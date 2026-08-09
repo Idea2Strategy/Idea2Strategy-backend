@@ -276,6 +276,7 @@ class DatabaseAccessPolicyTest {
         for (var target : List.of(
                 new DatabaseAccessPolicy.QualifiedTable("competition", "rooms"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "participations"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "backtest_period_runs"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "bots"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"))) {
             assertTrue(
@@ -290,6 +291,10 @@ class DatabaseAccessPolicyTest {
                 new DatabaseAccessPolicy.QualifiedTable("competition", "room_events"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "participation_events"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "backtest_period_runs"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "backtest_aggregate_results"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_snapshots"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_entries"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "room_final_access_grants"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "live_evaluation_segments"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"),
                 new DatabaseAccessPolicy.QualifiedTable("backtest", "runs"))) {

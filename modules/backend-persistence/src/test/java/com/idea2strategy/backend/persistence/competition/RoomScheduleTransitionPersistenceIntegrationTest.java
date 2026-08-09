@@ -30,6 +30,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class RoomScheduleTransitionPersistenceIntegrationTest {
     private static final UUID OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000084");
     private static final UUID BOT_OWNER_ID = UUID.fromString("10000000-0000-4000-8000-000000000085");
+    private static final UUID OPERATOR_ID = UUID.fromString("10000000-0000-4000-8000-000000000086");
     private static final UUID ROOM_ID = UUID.fromString("20000000-0000-4000-8000-000000000084");
     private static final Instant RECRUITMENT = Instant.parse("2026-08-02T01:00:00Z");
     private static final Instant EVALUATION = Instant.parse("2026-08-02T02:00:00Z");
@@ -64,12 +65,20 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
         jdbc.update("delete from competition.room_events");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.rooms");
+        jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from bot.launch_snapshots");
         jdbc.update("delete from bot.bots");
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts");
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", BOT_OWNER_ID);
+        jdbc.update(
+                "insert into operations.operator_accounts "
+                        + "(id, external_identity_key_hmac, external_identity_key_version, status, "
+                        + "mfa_enrolled_at, created_at) values (?, 'operator-room-schedule', 1, 'ACTIVE', ?, ?)",
+                OPERATOR_ID,
+                RECRUITMENT.minusSeconds(7200).atOffset(ZoneOffset.UTC),
+                RECRUITMENT.minusSeconds(7200).atOffset(ZoneOffset.UTC));
     }
 
     @Test
@@ -202,14 +211,64 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
                 .isZero();
     }
 
-    private void seedRoom(String status) {
-        var createdAt = RECRUITMENT.minusSeconds(3600).atOffset(ZoneOffset.UTC);
+    @Test
+    void countsPendingBacktestLedgersAndNeverStartsAnUnderSubscribedBacktestBotPrivately() {
+        seedBacktestRoom("EVALUATING");
+        UUID firstBotId = seedActiveParticipation(1, BOT_OWNER_ID, "RUNNING");
+        UUID secondBotId = seedActiveParticipation(2, OWNER_ID, "RUNNING");
         jdbc.update(
-                "insert into competition.rooms "
-                        + "(id, competition_type, organizer_type, creator_account_id, name, access_type, status, created_at) "
-                        + "values (?, 'LIVE_PAPER', 'USER', ?, 'Schedule room', 'PUBLIC', "
-                        + "?::competition.room_status, ?::timestamptz)",
-                ROOM_ID, OWNER_ID, status, createdAt);
+                "update competition.participations set status = 'PENDING_LEDGER' where bot_id in (?, ?)",
+                firstBotId,
+                secondBotId);
+
+        assertThat(adapter.advanceDue(EVALUATION.plusSeconds(5), 10).transitionsApplied()).isZero();
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.rooms where id = ?", String.class, ROOM_ID))
+                .isEqualTo("EVALUATING");
+
+        jdbc.update("delete from competition.participations where bot_id = ?", secondBotId);
+        assertThat(adapter.advanceDue(EVALUATION.plusSeconds(10), 10).transitionsApplied()).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                        "select status::text from competition.participations where bot_id = ?",
+                        String.class,
+                        firstBotId))
+                .isEqualTo("WITHDRAWN");
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from bot.continuation_deadlines where bot_id = ?",
+                        Integer.class,
+                        firstBotId))
+                .isZero();
+        assertThat(jdbc.queryForObject(
+                        "select count(*) from operations.outbox_messages where event_type = 'BOT_RUN_COMMAND'",
+                        Integer.class))
+                .isZero();
+    }
+
+    private void seedRoom(String status) {
+        seedRoom(status, "LIVE_PAPER", "USER");
+    }
+
+    private void seedBacktestRoom(String status) {
+        seedRoom(status, "BACKTEST", "PLATFORM");
+    }
+
+    private void seedRoom(String status, String competitionType, String organizerType) {
+        var createdAt = RECRUITMENT.minusSeconds(3600).atOffset(ZoneOffset.UTC);
+        if ("BACKTEST".equals(competitionType)) {
+            jdbc.update(
+                    "insert into competition.rooms "
+                            + "(id, competition_type, organizer_type, created_by_operator_id, name, access_type, "
+                            + "status, created_at) values (?, 'BACKTEST', ?::competition.organizer_type, ?, "
+                            + "'Schedule room', 'PUBLIC', ?::competition.room_status, ?::timestamptz)",
+                    ROOM_ID, organizerType, OPERATOR_ID, status, createdAt);
+        } else {
+            jdbc.update(
+                    "insert into competition.rooms "
+                            + "(id, competition_type, organizer_type, creator_account_id, name, access_type, status, "
+                            + "created_at) values (?, 'LIVE_PAPER', ?::competition.organizer_type, ?, "
+                            + "'Schedule room', 'PUBLIC', ?::competition.room_status, ?::timestamptz)",
+                    ROOM_ID, organizerType, OWNER_ID, status, createdAt);
+        }
         jdbc.update(
                 "insert into competition.room_schedules "
                         + "(room_id, recruitment_opens_at, participation_opens_at, evaluation_starts_at, "
