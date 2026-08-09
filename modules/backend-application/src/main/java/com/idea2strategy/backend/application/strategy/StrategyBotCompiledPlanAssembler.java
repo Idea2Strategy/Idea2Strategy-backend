@@ -15,8 +15,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -82,13 +80,28 @@ public final class StrategyBotCompiledPlanAssembler {
      */
     public static final String PLAN_SCHEMA_VERSION = "basic-compiled-plan.v2";
 
-    /**
-     * The supported universe is a query over listing and symbol effectivity observed on one market
-     * date, not a published artifact, so the date is what identifies the slice a plan was built
-     * against. New York is the market whose calendar decides it.
-     */
     private static final String INSTRUMENT_CATALOG_PREFIX = "us-supported-universe:";
-    private static final ZoneId MARKET_ZONE = ZoneId.of("America/New_York");
+
+    /**
+     * The supported-universe version the consumer actually implements.
+     *
+     * <p>This used to be the release date in the New York market zone, on the reasoning that the
+     * universe is a query over listing effectivity rather than a published artifact. That produced a
+     * new contract version every market day, and the Backtest runtime whitelists only the versions it
+     * implements — deliberately, because accepting an arbitrary {@code us-supported-universe:*} would
+     * let official instrument ids be silently re-pointed. So a release on 2026-08-09 published
+     * {@code us-supported-universe:2026-08-09}, the consumer implemented
+     * {@code us-supported-universe:2026-07-31}, and the run failed
+     * {@code INSTRUMENT_CATALOG_VERSION_UNSUPPORTED} before simulation (backend #257, INT03 run
+     * 9d4a31d5).
+     *
+     * <p>It is a published contract value on both sides, so it is pinned rather than derived: the
+     * consumer's list lives in {@code backtest_engine/basic_runtime.py} as
+     * {@code INSTRUMENT_CATALOG_VERSIONS}, and the two must name the same version. The value moves
+     * only when a new universe is actually published, in the same change that adds it to the consumer.
+     */
+    public static final String PUBLISHED_INSTRUMENT_CATALOG_VERSION =
+            INSTRUMENT_CATALOG_PREFIX + "2026-07-31";
 
     private static final String TERMINAL_OPERATION = "EMIT_ORDER_CANDIDATE";
     private static final Pattern PLACEHOLDER = Pattern.compile("^\\$(?<name>[A-Za-z][A-Za-z0-9_]*)$");
@@ -152,7 +165,7 @@ public final class StrategyBotCompiledPlanAssembler {
         root.put("contractVersion", CONTRACT_VERSION);
         root.put("schemaVersion", PLAN_SCHEMA_VERSION);
         root.put("elementCatalogVersion", catalog.version().catalogVersion());
-        root.put("instrumentCatalogVersion", instrumentCatalogVersion(releasedAt));
+        root.put("instrumentCatalogVersion", PUBLISHED_INSTRUMENT_CATALOG_VERSION);
         root.put("compilerVersion", requiredText(planRoot, "compilerVersion"));
         root.put("requiredFeatureSetHash", prefixed(requiredText(planRoot, "requiredFeatureSetHash")));
 
@@ -453,10 +466,6 @@ public final class StrategyBotCompiledPlanAssembler {
                     "Live strategy resolution must be one of 30m, 1h, 4h, 1d, got " + resolution);
         }
         return normalized;
-    }
-
-    private static String instrumentCatalogVersion(Instant releasedAt) {
-        return INSTRUMENT_CATALOG_PREFIX + LocalDate.ofInstant(releasedAt, MARKET_ZONE);
     }
 
     /**

@@ -130,7 +130,11 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 .contains("\"requirementId\":\"rsi-14-pt30m\"")
                 .contains("\"requiredObservations\":14")
                 .contains("\"key\":\"" + release.partition().id() + "\"")
-                .contains("\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-01\"");
+                // Not the release date. This assertion used to read us-supported-universe:2026-08-01,
+                // which is the release instant this test uses — it was pinning the defect backend #257
+                // fixed, because the consumer only implements versions it was actually built for.
+                .contains("\"instrumentCatalogVersion\":\""
+                        + StrategyBotCompiledPlanAssembler.PUBLISHED_INSTRUMENT_CATALOG_VERSION + "\"");
     }
 
     /**
