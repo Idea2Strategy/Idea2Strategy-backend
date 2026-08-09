@@ -54,7 +54,9 @@ public class IdentityAuthController {
         UUID correlation = correlation(correlationId);
         var result = registrationService.signup(
                 new SignupCommand(request.email(), request.password(), correlation, requestIpPrefix));
-        verificationDelivery.send(result.accountId(), result.verificationToken(), result.expiresAt());
+        if (result.verificationToken() != null) {
+            verificationDelivery.send(result.accountId(), result.verificationToken(), result.expiresAt());
+        }
         return ResponseEntity.accepted().body(new SignupResponse(result.accountId(), true, result.expiresAt()));
     }
 

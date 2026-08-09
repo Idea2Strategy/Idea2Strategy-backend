@@ -69,7 +69,7 @@ public final class EmailRegistrationService {
         validateEmail(email.normalized());
         var existing = queryPort.findEmailRegistration(email.comparisonFingerprints());
         if (existing.isPresent()) {
-            return continuePendingRegistration(existing.orElseThrow(), command);
+            return continuePendingRegistration(existing.orElseThrow());
         }
         if (queryPort.emailExists(email.lookupHmac())) {
             throw new DuplicateEmailException();
@@ -95,31 +95,18 @@ public final class EmailRegistrationService {
         } catch (DuplicateEmailException duplicate) {
             var racedRegistration = queryPort.findEmailRegistration(email.comparisonFingerprints());
             if (racedRegistration.isPresent()) {
-                return continuePendingRegistration(racedRegistration.orElseThrow(), command);
+                return continuePendingRegistration(racedRegistration.orElseThrow());
             }
             throw duplicate;
         }
         return new SignupResult(accountId, token.rawToken(), expiresAt);
     }
 
-    private SignupResult continuePendingRegistration(
-            ExistingEmailRegistration existing, SignupCommand command) {
+    private SignupResult continuePendingRegistration(ExistingEmailRegistration existing) {
         if (!existing.awaitingVerification()) {
             throw new DuplicateEmailException();
         }
-        var now = clock.instant();
-        var expiresAt = now.plus(VERIFICATION_LIFETIME);
-        VerificationToken token = tokenIssuer.issue();
-        commandPort.replacePendingRegistration(new PendingRegistrationReplacement(
-                UUID.randomUUID(),
-                existing.accountId(),
-                passwordHasher.hash(command.password()),
-                token.digest(),
-                now,
-                expiresAt,
-                command.correlationId(),
-                command.requestIpPrefix()));
-        return new SignupResult(existing.accountId(), token.rawToken(), expiresAt);
+        return new SignupResult(existing.accountId(), null, existing.verificationExpiresAt());
     }
 
     public void verify(VerifyEmailCommand command) {

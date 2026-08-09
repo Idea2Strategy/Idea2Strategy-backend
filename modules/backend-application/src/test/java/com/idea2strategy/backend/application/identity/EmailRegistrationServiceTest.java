@@ -68,7 +68,7 @@ class EmailRegistrationServiceTest {
     }
 
     @Test
-    void pendingEmailSignupReusesTheAccountAndIssuesANewVerificationToken() {
+    void pendingEmailSignupKeepsTheOriginalPasswordAndVerificationToken() {
         UUID accountId = UUID.randomUUID();
         var commands = new RecordingRegistrationPort();
         var queries = new RegistrationQueryPort() {
@@ -95,16 +95,9 @@ class EmailRegistrationServiceTest {
                 "person@example.com", "ValidPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
 
         assertThat(result.accountId()).isEqualTo(accountId);
-        assertThat(result.verificationToken()).isEqualTo("raw-verification-token");
+        assertThat(result.verificationToken()).isNull();
         assertThat(commands.registrations).isEmpty();
-        assertThat(commands.pendingReplacements)
-                .singleElement()
-                .satisfies(replacement -> {
-                    assertThat(replacement.accountId()).isEqualTo(accountId);
-                    assertThat(replacement.tokenDigest()).isEqualTo("digest:raw-verification-token");
-                    assertThat(replacement.password().encodedHash())
-                            .isEqualTo("hash:a sufficiently long passphrase");
-                });
+        assertThat(commands.replacements).isEmpty();
     }
 
     @Test
@@ -201,7 +194,6 @@ class EmailRegistrationServiceTest {
 
     private static final class RecordingRegistrationPort implements RegistrationCommandPort {
         private final List<PendingRegistration> registrations = new ArrayList<>();
-        private final List<PendingRegistrationReplacement> pendingReplacements = new ArrayList<>();
         private final List<VerificationReplacement> replacements = new ArrayList<>();
         private VerificationOutcome verificationOutcome = VerificationOutcome.VERIFIED;
 
@@ -214,11 +206,6 @@ class EmailRegistrationServiceTest {
         public VerificationOutcome consumeVerification(
                 String tokenDigest, Instant consumedAt, UUID correlationId) {
             return verificationOutcome;
-        }
-
-        @Override
-        public void replacePendingRegistration(PendingRegistrationReplacement replacement) {
-            pendingReplacements.add(replacement);
         }
 
         @Override

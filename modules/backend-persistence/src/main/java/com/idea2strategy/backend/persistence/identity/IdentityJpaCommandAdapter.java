@@ -12,7 +12,6 @@ import com.idea2strategy.backend.application.identity.DuplicateEmailException;
 import com.idea2strategy.backend.application.identity.LoginFailure;
 import com.idea2strategy.backend.application.identity.OidcIdentityCommandPort;
 import com.idea2strategy.backend.application.identity.PendingRegistration;
-import com.idea2strategy.backend.application.identity.PendingRegistrationReplacement;
 import com.idea2strategy.backend.application.identity.PendingOidcLink;
 import com.idea2strategy.backend.application.identity.PendingOidcRegistration;
 import com.idea2strategy.backend.application.identity.PendingPasswordReset;
@@ -24,15 +23,18 @@ import com.idea2strategy.backend.application.identity.RecoveryCodeOutcome;
 import com.idea2strategy.backend.application.identity.RegistrationCommandPort;
 import com.idea2strategy.backend.application.identity.RefreshTokenFamilyCommandPort;
 import com.idea2strategy.backend.application.identity.VerificationOutcome;
+import com.idea2strategy.backend.application.identity.VerificationRateLimitedException;
 import com.idea2strategy.backend.application.identity.VerificationReplacement;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.NoResultException;
 import java.time.Instant;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import java.util.List;
 import org.springframework.stereotype.Repository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -43,9 +45,25 @@ public class IdentityJpaCommandAdapter
                 RefreshTokenFamilyCommandPort,
                 AccountRecoveryCommandPort {
     private final EntityManager entityManager;
+    private final Duration verificationResendCooldown;
+    private final Duration verificationRateWindow;
+    private final int verificationRequestsPerAccount;
+    private final int verificationRequestsPerIp;
 
-    public IdentityJpaCommandAdapter(EntityManager entityManager) {
+    public IdentityJpaCommandAdapter(
+            EntityManager entityManager,
+            @Value("${identity.verification.resend-cooldown:PT60S}") Duration verificationResendCooldown,
+            @Value("${identity.verification.rate-window:PT1H}") Duration verificationRateWindow,
+            @Value("${identity.verification.max-requests-per-account:5}") int verificationRequestsPerAccount,
+            @Value("${identity.verification.max-requests-per-ip:20}") int verificationRequestsPerIp) {
         this.entityManager = entityManager;
+        this.verificationResendCooldown = requirePositive(verificationResendCooldown, "verificationResendCooldown");
+        this.verificationRateWindow = requirePositive(verificationRateWindow, "verificationRateWindow");
+        if (verificationRequestsPerAccount < 1 || verificationRequestsPerIp < 1) {
+            throw new IllegalArgumentException("Verification request limits must be positive");
+        }
+        this.verificationRequestsPerAccount = verificationRequestsPerAccount;
+        this.verificationRequestsPerIp = verificationRequestsPerIp;
     }
 
     @Override
@@ -132,6 +150,7 @@ public class IdentityJpaCommandAdapter
         } catch (AuthenticationRejectedException rejected) {
             throw new DuplicateEmailException();
         }
+        enforceIpVerificationRateLimit(registration.requestIpPrefix(), registration.requestedAt());
         entityManager.createNativeQuery("""
                         insert into identity.accounts (id, lifecycle_status, status_changed_at, created_at)
                         values (:id, cast('PENDING_VERIFICATION' as identity.account_lifecycle_status), :now, :now)
@@ -303,64 +322,6 @@ public class IdentityJpaCommandAdapter
 
     @Override
     @Transactional
-    public void replacePendingRegistration(PendingRegistrationReplacement replacement) {
-        Object[] account = (Object[]) entityManager.createNativeQuery("""
-                        select account.lifecycle_status::text, login.id
-                        from identity.accounts account
-                        join identity.login_identities login on login.account_id = account.id
-                        join identity.auth_providers provider on provider.id = login.provider_id
-                        join identity.password_credentials credential on credential.login_identity_id = login.id
-                        where account.id = :accountId and provider.code = 'PASSWORD'
-                        for update of account, login, credential
-                        """)
-                .setParameter("accountId", replacement.accountId())
-                .getSingleResult();
-        if (!"PENDING_VERIFICATION".equals(account[0])) {
-            throw new IllegalStateException("Only pending accounts can replace registration credentials");
-        }
-        UUID loginId = (UUID) account[1];
-        OffsetDateTime now = utc(replacement.requestedAt());
-        entityManager.createNativeQuery("""
-                        update identity.password_credentials
-                        set password_hash = :hash, hash_scheme = :scheme,
-                            hash_parameters = cast(:parameters as jsonb),
-                            credential_version = credential_version + 1,
-                            password_changed_at = :now
-                        where login_identity_id = :loginId
-                        """)
-                .setParameter("hash", replacement.password().encodedHash())
-                .setParameter("scheme", replacement.password().scheme())
-                .setParameter("parameters", replacement.password().parametersJson())
-                .setParameter("now", now)
-                .setParameter("loginId", loginId)
-                .executeUpdate();
-        entityManager.createNativeQuery("""
-                        update identity.email_verification_requests set revoked_at = :now
-                        where account_id = :accountId and consumed_at is null and revoked_at is null
-                        """)
-                .setParameter("now", now)
-                .setParameter("accountId", replacement.accountId())
-                .executeUpdate();
-        insertVerification(
-                replacement.requestId(),
-                replacement.accountId(),
-                replacement.tokenDigest(),
-                replacement.requestedAt(),
-                replacement.expiresAt(),
-                replacement.requestIpPrefix());
-        insertAuthenticationEvent(
-                replacement.accountId(),
-                "EMAIL_VERIFICATION_REISSUED",
-                loginId,
-                "USER",
-                null,
-                replacement.correlationId(),
-                "pending-signup-reissue:" + replacement.correlationId(),
-                now);
-    }
-
-    @Override
-    @Transactional
     public void replaceVerification(VerificationReplacement replacement) {
         Object[] account = (Object[]) entityManager.createNativeQuery("""
                         select account.lifecycle_status::text, login.id
@@ -375,6 +336,8 @@ public class IdentityJpaCommandAdapter
         if (!"PENDING_VERIFICATION".equals(account[0])) {
             throw new IllegalStateException("Only pending accounts can request another verification token");
         }
+        enforceAccountVerificationRateLimit(replacement.accountId(), replacement.requestedAt());
+        enforceIpVerificationRateLimit(replacement.requestIpPrefix(), replacement.requestedAt());
         OffsetDateTime now = utc(replacement.requestedAt());
         entityManager.createNativeQuery("""
                         update identity.email_verification_requests set revoked_at = :now
@@ -1269,6 +1232,55 @@ public class IdentityJpaCommandAdapter
                 .executeUpdate();
     }
 
+    private void enforceAccountVerificationRateLimit(UUID accountId, Instant requestedAt) {
+        Object latest = entityManager.createNativeQuery("""
+                        select max(requested_at)
+                        from identity.email_verification_requests
+                        where account_id = :accountId
+                        """)
+                .setParameter("accountId", accountId)
+                .getSingleResult();
+        if (latest != null && instant(latest).plus(verificationResendCooldown).isAfter(requestedAt)) {
+            throw new VerificationRateLimitedException();
+        }
+        Number requestsInWindow = (Number) entityManager.createNativeQuery("""
+                        select count(*)
+                        from identity.email_verification_requests
+                        where account_id = :accountId and requested_at > :windowStart
+                        """)
+                .setParameter("accountId", accountId)
+                .setParameter("windowStart", utc(requestedAt.minus(verificationRateWindow)))
+                .getSingleResult();
+        if (requestsInWindow.longValue() >= verificationRequestsPerAccount) {
+            throw new VerificationRateLimitedException();
+        }
+    }
+
+    private void enforceIpVerificationRateLimit(String ipPrefix, Instant requestedAt) {
+        if (ipPrefix == null || ipPrefix.isBlank()) {
+            return;
+        }
+        String normalizedPrefix = (String) entityManager.createNativeQuery(
+                        "select cast(cast(:ipPrefix as inet) as text)")
+                .setParameter("ipPrefix", ipPrefix)
+                .getSingleResult();
+        entityManager.createNativeQuery("select pg_advisory_xact_lock(hashtextextended(:key, 0))")
+                .setParameter("key", "verification-ip:" + normalizedPrefix)
+                .getSingleResult();
+        Number requestsInWindow = (Number) entityManager.createNativeQuery("""
+                        select count(*)
+                        from identity.email_verification_requests
+                        where request_ip_prefix = cast(:ipPrefix as inet)
+                          and requested_at > :windowStart
+                        """)
+                .setParameter("ipPrefix", normalizedPrefix)
+                .setParameter("windowStart", utc(requestedAt.minus(verificationRateWindow)))
+                .getSingleResult();
+        if (requestsInWindow.longValue() >= verificationRequestsPerIp) {
+            throw new VerificationRateLimitedException();
+        }
+    }
+
     private void insertVerification(
             UUID requestId, UUID accountId, String digest, Instant requestedAt, Instant expiresAt, String ipPrefix) {
         entityManager.createNativeQuery("""
@@ -1411,5 +1423,12 @@ public class IdentityJpaCommandAdapter
             return offsetDateTime.toInstant();
         }
         throw new IllegalStateException("Unsupported timestamp value: " + value);
+    }
+
+    private static Duration requirePositive(Duration duration, String name) {
+        if (duration == null || duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
+        return duration;
     }
 }

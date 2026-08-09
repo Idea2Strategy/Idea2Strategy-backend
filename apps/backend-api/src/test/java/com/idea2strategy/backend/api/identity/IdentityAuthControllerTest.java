@@ -2,6 +2,7 @@ package com.idea2strategy.backend.api.identity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -14,6 +15,7 @@ import com.idea2strategy.backend.application.identity.EmailRegistrationService;
 import com.idea2strategy.backend.application.identity.LoginResult;
 import com.idea2strategy.backend.application.identity.SignupResult;
 import com.idea2strategy.backend.application.identity.VerificationDelivery;
+import com.idea2strategy.backend.application.identity.VerificationRateLimitedException;
 import java.time.Instant;
 import java.time.Clock;
 import java.time.Duration;
@@ -62,6 +64,27 @@ class IdentityAuthControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(202);
         assertThat(response.getBody().toString()).doesNotContain("raw-verification-secret");
         verify(delivery).send(accountId, "raw-verification-secret", expiresAt);
+    }
+
+    @Test
+    void repeatedPendingSignupDoesNotSendAnotherVerificationEmail() {
+        var registration = mock(EmailRegistrationService.class);
+        var delivery = mock(VerificationDeliveryPort.class);
+        UUID accountId = UUID.randomUUID();
+        Instant expiresAt = Instant.parse("2026-08-02T12:00:00Z");
+        when(registration.signup(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new SignupResult(accountId, null, expiresAt));
+        var controller = new IdentityAuthController(
+                registration, mock(EmailAuthenticationService.class), delivery, jwt(), cookies());
+
+        var response = controller.signup(
+                new IdentityAuthController.SignupRequest("person@example.com", "another valid passphrase!"),
+                UUID.randomUUID().toString(),
+                "192.0.2.0/24");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(202);
+        assertThat(response.getBody().accountId()).isEqualTo(accountId);
+        verifyNoInteractions(delivery);
     }
 
     @Test
@@ -137,6 +160,26 @@ class IdentityAuthControllerTest {
         assertThat(response.getStatusCode().value()).isEqualTo(202);
         assertThat(response.getBody().toString()).doesNotContain("replacement-secret");
         verify(delivery).send(accountId, "replacement-secret", expiresAt);
+    }
+
+    @Test
+    void resendRateLimitReturnsTooManyRequestsWithoutSendingEmail() throws Exception {
+        var registration = mock(EmailRegistrationService.class);
+        var delivery = mock(VerificationDeliveryPort.class);
+        UUID accountId = UUID.randomUUID();
+        when(registration.resendVerification(org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new VerificationRateLimitedException());
+        var controller = new IdentityAuthController(
+                registration, mock(EmailAuthenticationService.class), delivery, jwt(), cookies());
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new IdentityAuthExceptionHandler())
+                .build();
+
+        mvc.perform(post("/api/v1/auth/resend-verification")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"accountId\":\"" + accountId + "\"}"))
+                .andExpect(status().isTooManyRequests());
+        verifyNoInteractions(delivery);
     }
 
     private static CustomerJwtCodec jwt() {
