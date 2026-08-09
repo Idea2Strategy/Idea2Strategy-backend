@@ -6,6 +6,15 @@ import java.util.List;
 import java.util.Map;
 
 final class Arguments {
+    /**
+     * Switches that carry no value.
+     *
+     * <p>Named explicitly rather than inferred from "no value follows", because inferring it would
+     * turn a forgotten value — `--email` with nothing after it — into the string "true" and let a
+     * typo log in as nobody.
+     */
+    private static final List<String> VALUELESS = List.of("--browser", "--no-open");
+
     private final List<String> positionals;
     private final Map<String, String> options;
 
@@ -21,6 +30,12 @@ final class Arguments {
             String value = values.get(index);
             if (!value.startsWith("--")) {
                 positionals.add(value);
+                continue;
+            }
+            if (VALUELESS.contains(value)) {
+                if (options.put(value, "true") != null) {
+                    throw usage("Option may be supplied only once: " + value);
+                }
                 continue;
             }
             if (index + 1 >= values.size() || values.get(index + 1).startsWith("--")) {
@@ -47,6 +62,10 @@ final class Arguments {
 
     String optional(String name) {
         return options.get(name);
+    }
+
+    boolean flag(String name) {
+        return "true".equals(options.get(name));
     }
 
     String optional(String name, String defaultValue) {

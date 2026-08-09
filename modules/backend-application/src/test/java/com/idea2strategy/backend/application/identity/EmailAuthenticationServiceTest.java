@@ -87,6 +87,12 @@ class EmailAuthenticationServiceTest {
         public Optional<PasswordLoginAccount> findPasswordLoginByEmailLookup(String emailLookup) {
             return Optional.ofNullable(account);
         }
+
+        @Override
+        public Optional<PasswordLoginAccount> findPasswordLoginByAccountId(java.util.UUID accountId) {
+            return Optional.ofNullable(account)
+                    .filter(candidate -> candidate.accountId().equals(accountId));
+        }
     }
 
     private static final class RecordingCommandPort implements IdentityCommandPort {

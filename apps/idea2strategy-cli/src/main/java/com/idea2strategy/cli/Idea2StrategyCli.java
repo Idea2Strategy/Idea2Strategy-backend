@@ -12,6 +12,7 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -118,8 +119,74 @@ public final class Idea2StrategyCli {
         }
     }
 
+    /**
+     * Signs in through the browser so nothing driving this CLI ever handles a password.
+     *
+     * <p>The short code is printed for a person to check against what the browser shows; the long
+     * one stays here and is what actually collects the token. Progress is written to standard error
+     * so standard output stays a single JSON document for whatever is parsing it.
+     */
+    private static JsonNode browserLogin(Arguments args, ApiClient api, CredentialStore credentials) {
+        ObjectNode request = JSON.createObjectNode().put("clientLabel", "idea2strategy-cli");
+        JsonNode authorization = api.post("/api/v1/auth/device/authorize", request, null);
+        String deviceCode = authorization.path("deviceCode").asText();
+        String userCode = authorization.path("userCode").asText();
+        String openUri = authorization.path("verificationUriComplete").asText();
+        if (deviceCode.isBlank() || userCode.isBlank() || openUri.isBlank()) {
+            throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Device authorization response was incomplete");
+        }
+
+        System.err.println("Open " + openUri);
+        System.err.println("Confirm this code in the browser: " + userCode);
+        if (!args.flag("--no-open")) {
+            openInBrowser(openUri);
+        }
+
+        long intervalSeconds = Math.max(1, authorization.path("intervalSeconds").asLong(5));
+        Instant deadline = Instant.now().plusSeconds(600);
+        ObjectNode poll = JSON.createObjectNode().put("deviceCode", deviceCode);
+        while (Instant.now().isBefore(deadline)) {
+            try {
+                Thread.sleep(intervalSeconds * 1000L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new CliFailure(70, "INTERRUPTED", "Browser login was interrupted");
+            }
+            // A pending request answers 202, which the client treats as success with no token, so
+            // the blank check below is the wait. Denied, expired, and unknown all arrive as
+            // failures and propagate: none of them will ever turn into an approval, and polling on
+            // would just burn the deadline.
+            JsonNode response = api.post("/api/v1/auth/device/token", poll, null);
+            String token = response.path("accessToken").asText();
+            if (token.isBlank()) {
+                continue;
+            }
+            credentials.save(token);
+            ObjectNode result = JSON.createObjectNode().put("credentialSaved", true);
+            copyIfPresent(response, result, "accountId", "expiresAt");
+            return result;
+        }
+        throw new CliFailure(5, "DEVICE_AUTHORIZATION_TIMED_OUT", "The browser approval was not completed in time");
+    }
+
+    /** Best effort. A headless machine still gets the URI on standard error. */
+    private static void openInBrowser(String uri) {
+        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        List<String> command = os.contains("win")
+                ? List.of("rundll32", "url.dll,FileProtocolHandler", uri)
+                : os.contains("mac") ? List.of("open", uri) : List.of("xdg-open", uri);
+        try {
+            new ProcessBuilder(command).inheritIO().start();
+        } catch (IOException ignored) {
+            System.err.println("Could not open a browser automatically. Open the address above.");
+        }
+    }
+
     private static JsonNode login(Arguments args, ApiClient api, CredentialStore credentials, InputStream stdin) {
-        args.rejectUnknown("--email");
+        args.rejectUnknown("--email", "--browser", "--no-open");
+        if (args.flag("--browser")) {
+            return browserLogin(args, api, credentials);
+        }
         String password;
         try {
             password = new BufferedReader(new InputStreamReader(stdin, StandardCharsets.UTF_8)).readLine();
