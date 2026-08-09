@@ -93,11 +93,20 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void prepareValidatedStrategyAndPinnedPolicies() {
         var at = NOW.atOffset(ZoneOffset.UTC);
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
+        // A real policy document, not '{}'. The producer guard reads periodStart, periodEnd,
+        // marketDataSchemaVersion and timezone from it, and an empty document is exactly the shape it
+        // must refuse — a policy that does not say what it is compatible with cannot be checked
+        // against a manifest (root #471). The window covers the market manifest's 2025 period stated
+        // as local midnight in the policy timezone, which is how the two are compared.
         jdbc.update(
                 "insert into backtest.execution_policy_versions "
                         + "(version, policy_artifact_hash, policy_document, locked_at) "
-                        + "values ('backtest-policy-v1', ?, '{}'::jsonb, ?)",
-                HASH_A, at);
+                        + "values ('backtest-policy-v1', ?, ?::jsonb, ?)",
+                HASH_A,
+                "{\"version\":\"backtest-policy-v1\",\"periodStart\":\"2025-01-01T05:00:00Z\","
+                        + "\"periodEnd\":\"2026-01-01T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
+                        + "\"timezone\":\"America/New_York\"}",
+                at);
         jdbc.update(
                 "insert into strategy.element_catalog_versions "
                         + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
@@ -229,6 +238,8 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.input_bundles")).isZero();
         assertThat(count("operations.outbox_messages")).isZero();
         jdbc.update("update market_data.pipeline_runs set output_hash = ? where id = ?", HASH_B, FEATURE_PIPELINE_ID);
+
+        assertIncompatiblePolicyAndManifestAreRefused(release, request);
 
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
         assertThat(adapter.saveOnce(release, request, RUN_ID, 7, HASH_A)).isEqualTo(release);
@@ -365,6 +376,83 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(jdbc.queryForObject(
                         "select started_at is null from bot.bots where id = ?", Boolean.class, roomBotId))
                 .isTrue();
+    }
+
+    /**
+     * An official request whose policy and manifest cannot describe the same replay must leave nothing
+     * behind.
+     *
+     * <p>The producer published any available manifest against any locked policy, so a ten-year policy
+     * met a one-month manifest and a {@code market-bars-v2} policy met {@code market-bars/1} objects.
+     * The consumer only found out after the run, its input pins and its Outbox row were already durable,
+     * which is what made the frozen input set unreplayable (root #471). Each case below asserts the four
+     * durable tables stay empty, because a guard that rejects after writing is not a guard.
+     *
+     * <p>Called from the aggregate test rather than standing alone: this class seeds its fixtures once
+     * per test and does not clean between them, and every case here has to run before anything durable
+     * exists.
+     */
+    private void assertIncompatiblePolicyAndManifestAreRefused(
+            ImmutableStrategyRelease release, OfficialBacktestRequest request) {
+        // 1. The manifest states a schema the policy does not.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "market-bars-v2");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("does not match the execution policy schema");
+        assertNothingDurable();
+
+        // 2. The manifest period reaches outside the policy window.
+        setPolicyDocument("2025-06-01T04:00:00Z", "2025-07-01T04:00:00Z", "v1");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("is not inside the execution policy period");
+        assertNothingDurable();
+
+        // 3. A RAW manifest would measure the strategy against unadjusted splits and dividends.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+        jdbc.update("update market_data.dataset_manifests set data_layer = 'RAW' where id = ?", DATASET_ID);
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("must be ADJUSTED");
+        assertNothingDurable();
+        jdbc.update("update market_data.dataset_manifests set data_layer = 'ADJUSTED' where id = ?", DATASET_ID);
+
+        // 4. A policy retired at the release instant is no longer selectable, locked_at notwithstanding.
+        jdbc.update("update backtest.execution_policy_versions set retired_at = ? where version = ?",
+                NOW.atOffset(ZoneOffset.UTC), "backtest-policy-v1");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("must be locked and not retired");
+        assertNothingDurable();
+        jdbc.update("update backtest.execution_policy_versions set retired_at = null where version = ?",
+                "backtest-policy-v1");
+
+        // A policy that states nothing cannot be checked, so it cannot be used.
+        jdbc.update("update backtest.execution_policy_versions set policy_document = '{}'::jsonb "
+                + "where version = ?", "backtest-policy-v1");
+        assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("does not state its period and market data schema");
+        assertNothingDurable();
+
+        // Restore the compatible pair so the caller can go on to prove the success path.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+    }
+
+    private void setPolicyDocument(String periodStart, String periodEnd, String schemaVersion) {
+        jdbc.update(
+                "update backtest.execution_policy_versions set policy_document = ?::jsonb where version = ?",
+                "{\"version\":\"backtest-policy-v1\",\"periodStart\":\"" + periodStart + "\","
+                        + "\"periodEnd\":\"" + periodEnd + "\",\"marketDataSchemaVersion\":\""
+                        + schemaVersion + "\",\"timezone\":\"America/New_York\"}",
+                "backtest-policy-v1");
+    }
+
+    private void assertNothingDurable() {
+        assertThat(count("bot.bots")).isZero();
+        assertThat(count("backtest.runs")).isZero();
+        assertThat(count("backtest.input_bundles")).isZero();
+        assertThat(count("operations.outbox_messages")).isZero();
     }
 
     private int count(String table) {
