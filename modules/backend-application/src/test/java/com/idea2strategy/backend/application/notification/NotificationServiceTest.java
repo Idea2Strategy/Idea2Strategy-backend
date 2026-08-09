@@ -22,7 +22,7 @@ class NotificationServiceTest {
         var service = service(
                 new NotificationPolicy("SECURITY_EVENT", "policy-v1", true,
                         Set.of(NotificationChannel.APP, NotificationChannel.EMAIL)),
-                Set.of(), store);
+                false, store);
 
         service.create(request("SECURITY_EVENT"));
 
@@ -35,11 +35,24 @@ class NotificationServiceTest {
         var service = service(
                 new NotificationPolicy("BOT_SUMMARY", "policy-v1", false,
                         Set.of(NotificationChannel.APP, NotificationChannel.EMAIL)),
-                Set.of(NotificationChannel.APP), store);
+                false, store);
 
         service.create(request("BOT_SUMMARY"));
 
         assertThat(store.channels).containsExactly(NotificationChannel.APP);
+    }
+
+    @Test
+    void optionalEmailOptInAddsEmailWhenThePolicyAllowsIt() {
+        var store = new RecordingStore();
+        var service = service(
+                new NotificationPolicy("CASE_UPDATED", "policy-v1", false,
+                        Set.of(NotificationChannel.APP, NotificationChannel.EMAIL)),
+                true, store);
+
+        service.create(request("CASE_UPDATED"));
+
+        assertThat(store.channels).containsExactlyInAnyOrder(NotificationChannel.APP, NotificationChannel.EMAIL);
     }
 
     @Test
@@ -48,7 +61,7 @@ class NotificationServiceTest {
         store.owned = false;
         var service = service(
                 new NotificationPolicy("SECURITY_EVENT", "policy-v1", true, Set.of(NotificationChannel.APP)),
-                Set.of(NotificationChannel.APP), store);
+                false, store);
 
         assertThatThrownBy(() -> service.markRead(ACCOUNT, NOTIFICATION))
                 .isInstanceOf(NotificationUnavailableException.class)
@@ -57,11 +70,16 @@ class NotificationServiceTest {
 
     private NotificationService service(
             NotificationPolicy policy,
-            Set<NotificationChannel> enabled,
+            boolean emailEnabled,
             RecordingStore store) {
         return new NotificationService(
                 type -> policy,
-                (accountId, typeCode, policyVersion) -> enabled,
+                new EmailNotificationPreferencePort() {
+                    @Override public boolean enabled(UUID accountId) { return emailEnabled; }
+                    @Override public void replace(UUID accountId, boolean enabled, Instant updatedAt) {
+                        throw new UnsupportedOperationException();
+                    }
+                },
                 store,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }

@@ -8,12 +8,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.idea2strategy.backend.application.usercase.UserCaseCommand;
+import com.idea2strategy.backend.application.usercase.UserCaseDetailView;
+import com.idea2strategy.backend.application.usercase.UserCaseHistoryItem;
+import com.idea2strategy.backend.application.usercase.UserCasePage;
 import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
 import com.idea2strategy.backend.application.identity.CustomerAccessScope;
 import com.idea2strategy.backend.application.identity.SanctionedAccountAccessException;
 import com.idea2strategy.backend.application.usercase.UserCaseService;
 import com.idea2strategy.backend.application.usercase.UserCaseStatus;
 import com.idea2strategy.backend.application.usercase.UserCaseStore;
+import com.idea2strategy.backend.application.usercase.UserCaseSummary;
 import com.idea2strategy.backend.application.usercase.UserCaseSupplementCommand;
 import com.idea2strategy.backend.application.usercase.UserCaseType;
 import com.idea2strategy.backend.application.usercase.UserCaseView;
@@ -66,9 +70,38 @@ class UserCaseControllerTest {
     }
 
     @Test
+    void listsCaseSubjectsAndReturnsCustomerSafeDetailWithoutAccountOrEvidenceIds() throws Exception {
+        var store = new RecordingStore();
+        store.page = new UserCasePage(List.of(new UserCaseSummary(
+                CASE, UserCaseType.INQUIRY, UserCaseStatus.UNDER_REVIEW,
+                "결제 내역 문의", NOW, NOW)), null);
+        store.detail = Optional.of(new UserCaseDetailView(
+                CASE, UserCaseType.INQUIRY, UserCaseStatus.UNDER_REVIEW,
+                "결제 내역 문의", "결제 내역을 확인해 주세요.", NOW, NOW, null,
+                List.of(new UserCaseHistoryItem(UserCaseHistoryItem.Actor.SUPPORT,
+                        UserCaseStatus.UNDER_REVIEW, "고객지원팀에서 확인하고 있습니다.", NOW))));
+        MockMvc mvc = mvc(store);
+
+        mvc.perform(get("/api/v1/cases").param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].subject").value("결제 내역 문의"))
+                .andExpect(jsonPath("$.items[0].status").value("UNDER_REVIEW"));
+        mvc.perform(get("/api/v1/cases/{caseId}", CASE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.subject").value("결제 내역 문의"))
+                .andExpect(jsonPath("$.description").value("결제 내역을 확인해 주세요."))
+                .andExpect(jsonPath("$.history[0].message").value("고객지원팀에서 확인하고 있습니다."))
+                .andExpect(jsonPath("$.accountId").doesNotExist())
+                .andExpect(jsonPath("$.evidenceObjectIds").doesNotExist());
+    }
+
+    @Test
     void sanctionedPrincipalCannotUseAppealDetailScopeToReadAnotherCaseType() {
         var store = new RecordingStore();
         store.found = Optional.of(store.view());
+        store.detail = Optional.of(new UserCaseDetailView(
+                CASE, UserCaseType.REPORT, UserCaseStatus.OPEN, "Problem", "Details",
+                NOW, NOW, null, List.of()));
         var service = new UserCaseService(store, Clock.fixed(NOW, ZoneOffset.UTC));
         CustomerAccessPrincipal principal = new CustomerAccessPrincipal() {
             @Override public UUID accountId() { return accountId(CustomerAccessScope.STANDARD); }
@@ -100,6 +133,8 @@ class UserCaseControllerTest {
     private static final class RecordingStore implements UserCaseStore {
         private UserCaseCommand submitted;
         private Optional<UserCaseView> found = Optional.empty();
+        private UserCasePage page = new UserCasePage(List.of(), null);
+        private Optional<UserCaseDetailView> detail = Optional.empty();
 
         @Override
         public CommandResult submit(UserCaseCommand command, Instant now) {
@@ -115,6 +150,16 @@ class UserCaseControllerTest {
         @Override
         public Optional<UserCaseView> findOwned(UUID accountId, UUID caseId) {
             return found;
+        }
+
+        @Override
+        public UserCasePage findOwnedPage(UUID accountId, String cursor, int limit) {
+            return page;
+        }
+
+        @Override
+        public Optional<UserCaseDetailView> findOwnedDetail(UUID accountId, UUID caseId) {
+            return detail;
         }
 
         private UserCaseView view() {

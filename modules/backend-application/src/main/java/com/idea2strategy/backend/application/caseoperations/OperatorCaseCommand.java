@@ -15,6 +15,7 @@ public record OperatorCaseCommand(
         UUID assigneeOperatorId,
         UUID requiredPermissionId,
         String reasonCode,
+        String customerMessage,
         List<UUID> evidenceIds,
         UUID sanctionId,
         AccountSanctionState.Type sanctionType,
@@ -32,6 +33,10 @@ public record OperatorCaseCommand(
         }
         Objects.requireNonNull(requiredPermissionId, "requiredPermissionId");
         requireText(reasonCode, "reasonCode");
+        customerMessage = customerMessage == null ? null : customerMessage.trim();
+        if (customerMessage != null && customerMessage.length() > 2000) {
+            throw new IllegalArgumentException("customerMessage must not exceed 2000 characters");
+        }
         evidenceIds = List.copyOf(evidenceIds);
         Objects.requireNonNull(correlationId, "correlationId");
         requireText(idempotencyKey, "idempotencyKey");
@@ -80,9 +85,30 @@ public record OperatorCaseCommand(
             String idempotencyKey,
             String requestHash) {
         this(action, requestContext, caseId, expectedVersion, assigneeOperatorId, requiredPermissionId,
-                reasonCode, evidenceIds, sanctionId,
+                reasonCode, null, evidenceIds, sanctionId,
                 action == Action.APPLY_SANCTION ? AccountSanctionState.Type.PERMANENT : null,
                 null, 0, correlationId, idempotencyKey, requestHash);
+    }
+
+    public OperatorCaseCommand(
+            Action action,
+            OperatorRequestContext requestContext,
+            UUID caseId,
+            long expectedVersion,
+            UUID assigneeOperatorId,
+            UUID requiredPermissionId,
+            String reasonCode,
+            List<UUID> evidenceIds,
+            UUID sanctionId,
+            AccountSanctionState.Type sanctionType,
+            Instant sanctionExpiresAt,
+            long expectedSanctionVersion,
+            UUID correlationId,
+            String idempotencyKey,
+            String requestHash) {
+        this(action, requestContext, caseId, expectedVersion, assigneeOperatorId,
+                requiredPermissionId, reasonCode, null, evidenceIds, sanctionId, sanctionType,
+                sanctionExpiresAt, expectedSanctionVersion, correlationId, idempotencyKey, requestHash);
     }
 
     private static void requireText(String value, String name) {
