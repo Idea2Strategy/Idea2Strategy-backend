@@ -8,13 +8,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.idea2strategy.backend.api.identity.CustomerAccessPrincipal;
-import com.idea2strategy.backend.application.notification.NotificationChannel;
-import com.idea2strategy.backend.application.notification.NotificationPreferenceService;
+import com.idea2strategy.backend.application.notification.EmailNotificationPreferenceService;
+import com.idea2strategy.backend.application.notification.EmailNotificationPreferenceView;
 import com.idea2strategy.backend.application.notification.NotificationQueryPort.NotificationPage;
 import com.idea2strategy.backend.application.notification.NotificationQueryService;
 import com.idea2strategy.backend.application.notification.NotificationService;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +26,7 @@ class NotificationControllerTest {
     void listAndMarkReadUseOnlyTheAuthenticatedAccount() {
         var queries = mock(NotificationQueryService.class);
         var notifications = mock(NotificationService.class);
-        var preferences = mock(NotificationPreferenceService.class);
+        var preferences = mock(EmailNotificationPreferenceService.class);
         var principal = mock(CustomerAccessPrincipal.class);
         UUID correlation = UUID.randomUUID();
         when(principal.accountId()).thenReturn(ACCOUNT);
@@ -45,21 +44,24 @@ class NotificationControllerTest {
     }
 
     @Test
-    void preferenceUpdateUsesOnlyTheAuthenticatedAccount() {
+    void emailPreferenceReadAndUpdateUseOnlyTheAuthenticatedAccount() {
         var queries = mock(NotificationQueryService.class);
         var notifications = mock(NotificationService.class);
-        var preferences = mock(NotificationPreferenceService.class);
+        var preferences = mock(EmailNotificationPreferenceService.class);
         var principal = mock(CustomerAccessPrincipal.class);
         UUID correlation = UUID.randomUUID();
         when(principal.accountId()).thenReturn(ACCOUNT);
         var controller = new NotificationController(queries, notifications, preferences, principal);
 
-        controller.replacePreference(
-                "BOT_SUMMARY",
-                new NotificationController.ReplacePreferenceRequest(Set.of(NotificationChannel.APP)),
-                "Bearer token",
-                correlation.toString());
+        when(preferences.get(ACCOUNT)).thenReturn(new EmailNotificationPreferenceView(false));
+        when(preferences.replace(ACCOUNT, true)).thenReturn(new EmailNotificationPreferenceView(true));
 
-        verify(preferences).replace(ACCOUNT, "BOT_SUMMARY", Set.of(NotificationChannel.APP));
+        assertThat(controller.emailPreference("Bearer token", correlation.toString()).enabled()).isFalse();
+        assertThat(controller.replaceEmailPreference(
+                new NotificationController.ReplaceEmailPreferenceRequest(true),
+                "Bearer token", correlation.toString()).enabled()).isTrue();
+
+        verify(preferences).get(ACCOUNT);
+        verify(preferences).replace(ACCOUNT, true);
     }
 }

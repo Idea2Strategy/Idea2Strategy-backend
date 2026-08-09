@@ -8,17 +8,17 @@ import java.util.UUID;
 
 public final class NotificationService {
     private final NotificationPolicyPort policies;
-    private final NotificationPreferencePort preferences;
+    private final EmailNotificationPreferencePort emailPreferences;
     private final NotificationStore store;
     private final Clock clock;
 
     public NotificationService(
             NotificationPolicyPort policies,
-            NotificationPreferencePort preferences,
+            EmailNotificationPreferencePort emailPreferences,
             NotificationStore store,
             Clock clock) {
         this.policies = Objects.requireNonNull(policies, "policies");
-        this.preferences = Objects.requireNonNull(preferences, "preferences");
+        this.emailPreferences = Objects.requireNonNull(emailPreferences, "emailPreferences");
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -29,11 +29,11 @@ public final class NotificationService {
         if (policy.mandatory()) {
             selected = policy.defaultChannels();
         } else {
-            var enabled = preferences.enabledChannels(
-                    request.accountId(), request.typeCode(), policy.policyVersion());
             var intersection = EnumSet.noneOf(NotificationChannel.class);
             intersection.addAll(policy.defaultChannels());
-            intersection.retainAll(enabled);
+            if (!emailPreferences.enabled(request.accountId())) {
+                intersection.remove(NotificationChannel.EMAIL);
+            }
             intersection.add(NotificationChannel.APP);
             selected = Set.copyOf(intersection);
         }
