@@ -24,7 +24,11 @@ public record StrategyReleaseInputCatalog(
             UUID feePolicyId,
             int feeRateBps,
             UUID buyingPowerBufferPolicyId,
-            int buyingPowerBufferBps) {}
+            int buyingPowerBufferBps,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            String marketDataSchemaVersion,
+            Instant lockedAt) {}
 
     public record Dataset(
             UUID id,
@@ -33,5 +37,6 @@ public record StrategyReleaseInputCatalog(
             String resolution,
             LocalDate periodStart,
             LocalDate periodEnd,
-            String schemaVersion) {}
+            String schemaVersion,
+            Instant availableAt) {}
 }

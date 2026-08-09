@@ -27,10 +27,13 @@ class StrategyReleaseInputCatalogControllerTest {
         when(service.getSelectable()).thenReturn(new StrategyReleaseInputCatalog(
                 List.of(new ExecutionPolicy(
                         "policy-v1", "market-v1", "accounting-v1", "precision-v1",
-                        feeId, 20, bufferId, 1)),
+                        feeId, 20, bufferId, 1,
+                        LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01"),
+                        "market-bars-v2", Instant.parse("2026-08-07T11:00:00Z"))),
                 List.of(new Dataset(
                         datasetId, "alpaca-sip", "ADJUSTED", "1m",
-                        LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01"), "market-bars-v2")),
+                        LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01"), "market-bars-v2",
+                        Instant.parse("2026-08-07T11:30:00Z"))),
                 Instant.parse("2026-08-07T12:00:00Z")));
 
         MockMvcBuilders.standaloneSetup(new StrategyReleaseInputCatalogController(service))

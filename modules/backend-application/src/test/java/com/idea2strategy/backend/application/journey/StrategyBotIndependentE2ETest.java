@@ -20,6 +20,7 @@ import com.idea2strategy.backend.application.strategy.StrategyDocumentQueryPort;
 import com.idea2strategy.backend.application.strategy.StrategyDraftReplaceResult;
 import com.idea2strategy.backend.application.strategy.StrategyEditLeaseTokens;
 import com.idea2strategy.backend.application.strategy.StrategyQueryPort;
+import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalog;
 import com.idea2strategy.backend.application.strategy.StrategyValidationRunCommandPort;
 import com.idea2strategy.backend.application.strategy.StrategyValidationRunQueryPort;
 import com.idea2strategy.backend.application.testing.FakeBacktestAdapter;
@@ -116,6 +117,17 @@ class StrategyBotIndependentE2ETest {
                 repository.validationQuery(),
                 repository,
                 repository,
+                observedAt -> new StrategyReleaseInputCatalog(
+                        List.of(new StrategyReleaseInputCatalog.ExecutionPolicy(
+                                "backtest-policy-v1", "broker/v1", "accounting/v1", "precision/v1",
+                                FEE_POLICY_ID, 20, BUFFER_POLICY_ID, 1,
+                                java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
+                                "market-bars/1", NOW.minusSeconds(60))),
+                        List.of(new StrategyReleaseInputCatalog.Dataset(
+                                DATASET_ID, "ALPACA_SIP_ALL_30M", "ADJUSTED", "30m",
+                                java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
+                                "market-bars/1", NOW.minusSeconds(30))),
+                        observedAt),
                 principal,
                 clock);
         var release = releases.release(VALIDATION_ID, catalog(), releaseCommand());
@@ -147,13 +159,6 @@ class StrategyBotIndependentE2ETest {
                 BOT_ID,
                 new BigDecimal("100000.00"),
                 10_000,
-                "broker/v1",
-                "accounting/v1",
-                "precision/v1",
-                FEE_POLICY_ID,
-                BUFFER_POLICY_ID,
-                DATASET_ID,
-                "backtest-policy-v1",
                 "{\"policy\":\"FIRST_WINS\"}");
     }
 

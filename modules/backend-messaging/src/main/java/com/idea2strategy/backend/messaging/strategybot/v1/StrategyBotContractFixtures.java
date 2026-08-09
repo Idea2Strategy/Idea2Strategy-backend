@@ -138,6 +138,7 @@ public final class StrategyBotContractFixtures {
                 compiledPlan.planChecksum(),
                 DATASET_MANIFEST_ID,
                 SNAPSHOT_HASH,
+                List.of(new PinnedDataset(DATASET_MANIFEST_ID, "MARKET_BARS", SNAPSHOT_HASH)),
                 "2025-01-01",
                 "2025-12-31",
                 "accounting:1.0.0",
@@ -566,6 +567,7 @@ public final class StrategyBotContractFixtures {
             String compiledPlanChecksum,
             String datasetManifestId,
             String expectedDatasetHash,
+            List<PinnedDataset> datasets,
             String periodStart,
             String periodEnd,
             String assumptionsVersion,
@@ -584,6 +586,10 @@ public final class StrategyBotContractFixtures {
             requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
             requireText(datasetManifestId, "datasetManifestId");
             requireSha256(expectedDatasetHash, "expectedDatasetHash");
+            datasets = List.copyOf(Objects.requireNonNull(datasets, "datasets"));
+            if (datasets.isEmpty()) {
+                throw new IllegalArgumentException("Official release backtests pin required datasets");
+            }
             requireText(periodStart, "periodStart");
             requireText(periodEnd, "periodEnd");
             requireText(assumptionsVersion, "assumptionsVersion");
@@ -596,6 +602,14 @@ public final class StrategyBotContractFixtures {
                 throw new IllegalArgumentException("Official release backtests pin required feature outputs");
             }
             requireSha256(requestHash, "requestHash");
+        }
+    }
+
+    public record PinnedDataset(String datasetManifestId, String purposeCode, String expectedDatasetHash) {
+        public PinnedDataset {
+            requireText(datasetManifestId, "datasetManifestId");
+            requireText(purposeCode, "purposeCode");
+            requireSha256(expectedDatasetHash, "expectedDatasetHash");
         }
     }
 
