@@ -32,10 +32,15 @@ public class StrategyJooqQueryAdapter implements StrategyQueryPort {
         var editSequence = field(name("edit_sequence"), Long.class);
         var createdAt = field(name("created_at"), OffsetDateTime.class);
         var updatedAt = field(name("updated_at"), OffsetDateTime.class);
+        var archivedAt = field(name("archived_at"), OffsetDateTime.class);
+        var deletedAt = field(name("deleted_at"), OffsetDateTime.class);
 
         return dsl.select(id, owner, mode, strategyName, description, editSequence, createdAt, updatedAt)
                 .from(strategies)
-                .where(id.eq(strategyId).and(owner.eq(ownerAccountId)))
+                .where(id.eq(strategyId)
+                        .and(owner.eq(ownerAccountId))
+                        .and(archivedAt.isNull())
+                        .and(deletedAt.isNull()))
                 .fetchOptional(record -> new Strategy(
                         record.get(id),
                         record.get(owner),
