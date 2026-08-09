@@ -9,6 +9,7 @@ import com.idea2strategy.backend.application.identity.PasswordResetRejectedExcep
 import com.idea2strategy.backend.application.identity.PolicyDecisionRejectedException;
 import com.idea2strategy.backend.application.identity.SanctionedAccountAccessException;
 import com.idea2strategy.backend.application.identity.VerificationRejectedException;
+import com.idea2strategy.backend.application.identity.VerificationRateLimitedException;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -58,6 +59,12 @@ public class IdentityAuthExceptionHandler {
     @ExceptionHandler(DuplicateEmailException.class)
     ResponseEntity<Map<String, String>> duplicate(DuplicateEmailException exception) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("code", "EMAIL_ALREADY_REGISTERED"));
+    }
+
+    @ExceptionHandler(VerificationRateLimitedException.class)
+    ResponseEntity<Map<String, String>> verificationRateLimited(VerificationRateLimitedException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(Map.of("code", "VERIFICATION_REQUEST_RATE_LIMITED"));
     }
 
     @ExceptionHandler(AuthenticationRejectedException.class)

@@ -23,6 +23,7 @@ import com.idea2strategy.backend.application.identity.RegistrationQueryPort;
 import com.idea2strategy.backend.application.identity.RefreshTokenFamilyQueryPort;
 import com.idea2strategy.backend.application.identity.StoredRefreshTokenFamily;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,9 +57,11 @@ public class IdentityJooqQueryAdapter
             List<IdentifierFingerprint> comparisonFingerprints) {
         var emails = table(name("identity", "account_emails")).as("email");
         var accounts = table(name("identity", "accounts")).as("account");
+        var verifications = table(name("identity", "email_verification_requests")).as("verification");
         var accountId = field(name("account", "id"), UUID.class);
         var lifecycleStatus = field(name("account", "lifecycle_status")).cast(String.class);
         var emailStatus = field(name("email", "status")).cast(String.class);
+        var verificationExpiresAt = field(name("verification", "expires_at"), OffsetDateTime.class);
         Condition identifierMatch = falseCondition();
         for (var fingerprint : comparisonFingerprints) {
             identifierMatch = identifierMatch.or(
@@ -66,14 +69,19 @@ public class IdentityJooqQueryAdapter
                             .and(field(name("email", "email_lookup_key_version"), Short.class)
                                     .eq(fingerprint.keyVersion())));
         }
-        return dsl.select(accountId, lifecycleStatus, emailStatus)
+        return dsl.select(accountId, lifecycleStatus, emailStatus, verificationExpiresAt)
                 .from(emails)
                 .join(accounts).on(field(name("email", "account_id"), UUID.class).eq(accountId))
+                .leftJoin(verifications)
+                .on(field(name("verification", "account_id"), UUID.class).eq(accountId)
+                        .and(field(name("verification", "consumed_at")).isNull())
+                        .and(field(name("verification", "revoked_at")).isNull()))
                 .where(identifierMatch)
                 .fetchOptional(record -> new ExistingEmailRegistration(
                         record.value1(),
                         AccountLifecycleStatus.valueOf(record.value2()),
-                        EmailStatus.valueOf(record.value3())));
+                        EmailStatus.valueOf(record.value3()),
+                        record.value4() == null ? null : record.value4().toInstant()));
     }
 
     @Override

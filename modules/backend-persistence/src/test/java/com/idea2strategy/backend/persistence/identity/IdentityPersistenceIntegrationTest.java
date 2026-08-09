@@ -21,14 +21,17 @@ import com.idea2strategy.backend.application.identity.ProtectedEmail;
 import com.idea2strategy.backend.application.identity.ProtectedOidcSubject;
 import com.idea2strategy.backend.application.identity.IdentifierFingerprint;
 import com.idea2strategy.backend.application.identity.RequestPasswordResetCommand;
+import com.idea2strategy.backend.application.identity.ResendVerificationCommand;
 import com.idea2strategy.backend.application.identity.RecoverWithCodeCommand;
 import com.idea2strategy.backend.application.identity.ResetPasswordCommand;
 import com.idea2strategy.backend.application.identity.RefreshTokenSecret;
 import com.idea2strategy.backend.application.identity.SignupCommand;
 import com.idea2strategy.backend.application.identity.StartOidcLinkCommand;
 import com.idea2strategy.backend.application.identity.VerificationToken;
+import com.idea2strategy.backend.application.identity.VerificationRateLimitedException;
 import com.idea2strategy.backend.application.identity.VerifyEmailCommand;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -73,6 +76,9 @@ class IdentityPersistenceIntegrationTest {
 
     @Autowired
     private IdentityJpaCommandAdapter commandAdapter;
+
+    @Autowired
+    private PendingRegistrationCleanupJpaAdapter pendingRegistrationCleanup;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -130,16 +136,14 @@ class IdentityPersistenceIntegrationTest {
                         signup.accountId()))
                 .isEqualTo(1);
 
-        var replacement = registration.signup(new SignupCommand(
-                "person@example.com", "DifferentPass!2026",
+        var repeated = registration.signup(new SignupCommand(
+                "person@example.com", "AttackerKnownPass!2026",
                 UUID.randomUUID(), "192.0.2.0/24"));
-        assertThat(replacement.accountId()).isEqualTo(signup.accountId());
-        assertThatThrownBy(() -> registration.verify(
-                        new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID())))
-                .hasMessage("Verification token is no longer valid");
-        registration.verify(new VerifyEmailCommand(replacement.verificationToken(), UUID.randomUUID()));
+        assertThat(repeated.accountId()).isEqualTo(signup.accountId());
+        assertThat(repeated.verificationToken()).isNull();
+        registration.verify(new VerifyEmailCommand(signup.verificationToken(), UUID.randomUUID()));
         var login = authenticationService().login(new LoginCommand(
-                "person@example.com", "DifferentPass!2026", UUID.randomUUID()));
+                "person@example.com", "ValidPass!2026", UUID.randomUUID()));
 
         assertThat(login.accountId()).isEqualTo(signup.accountId());
         assertThat(login.refreshTokenSecret()).startsWith("raw-session-token-");
@@ -177,19 +181,159 @@ class IdentityPersistenceIntegrationTest {
                         """,
                         String.class,
                         signup.accountId()))
-                .isEqualTo("hash:DifferentPass!2026");
+                .isEqualTo("hash:ValidPass!2026");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.email_verification_requests where account_id = ?",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                         "select count(*) from identity.authentication_events where account_id = ? and event_type = 'LOGIN_FAILED'",
                         Integer.class,
                         signup.accountId()))
                 .isEqualTo(1);
 
-        assertThatThrownBy(() -> registration.verify(
-                        new VerifyEmailCommand(replacement.verificationToken(), UUID.randomUUID())))
-                .hasMessage("Verification token is no longer valid");
+        assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
+                        "person@example.com", "AttackerKnownPass!2026", UUID.randomUUID())))
+                .isInstanceOf(AuthenticationRejectedException.class);
         assertThatThrownBy(() -> registration.signup(new SignupCommand(
                         "person@example.com", "AnotherPass!2026", UUID.randomUUID(), null)))
                 .isInstanceOf(DuplicateEmailException.class);
+    }
+
+    @Test
+    void verificationResendEnforcesCooldownAndFiveRequestsPerAccountPerHour() {
+        var tokenSequence = new AtomicInteger();
+        var signup = registrationService(tokenSequence, NOW).signup(new SignupCommand(
+                "limited-account@example.com", "ValidPass!2026", UUID.randomUUID(), "198.51.101.0/24"));
+
+        assertThatThrownBy(() -> registrationService(tokenSequence, NOW.plusSeconds(30))
+                        .resendVerification(new ResendVerificationCommand(
+                                signup.accountId(), UUID.randomUUID(), "198.51.101.0/24")))
+                .isInstanceOf(VerificationRateLimitedException.class);
+
+        for (int request = 1; request <= 4; request++) {
+            var delivery = registrationService(tokenSequence, NOW.plusSeconds(61L * request))
+                    .resendVerification(new ResendVerificationCommand(
+                            signup.accountId(), UUID.randomUUID(), "198.51.101.0/24"));
+            assertThat(delivery.verificationToken()).isNotBlank();
+        }
+
+        assertThatThrownBy(() -> registrationService(tokenSequence, NOW.plusSeconds(61L * 5))
+                        .resendVerification(new ResendVerificationCommand(
+                                signup.accountId(), UUID.randomUUID(), "198.51.101.0/24")))
+                .isInstanceOf(VerificationRateLimitedException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.email_verification_requests where account_id = ?",
+                        Integer.class,
+                        signup.accountId()))
+                .isEqualTo(5);
+    }
+
+    @Test
+    void signupLimitsVerificationEmailsAcrossAccountsForOneIpPrefix() {
+        var tokenSequence = new AtomicInteger();
+        var registration = registrationService(tokenSequence, raw -> {
+            String normalized = raw.trim().toLowerCase();
+            return new ProtectedEmail(
+                    normalized,
+                    "ciphertext-v2:" + normalized,
+                    "lookup-v2:" + normalized,
+                    (short) 2,
+                    (short) 2,
+                    List.of(
+                            new IdentifierFingerprint("lookup-v2:" + normalized, (short) 2),
+                            new IdentifierFingerprint("lookup:" + normalized, (short) 1)));
+        }, NOW);
+        for (int request = 0; request < 20; request++) {
+            registration.signup(new SignupCommand(
+                    "limited-ip-" + request + "@example.com",
+                    "ValidPass!2026",
+                    UUID.randomUUID(),
+                    "198.51.102.0/24"));
+        }
+
+        assertThatThrownBy(() -> registration.signup(new SignupCommand(
+                        "limited-ip-overflow@example.com",
+                        "ValidPass!2026",
+                        UUID.randomUUID(),
+                        "198.51.102.0/24")))
+                .isInstanceOf(VerificationRateLimitedException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.email_verification_requests where request_ip_prefix = cast(? as inet)",
+                        Integer.class,
+                        "198.51.102.0/24"))
+                .isEqualTo(20);
+    }
+
+    @Test
+    void cleanupPurgesExpiredPendingCredentialsAndIdentifiersButKeepsImmutableEvidence() {
+        var tokenSequence = new AtomicInteger();
+        var oldPending = registrationService(tokenSequence, NOW).signup(new SignupCommand(
+                "abandoned@example.com", "ValidPass!2026", UUID.randomUUID(), "198.51.103.0/24"));
+        var freshPending = registrationService(tokenSequence, NOW.plus(Duration.ofDays(1))).signup(new SignupCommand(
+                "fresh-pending@example.com", "ValidPass!2026", UUID.randomUUID(), "198.51.104.0/24"));
+        var active = registrationService(tokenSequence, NOW).signup(new SignupCommand(
+                "active-person@example.com", "ValidPass!2026", UUID.randomUUID(), "198.51.105.0/24"));
+        registrationService(tokenSequence, NOW.plusSeconds(10))
+                .verify(new VerifyEmailCommand(active.verificationToken(), UUID.randomUUID()));
+
+        int purged = pendingRegistrationCleanup.purgeExpired(
+                NOW, NOW.plus(Duration.ofDays(7)), 100);
+
+        assertThat(purged).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select lifecycle_status::text from identity.accounts where id = ?",
+                        String.class,
+                        oldPending.accountId()))
+                .isEqualTo("CLOSED");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.account_emails where account_id = ?",
+                        Integer.class,
+                        oldPending.accountId()))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.email_verification_requests where account_id = ?",
+                        Integer.class,
+                        oldPending.accountId()))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                        select count(*) from identity.password_credentials credential
+                        join identity.login_identities login on login.id = credential.login_identity_id
+                        where login.account_id = ?
+                        """, Integer.class, oldPending.accountId()))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                        "select status::text from identity.login_identities where account_id = ?",
+                        String.class,
+                        oldPending.accountId()))
+                .isEqualTo("DISABLED");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.authentication_events where account_id = ?",
+                        Integer.class,
+                        oldPending.accountId()))
+                .isGreaterThanOrEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select command_type from identity.account_lifecycle_events where account_id = ? order by event_sequence desc limit 1",
+                        String.class,
+                        oldPending.accountId()))
+                .isEqualTo("PENDING_REGISTRATION_EXPIRED");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select lifecycle_status::text from identity.accounts where id = ?",
+                        String.class,
+                        freshPending.accountId()))
+                .isEqualTo("PENDING_VERIFICATION");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select lifecycle_status::text from identity.accounts where id = ?",
+                        String.class,
+                        active.accountId()))
+                .isEqualTo("ACTIVE");
+
+        var restarted = registrationService(tokenSequence, NOW.plus(Duration.ofDays(7)).plusSeconds(1))
+                .signup(new SignupCommand(
+                        "abandoned@example.com", "NewValidPass!2026", UUID.randomUUID(), "198.51.103.0/24"));
+        assertThat(restarted.accountId()).isNotEqualTo(oldPending.accountId());
+        assertThat(restarted.verificationToken()).isNotBlank();
     }
 
     @Test
@@ -538,6 +682,18 @@ class IdentityPersistenceIntegrationTest {
         });
     }
 
+    private EmailRegistrationService registrationService(AtomicInteger tokenSequence, Instant now) {
+        return registrationService(tokenSequence, raw -> {
+            String normalized = raw.trim().toLowerCase();
+            return new ProtectedEmail(
+                    normalized,
+                    "ciphertext:" + normalized,
+                    "lookup:" + normalized,
+                    (short) 1,
+                    (short) 1);
+        }, now);
+    }
+
     @Test
     void oidcLinkFailsClosedForMissingActiveBindingKeyVersionAndAcceptsProviderCompleteRing() {
         jdbcTemplate.update("""
@@ -590,6 +746,11 @@ class IdentityPersistenceIntegrationTest {
 
     private EmailRegistrationService registrationService(
             AtomicInteger tokenSequence, Function<String, ProtectedEmail> protector) {
+        return registrationService(tokenSequence, protector, NOW);
+    }
+
+    private EmailRegistrationService registrationService(
+            AtomicInteger tokenSequence, Function<String, ProtectedEmail> protector, Instant now) {
         return new EmailRegistrationService(
                 queryAdapter,
                 commandAdapter,
@@ -601,7 +762,7 @@ class IdentityPersistenceIntegrationTest {
                     return new VerificationToken(raw, "digest:" + raw);
                 },
                 raw -> "digest:" + raw,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(now, ZoneOffset.UTC));
     }
 
     private ProtectedOidcSubject protectedExternalSubject() {
@@ -625,6 +786,6 @@ class IdentityPersistenceIntegrationTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @EntityScan(basePackageClasses = IdentityAccountJpaEntity.class)
-    @Import({IdentityJooqQueryAdapter.class, IdentityJpaCommandAdapter.class})
+    @Import({IdentityJooqQueryAdapter.class, IdentityJpaCommandAdapter.class, PendingRegistrationCleanupJpaAdapter.class})
     static class TestApplication {}
 }
