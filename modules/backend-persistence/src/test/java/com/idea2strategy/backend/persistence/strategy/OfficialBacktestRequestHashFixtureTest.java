@@ -3,6 +3,7 @@ package com.idea2strategy.backend.persistence.strategy;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.idea2strategy.backend.application.strategy.OfficialBacktestRequest;
+import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -28,19 +29,22 @@ class OfficialBacktestRequestHashFixtureTest {
                 botId,
                 "sha256:" + "1".repeat(64),
                 "sha256:" + "2".repeat(64),
-                UUID.fromString("40000000-0000-4000-8000-000000000001"),
+                List.of(UUID.fromString("40000000-0000-4000-8000-000000000001")),
                 "accounting-v1",
                 "backtest-policy-v1",
                 OfficialBacktestRequest.REQUEST_REASON);
 
         assertThat(ImmutableStrategyReleaseJooqCommandAdapter.basicRequestHash(
                         request,
-                        "sha256:" + "3".repeat(64),
+                        List.of(new DatasetPin(
+                                UUID.fromString("40000000-0000-4000-8000-000000000001"),
+                                "MARKET_BARS",
+                                "sha256:" + "3".repeat(64))),
                         LocalDate.parse("2025-01-01"),
                         LocalDate.parse("2025-12-31"),
                         List.of(new FeaturePin(
                                 UUID.fromString("50000000-0000-4000-8000-000000000001"),
                                 "sha256:" + "5".repeat(64)))))
-                .isEqualTo("sha256:bdf3474e890de34991f6caf4c6e9c0a2807f5a6728701eb03000f05797deebfb");
+                .isEqualTo("sha256:07b563b854efa511a10d2661d1da454fb84a73b5a31c8afecafa144d209812cc");
     }
 }

@@ -55,23 +55,9 @@ public class StrategyReleaseController {
             UUID validationRunId,
             BigDecimal initialCashAmount,
             int budgetCapBps,
-            String brokerRulesVersion,
-            String accountingRulesVersion,
-            String precisionRulesVersion,
-            UUID feePolicyId,
-            UUID buyingPowerBufferPolicyId,
-            UUID datasetManifestId,
-            String executionPolicyVersion,
             Map<String, Object> candidateConflictPolicy) {
         ImmutableStrategyReleaseCommand toCommand(UUID releaseId) {
             require(initialCashAmount, "initialCashAmount");
-            require(brokerRulesVersion, "brokerRulesVersion");
-            require(accountingRulesVersion, "accountingRulesVersion");
-            require(precisionRulesVersion, "precisionRulesVersion");
-            require(feePolicyId, "feePolicyId");
-            require(buyingPowerBufferPolicyId, "buyingPowerBufferPolicyId");
-            require(datasetManifestId, "datasetManifestId");
-            require(executionPolicyVersion, "executionPolicyVersion");
             require(candidateConflictPolicy, "candidateConflictPolicy");
             if (budgetCapBps <= 0 || budgetCapBps > 10_000) {
                 throw new IllegalArgumentException("budgetCapBps must be in 1..10000");
@@ -80,13 +66,6 @@ public class StrategyReleaseController {
                     releaseId,
                     initialCashAmount,
                     budgetCapBps,
-                    brokerRulesVersion,
-                    accountingRulesVersion,
-                    precisionRulesVersion,
-                    feePolicyId,
-                    buyingPowerBufferPolicyId,
-                    datasetManifestId,
-                    executionPolicyVersion,
                     json(candidateConflictPolicy));
         }
 

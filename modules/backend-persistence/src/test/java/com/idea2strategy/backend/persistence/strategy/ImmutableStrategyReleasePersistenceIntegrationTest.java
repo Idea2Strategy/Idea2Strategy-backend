@@ -48,7 +48,9 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID FEE_ID = UUID.fromString("b0000000-0000-4000-8000-000000000011");
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
+    private static final UUID SECOND_DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000012");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
+    private static final UUID SECOND_FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000012");
     private static final UUID FEATURE_FEED_ID = UUID.fromString("39e0e076-89e0-5159-b113-a8f6778b7c9e");
     private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
@@ -131,6 +133,11 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'OFFICIAL_4H', 'BAR', '4h', 'UTC', 'v1', ?)",
+                SECOND_FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'FEATURE_RSI_14_1M_RSI_1_0_0', 'FEATURE_SERIES', '1m', 'UTC', "
                         + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
                 FEATURE_FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
@@ -141,6 +148,13 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "values (?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
                         + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
                 DATASET_ID, FEED_ID, HASH_D, at, at);
+        jdbc.update(
+                "insert into market_data.dataset_manifests "
+                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "schema_version, dataset_hash, created_at, available_at) "
+                        + "values (?, ?, 'ADJUSTED', '4h', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
+                        + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
+                SECOND_DATASET_ID, SECOND_FEED_ID, HASH_C, at, at);
         jdbc.update(
                 "insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -217,7 +231,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() throws Exception {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
-                release, DATASET_ID, "backtest-policy-v1");
+                release, List.of(DATASET_ID, SECOND_DATASET_ID), "backtest-policy-v1");
 
         jdbc.update("update strategy.element_catalog_versions set retired_at = ? where id = ?",
                 NOW.atOffset(ZoneOffset.UTC), CATALOG_ID);
@@ -261,7 +275,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.runs")).isEqualTo(1);
         assertThat(count("backtest.run_input_pins")).isEqualTo(1);
         assertThat(count("backtest.input_bundles")).isEqualTo(1);
-        assertThat(count("backtest.input_datasets")).isEqualTo(1);
+        assertThat(count("backtest.input_datasets")).isEqualTo(2);
         assertThat(count("backtest.input_feature_materializations")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         // The transport aggregate for a BASIC official backtest is the bot, not the run. The BASIC
@@ -278,6 +292,11 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
                                 + "where aggregate_id = ?", String.class, BOT_ID))
                 .isEqualTo(DATASET_ID.toString());
+        assertThat(jdbc.queryForObject(
+                        "select jsonb_array_length(payload_document -> 'datasets') "
+                                + "from operations.outbox_messages where aggregate_id = ?",
+                        Integer.class, BOT_ID))
+                .isEqualTo(2);
         var transported = OBJECT_MAPPER.readValue(
                 jdbc.queryForObject(
                         "select payload_document::text from operations.outbox_messages where aggregate_id = ?",

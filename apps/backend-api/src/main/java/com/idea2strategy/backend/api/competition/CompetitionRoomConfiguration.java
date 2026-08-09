@@ -49,6 +49,7 @@ import com.idea2strategy.backend.persistence.strategy.CompiledFlowPlanJooqComman
 import com.idea2strategy.backend.persistence.strategy.ImmutableStrategyReleaseJooqCommandAdapter;
 import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyReleaseInputCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJooqQueryAdapter;
 import java.time.Clock;
@@ -233,6 +234,7 @@ public class CompetitionRoomConfiguration {
             StrategyValidationRunJooqQueryAdapter validationAdapter,
             StrategyJooqQueryAdapter strategyAdapter,
             StrategyDocumentJooqQueryAdapter documentAdapter,
+            StrategyReleaseInputCatalogJooqQueryAdapter releaseInputs,
             CurrentPrincipal principal) {
         return new ImmutableStrategyReleaseCommandService(
                 releaseAdapter,
@@ -240,6 +242,7 @@ public class CompetitionRoomConfiguration {
                 validationAdapter,
                 strategyAdapter,
                 documentAdapter,
+                releaseInputs,
                 principal,
                 Clock.systemUTC());
     }

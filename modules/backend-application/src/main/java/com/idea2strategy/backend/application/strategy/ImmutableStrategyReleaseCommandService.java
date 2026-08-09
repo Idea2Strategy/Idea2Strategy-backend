@@ -33,6 +33,7 @@ public final class ImmutableStrategyReleaseCommandService {
     private final StrategyValidationRunQueryPort validationPort;
     private final StrategyQueryPort strategyPort;
     private final StrategyDocumentQueryPort documentPort;
+    private final StrategyReleaseInputCatalogQueryPort releaseInputs;
     private final CurrentPrincipal principal;
     private final Clock clock;
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -45,6 +46,7 @@ public final class ImmutableStrategyReleaseCommandService {
             StrategyValidationRunQueryPort validationPort,
             StrategyQueryPort strategyPort,
             StrategyDocumentQueryPort documentPort,
+            StrategyReleaseInputCatalogQueryPort releaseInputs,
             CurrentPrincipal principal,
             Clock clock) {
         this.releasePort = Objects.requireNonNull(releasePort, "releasePort");
@@ -52,6 +54,7 @@ public final class ImmutableStrategyReleaseCommandService {
         this.validationPort = Objects.requireNonNull(validationPort, "validationPort");
         this.strategyPort = Objects.requireNonNull(strategyPort, "strategyPort");
         this.documentPort = Objects.requireNonNull(documentPort, "documentPort");
+        this.releaseInputs = Objects.requireNonNull(releaseInputs, "releaseInputs");
         this.principal = Objects.requireNonNull(principal, "principal");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -61,24 +64,31 @@ public final class ImmutableStrategyReleaseCommandService {
             BasicStrategyCatalog catalog,
             ImmutableStrategyReleaseCommand command) {
         Objects.requireNonNull(command, "command");
+        var releasedAt = clock.instant();
+        var inputCatalog = releaseInputs.findSelectableAt(releasedAt);
+        var policy = OfficialBacktestInputSelector.selectPolicy(inputCatalog);
         var preparation = new ImmutableStrategyReleasePreparationCommand(
                 command.releaseId(),
                 command.initialCashAmount(),
                 command.budgetCapBps(),
-                command.brokerRulesVersion(),
-                command.accountingRulesVersion(),
-                command.precisionRulesVersion(),
-                command.feePolicyId(),
-                command.buyingPowerBufferPolicyId(),
+                policy.brokerRulesVersion(),
+                policy.accountingRulesVersion(),
+                policy.precisionRulesVersion(),
+                policy.feePolicyId(),
+                policy.buyingPowerBufferPolicyId(),
                 command.candidateConflictPolicy());
-        var release = prepare(validationRunId, catalog, preparation, clock.instant());
+        var release = prepare(validationRunId, catalog, preparation, releasedAt);
+        var selectedInputs = OfficialBacktestInputSelector.select(
+                release.contractPlan().planDocument(), inputCatalog);
         var validation = validationPort.findOwnedById(validationRunId, principal.accountId())
                 .orElseThrow(() -> new NoSuchElementException("Strategy validation not found"));
         // prepare() already compiled the plan and assembled the contract the release publishes, and the
         // request now takes its checksum from that contract. Compiling a second time here produced a
         // digest of a different artifact and was the cause of root #439.
         var backtestRequest = OfficialBacktestRequest.forRelease(
-                release, command.datasetManifestId(), command.executionPolicyVersion());
+                release,
+                selectedInputs.datasets().stream().map(StrategyReleaseInputCatalog.Dataset::id).toList(),
+                selectedInputs.policy().version());
         return releasePort.saveOnce(
                 release, backtestRequest, validationRunId,
                 validation.requestedEditSequence(), validation.semanticHash());
