@@ -10,9 +10,15 @@
 -- v1 is retired rather than edited: applied migrations are immutable, and a customer who
 -- consented to v1 consented to v1. The grant path selects the newest published version for
 -- the policy code, so it picks this up with no code change.
+--
+-- Both instants are one second after v1's publication and deliberately in the past. The
+-- selecting query is `retired_at is null and published_at <= now()`, so a future timestamp
+-- would retire v1 while v2 was not yet publishable and leave the policy code with no current
+-- document at all — every delegation grant would fail with nothing published to point at.
+-- CI caught exactly that.
 
 UPDATE identity.policy_documents
-SET retired_at = TIMESTAMPTZ '2026-08-10 00:00:00+00'
+SET retired_at = TIMESTAMPTZ '2026-08-09 00:00:01+00'
 WHERE policy_code = 'delegation.strategy-edit.disclosure'
   AND version = 'v1'
   AND retired_at IS NULL;
@@ -39,7 +45,7 @@ SELECT
     -- Still not a required consent: it is disclosed when a delegation is granted, never as a
     -- condition of authenticating. See V20260809140000.
     false,
-    TIMESTAMPTZ '2026-08-10 00:00:00+00'
+    TIMESTAMPTZ '2026-08-09 00:00:01+00'
 FROM (
     SELECT $doc$# 외부 도구에 전략 편집을 위임합니다
 
