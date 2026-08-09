@@ -34,7 +34,8 @@ Supported commands:
 
 ```text
 tool-contract
-delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE
+delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE --strategy-id ID[,ID...]
+  [--expires-at ISO_8601_INSTANT]
 delegation revoke --authorization-id ID
 strategy list [--limit 1..100] [--cursor CURSOR]
 strategy create --name NAME [--description TEXT]
@@ -49,6 +50,11 @@ strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount A
   --execution-policy-version VERSION --candidate-conflict-policy JSON_OBJECT
 operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
+
+A delegation must name the strategies it may edit; one that names none would be granted and then
+authorize nothing. `--expires-at` is optional and defaults to 24 hours from the grant. The raw
+credential is returned once, in the `create` response, and only its digest is stored — a lost
+credential is revoked and replaced, never recovered.
 
 `operator bootstrap` is a one-shot SSM/deployment command, never an HTTP bootstrap route. The reviewed manifest
 must name the dedicated PostgreSQL role expected for the deployment and contain only HMAC-protected operator

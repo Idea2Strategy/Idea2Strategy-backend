@@ -140,7 +140,7 @@ public final class Idea2StrategyCli {
     }
 
     private static JsonNode delegationCreate(Arguments args, ApiClient api, String token) {
-        args.rejectUnknown("--name", "--scopes");
+        args.rejectUnknown("--name", "--scopes", "--strategy-id", "--expires-at");
         ArrayNode scopes = JSON.createArrayNode();
         for (String scope : args.required("--scopes").split(",")) {
             String normalized = scope.trim();
@@ -151,6 +151,20 @@ public final class Idea2StrategyCli {
         }
         ObjectNode body = JSON.createObjectNode().put("name", args.required("--name"));
         body.set("scopes", scopes);
+        // A delegation the server cannot pin to a strategy authorizes nothing, so the CLI refuses
+        // to send one rather than reporting a grant that will deny every edit.
+        ArrayNode strategyIds = JSON.createArrayNode();
+        for (String strategyId : args.required("--strategy-id").split(",")) {
+            String normalized = strategyId.trim();
+            if (!normalized.isEmpty()) {
+                strategyIds.add(normalized);
+            }
+        }
+        if (strategyIds.isEmpty()) {
+            throw Arguments.usage("--strategy-id must name at least one strategy to delegate");
+        }
+        body.set("strategyIds", strategyIds);
+        putOptional(body, "expiresAt", args.optional("--expires-at"));
         return api.post("/api/v1/delegations", body, token);
     }
 
