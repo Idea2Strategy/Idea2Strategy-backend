@@ -68,6 +68,7 @@ public final class DatabaseAccessPolicy {
     private static final Set<QualifiedTable> BATCH_UPDATED_TABLES = Set.of(
             new QualifiedTable("competition", "rooms"),
             new QualifiedTable("competition", "participations"),
+            new QualifiedTable("competition", "backtest_period_runs"),
             new QualifiedTable("bot", "bots"),
             new QualifiedTable("bot", "continuation_deadlines"),
             new QualifiedTable("identity", "accounts"),
@@ -92,6 +93,10 @@ public final class DatabaseAccessPolicy {
             new QualifiedTable("competition", "room_events"),
             new QualifiedTable("competition", "participation_events"),
             new QualifiedTable("competition", "backtest_period_runs"),
+            new QualifiedTable("competition", "backtest_aggregate_results"),
+            new QualifiedTable("competition", "leaderboard_snapshots"),
+            new QualifiedTable("competition", "leaderboard_entries"),
+            new QualifiedTable("competition", "room_final_access_grants"),
             new QualifiedTable("competition", "live_evaluation_segments"),
             new QualifiedTable("bot", "continuation_deadlines"),
             new QualifiedTable("backtest", "runs"),

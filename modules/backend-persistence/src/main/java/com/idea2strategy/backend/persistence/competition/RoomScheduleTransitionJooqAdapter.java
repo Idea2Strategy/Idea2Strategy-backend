@@ -112,15 +112,22 @@ public class RoomScheduleTransitionJooqAdapter implements RoomScheduleTransition
 
     private boolean endIfInsufficient(
             UUID roomId, String expectedStatus, OffsetDateTime scheduledAt, OffsetDateTime observedAt) {
+        String competitionType = dsl.fetchOne(
+                        "select competition_type::text as competition_type from competition.rooms where id = ?",
+                        roomId)
+                .get("competition_type", String.class);
+        boolean backtest = "BACKTEST".equals(competitionType);
         var participations = dsl.fetch(
                 "select p.id, p.bot_id, p.owner_account_id, p.status::text as status, "
                         + "b.lifecycle_status::text as lifecycle_status "
                         + "from competition.participations p join bot.bots b on b.id = p.bot_id "
                         + "where p.room_id = ? and p.status in "
                         + "('REGISTERED'::competition.participation_status, "
-                        + "'EVALUATING'::competition.participation_status) "
+                        + "'EVALUATING'::competition.participation_status, "
+                        + "case when ? then 'PENDING_LEDGER'::competition.participation_status "
+                        + "else 'REGISTERED'::competition.participation_status end) "
                         + "order by p.id for update of p, b",
-                roomId);
+                roomId, backtest);
         if (participations.size() >= 2) {
             return false;
         }
@@ -145,7 +152,7 @@ public class RoomScheduleTransitionJooqAdapter implements RoomScheduleTransition
                             + "withdrawn_at = ?::timestamptz, withdrawal_reason_code = ? where id = ?",
                     observedAt, INSUFFICIENT_PARTICIPATION, participationId);
             participationEvent(participationId, roomId, botId, observedAt);
-            if ("RUNNING".equals(participation.get("lifecycle_status", String.class))) {
+            if (!backtest && "RUNNING".equals(participation.get("lifecycle_status", String.class))) {
                 continuePrivately(botId, ownerAccountId, participationStatus, observedAt);
             }
         }
