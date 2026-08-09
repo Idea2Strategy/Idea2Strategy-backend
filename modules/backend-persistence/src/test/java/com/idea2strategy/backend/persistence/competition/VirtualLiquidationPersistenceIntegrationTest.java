@@ -3,8 +3,12 @@ package com.idea2strategy.backend.persistence.competition;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.idea2strategy.backend.application.competition.FinalRoomResultService;
+import com.idea2strategy.backend.application.competition.RoomFinalizationService;
 import com.idea2strategy.backend.application.competition.ScoringEvidenceRequest;
 import com.idea2strategy.backend.application.competition.ScoringEvidenceService;
+import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogService;
 import com.idea2strategy.backend.application.competition.VirtualLiquidationConflictException;
 import com.idea2strategy.backend.application.competition.VirtualLiquidationPerformanceCalculator;
 import com.idea2strategy.backend.application.competition.VirtualLiquidationQuote;
@@ -58,6 +62,10 @@ class VirtualLiquidationPersistenceIntegrationTest {
 
     @Autowired VirtualLiquidationJooqAdapter adapter;
     @Autowired ScoringEvidenceJooqAdapter scoringEvidenceAdapter;
+    @Autowired RoomFinalizationWorkJooqAdapter finalizationWork;
+    @Autowired FinalRoomResultJooqAdapter finalResults;
+    @Autowired ScoringTemplateCatalogJooqQueryAdapter scoringTemplates;
+    private final ObjectMapper mapper = new ObjectMapper();
     @Autowired JdbcTemplate jdbc;
 
     private VirtualLiquidationService service;
@@ -69,7 +77,10 @@ class VirtualLiquidationPersistenceIntegrationTest {
         jdbc.update("delete from performance.bot_snapshots");
         jdbc.update("delete from performance.bot_current_projections");
         jdbc.update("delete from competition.live_evaluation_segments");
+        jdbc.update("delete from competition.participation_events");
         jdbc.update("delete from competition.participations");
+        jdbc.update("delete from competition.live_room_rules");
+        jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from bot.bots");
@@ -84,7 +95,10 @@ class VirtualLiquidationPersistenceIntegrationTest {
         jdbc.update(
                 "insert into competition.scoring_template_versions "
                         + "(id, template_code, version, rules_document, rules_hash, published_at) "
-                        + "values (?, 'TOTAL_RETURN', '1', '{}'::jsonb, ?, ?)",
+                        + "values (?, 'SINGLE_TOTAL_RETURN_V1', '1', "
+                        + "'{\"kind\":\"SINGLE\",\"calculationRulesVersion\":\"official-room-scoring.v1\","
+                        + "\"components\":[{\"metric\":\"TOTAL_RETURN\",\"direction\":\"HIGHER_IS_BETTER\","
+                        + "\"coefficient\":1.0}],\"adjustments\":[]}'::jsonb, ?, ?)",
                 TEMPLATE_ID, "sha256:" + "1".repeat(64), publishedAt);
         jdbc.update(
                 "insert into trading.fee_policy_versions "
@@ -109,6 +123,18 @@ class VirtualLiquidationPersistenceIntegrationTest {
                         + "rules_hash, locked_at) values (?, ?, 100000, 10, 2, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, "
                         + "?, 5, ?, 'v1', ?, ?)",
                 ROOM_ID, TEMPLATE_ID, FEE_ID, BUFFER_ID, ROOM_RULES_HASH, publishedAt);
+        jdbc.update(
+                "insert into competition.room_schedules "
+                        + "(room_id, recruitment_opens_at, participation_opens_at, evaluation_starts_at, "
+                        + "participation_closes_at, evaluation_ends_at, finalization_deadline_at, timezone_name) "
+                        + "values (?, ?, ?, ?, ?, ?, ?, 'UTC')",
+                ROOM_ID, utc(START.minusSeconds(120)), utc(START.minusSeconds(120)), utc(START),
+                utc(START), utc(CUTOFF), utc(CUTOFF.plusSeconds(300)));
+        jdbc.update(
+                "insert into competition.live_room_rules "
+                        + "(room_id, stopped_bot_slot_policy, minimum_operation_seconds, minimum_fill_count) "
+                        + "values (?, 'COUNT_UNTIL_END', 0, 0)",
+                ROOM_ID);
         jdbc.update(
                 "insert into bot.bots "
                         + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, "
@@ -252,6 +278,65 @@ class VirtualLiquidationPersistenceIntegrationTest {
                 .hasMessageContaining("different evidence");
     }
 
+    @Test
+    void scheduledFinalizationCompletesEvidencePublishesOneFinalResultAndConverges() {
+        jdbc.update(
+                "insert into bot.bots "
+                        + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, "
+                        + "execution_eligible_from, created_at, edit_sequence, updated_at) "
+                        + "values (?, ?, 'BASIC', 'Failed evaluation bot', 'STOPPED', ?, ?, ?, 0, ?)",
+                FAILED_BOT_ID, OWNER_ID, utc(CUTOFF), utc(START), utc(START), utc(CUTOFF));
+        jdbc.update(
+                "insert into competition.participations "
+                        + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at, "
+                        + "evaluation_started_at, evaluation_finished_at, evaluation_failure_code) "
+                        + "values (?, ?, ?, ?, 'anonymous-failed', "
+                        + "'EVALUATION_FAILED'::competition.participation_status, ?, ?, ?, 'LEDGER_OPEN_FAILED')",
+                FAILED_PARTICIPATION_ID, ROOM_ID, FAILED_BOT_ID, OWNER_ID,
+                utc(START.minusSeconds(120)), utc(START), utc(CUTOFF));
+        jdbc.update(
+                "update competition.rooms set status = 'ENDED'::competition.room_status, ended_at = ? where id = ?",
+                utc(CUTOFF), ROOM_ID);
+        Clock clock = Clock.fixed(FINALIZED_AT, ZoneOffset.UTC);
+        var finalization = new RoomFinalizationService(
+                finalizationWork,
+                service,
+                new ScoringEvidenceService(scoringEvidenceAdapter),
+                new FinalRoomResultService(finalResults, clock),
+                new ScoringTemplateCatalogService(scoringTemplates, clock, mapper),
+                clock,
+                mapper);
+
+        var first = finalization.run(10);
+
+        assertThat(first.roomsAttempted()).isOne();
+        assertThat(first.roomsFinalized()).isOne();
+        assertThat(first.participationsFinalized()).isOne();
+        assertThat(first.failures()).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "select status::text from competition.participations where id = ?",
+                String.class, PARTICIPATION_ID)).isEqualTo("COMPLETED");
+        assertThat(jdbc.queryForObject(
+                "select count(*) from competition.leaderboard_snapshots "
+                        + "where room_id = ? and status = 'FINAL'",
+                Integer.class, ROOM_ID)).isOne();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from competition.leaderboard_entries le "
+                        + "join competition.leaderboard_snapshots ls on ls.id = le.snapshot_id "
+                        + "where ls.room_id = ? and le.performance_snapshot_id = ? "
+                        + "and le.backtest_aggregate_result_id is null",
+                Integer.class, ROOM_ID, snapshotId())).isOne();
+
+        var retry = finalization.run(10);
+        assertThat(retry.roomsAttempted()).isZero();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from competition.leaderboard_snapshots where room_id = ?",
+                Integer.class, ROOM_ID)).isOne();
+        assertThat(jdbc.queryForObject(
+                "select count(*) from performance.bot_snapshots where bot_id = ?",
+                Integer.class, BOT_ID)).isOne();
+    }
+
     private VirtualLiquidationRequest request() {
         return new VirtualLiquidationRequest(PARTICIPATION_ID, SEGMENT_ID);
     }
@@ -312,9 +397,17 @@ class VirtualLiquidationPersistenceIntegrationTest {
     private static final UUID FEE_ID = id(6);
     private static final UUID BUFFER_ID = id(7);
     private static final UUID SEGMENT_ID = id(8);
+    private static final UUID FAILED_BOT_ID = id(9);
+    private static final UUID FAILED_PARTICIPATION_ID = id(10);
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @Import({VirtualLiquidationJooqAdapter.class, ScoringEvidenceJooqAdapter.class})
+    @Import({
+            VirtualLiquidationJooqAdapter.class,
+            ScoringEvidenceJooqAdapter.class,
+            RoomFinalizationWorkJooqAdapter.class,
+            FinalRoomResultJooqAdapter.class,
+            ScoringTemplateCatalogJooqQueryAdapter.class
+    })
     static class TestApplication {}
 }

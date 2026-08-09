@@ -114,13 +114,15 @@ public class FinalRoomResultJooqAdapter implements FinalRoomResultPort {
         if (creatorAccountId != null) {
             grants.put(creatorAccountId, "CREATOR");
         }
-        for (FinalLeaderboardEntry entry : result.entries()) {
-            Record owner = dsl.fetchOne(
-                    "select owner_account_id from competition.participations where id = ?",
-                    entry.participationId());
-            UUID ownerAccountId = owner.get("owner_account_id", UUID.class);
-            grants.putIfAbsent(ownerAccountId, "ACTIVE_PARTICIPANT");
-        }
+        dsl.fetch(
+                        "select distinct owner_account_id from competition.participations "
+                                + "where room_id = ? and status in "
+                                + "('COMPLETED'::competition.participation_status, "
+                                + "'EVALUATION_FAILED'::competition.participation_status) "
+                                + "order by owner_account_id",
+                        result.roomId())
+                .getValues("owner_account_id", UUID.class)
+                .forEach(accountId -> grants.putIfAbsent(accountId, "ACTIVE_PARTICIPANT"));
         for (var grant : grants.entrySet()) {
             dsl.execute(
                     "insert into competition.room_final_access_grants "
