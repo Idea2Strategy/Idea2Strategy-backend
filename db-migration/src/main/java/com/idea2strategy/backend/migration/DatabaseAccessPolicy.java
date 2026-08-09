@@ -69,7 +69,9 @@ public final class DatabaseAccessPolicy {
             new QualifiedTable("competition", "rooms"),
             new QualifiedTable("competition", "participations"),
             new QualifiedTable("bot", "bots"),
-            new QualifiedTable("bot", "continuation_deadlines"));
+            new QualifiedTable("bot", "continuation_deadlines"),
+            new QualifiedTable("identity", "accounts"),
+            new QualifiedTable("identity", "account_closure_runs"));
 
     /**
      * The only {@code bot} tables the backtest worker reads.
@@ -89,7 +91,9 @@ public final class DatabaseAccessPolicy {
             new QualifiedTable("competition", "backtest_period_runs"),
             new QualifiedTable("competition", "live_evaluation_segments"),
             new QualifiedTable("bot", "continuation_deadlines"),
-            new QualifiedTable("backtest", "runs"));
+            new QualifiedTable("backtest", "runs"),
+            new QualifiedTable("identity", "account_closure_runs"),
+            new QualifiedTable("identity", "account_closure_readiness"));
 
     private DatabaseAccessPolicy() {}
 
@@ -262,10 +266,18 @@ public final class DatabaseAccessPolicy {
      * The writes {@code backend-batch}'s scheduled jobs actually perform, outside the two schemas it
      * owns outright.
      *
-     * <p>Derived from the write statements of the six adapters the batch application imports —
-     * {@code RoomScheduleTransition}, {@code RoomEvaluationStart}, {@code PrivateContinuationTransition},
-     * {@code PostEvaluationStopTransition}, {@code BotRunCommand} and {@code BotStopCommand}. Read
-     * access already comes from the {@code Access.READ} branch above, so only the mutations are listed.
+     * <p>Derived from the write statements and the lock targets of every adapter the batch application
+     * imports, which {@code RoleGrantsCoverExecutedSqlTest} now recomputes from those sources on every
+     * build rather than leaving this list to be maintained by hand. Read access already comes from the
+     * {@code Access.READ} branch above, so only the mutations are listed.
+     *
+     * <p>The {@code identity} entries belong to account closure. {@code AccountClosureJpaStore} appends
+     * to {@code account_closure_runs} and {@code account_closure_readiness}, marks a run closed, and
+     * locks the account row it is finalizing with {@code select ... from identity.accounts ... for
+     * update}; {@code AccountLifecycleJpaCommandAdapter}, imported alongside it, is what advances the
+     * lifecycle. Those jobs sit behind {@code idea2strategy.batch.account-closure.enabled}, which
+     * Development leaves off, so the gap had never fired — enabling the flag would have been the first
+     * time anyone found out.
      *
      * <p>No adapter deletes, so {@code DELETE} is deliberately absent: the batch may append events and
      * advance state, never remove a room, bot or run.
