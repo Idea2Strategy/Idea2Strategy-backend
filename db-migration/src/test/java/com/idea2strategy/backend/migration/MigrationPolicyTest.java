@@ -104,7 +104,8 @@ class MigrationPolicyTest {
                         "V20260808000000__backend_publish_live_strategy_timeframes.sql",
                         "V20260808120000__backend_publish_production_backtest_resolutions.sql",
                         "V20260809120000__backend_account_email_notification_preference.sql",
-                        "V20260809140000__backend_publish_delegation_disclosure_policy.sql"),
+                        "V20260809140000__backend_publish_delegation_disclosure_policy.sql",
+                        "V20260810090000__backend_publish_delegation_disclosure_policy_v2.sql"),
                 plan.orderedFileNames());
     }
 

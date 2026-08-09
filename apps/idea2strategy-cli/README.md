@@ -51,6 +51,10 @@ strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount A
 operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
 
+A delegated tool can build a strategy from nothing: `ADD_GROUP` creates a trade container, naming
+its side, how its blocks combine, how capital is split, and which instruments it trades. A strategy
+holds one container per side, so a second container on a side already in use is refused.
+
 A delegation must name the strategies it may edit; one that names none would be granted and then
 authorize nothing. `--expires-at` is optional and defaults to 24 hours from the grant. The raw
 credential is returned once, in the `create` response, and only its digest is stored — a lost

@@ -35,6 +35,7 @@
     "applyMustReuseReviewedOperations": true
   },
   "allowedEditOperations": [
+    "ADD_GROUP",
     "ADD_BLOCK",
     "REMOVE_BLOCK",
     "CONNECT_BLOCKS",
