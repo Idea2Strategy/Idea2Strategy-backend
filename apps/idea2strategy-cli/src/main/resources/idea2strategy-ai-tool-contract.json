@@ -13,7 +13,7 @@
         "--credential-id", "<id>",
         "--operations-file", "<path>"
       ],
-      "requiredOutputFields": ["data.diff", "data.previewHash"]
+      "requiredOutputFields": ["data.diff", "data.previewHash", "data.expectedEditSequence"]
     },
     {
       "name": "apply-reviewed-basic-edit",
@@ -23,13 +23,15 @@
         "--authorization-id", "<id>",
         "--credential-id", "<id>",
         "--operations-file", "<same-path>",
-        "--preview-hash", "<reviewed-data.previewHash>"
+        "--preview-hash", "<reviewed-data.previewHash>",
+        "--expected-edit-sequence", "<reviewed-data.expectedEditSequence>"
       ]
     }
   ],
   "reviewGate": {
     "previewDiffMustBeInspected": true,
     "applyRequiresPreviewHash": true,
+    "applyRequiresPreviewEditSequence": true,
     "applyMustReuseReviewedOperations": true
   },
   "allowedEditOperations": [

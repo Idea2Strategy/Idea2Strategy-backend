@@ -73,13 +73,19 @@ class ExternalAiToolE2eTest {
         assertThat(previewData.path("diff").isEmpty()).isFalse();
         String reviewedHash = previewData.path("previewHash").asText();
         assertThat(reviewedHash).isEqualTo("sha256:reviewed-diff");
+        String reviewedSequence = previewData.path("expectedEditSequence").asText();
+        assertThat(reviewedSequence).isEqualTo("7");
 
-        ProcessResult apply = invokeEdit("apply", operations, "--preview-hash", reviewedHash);
+        ProcessResult apply = invokeEdit(
+                "apply", operations,
+                "--preview-hash", reviewedHash,
+                "--expected-edit-sequence", reviewedSequence);
 
         assertThat(apply.exitCode()).isZero();
         assertThat(JSON.readTree(apply.stdout()).path("data").path("applied").asBoolean()).isTrue();
         assertThat(requestBodies).hasSize(2);
         assertThat(requestBodies.get(1).path("previewHash").asText()).isEqualTo(reviewedHash);
+        assertThat(requestBodies.get(1).path("expectedEditSequence").asLong()).isEqualTo(7L);
     }
 
     @Test
@@ -112,7 +118,9 @@ class ExternalAiToolE2eTest {
 
         forcedStatus.set(null);
         ProcessResult tampered = invokeEdit(
-                "apply", operations("ADD_BLOCK"), "--preview-hash", "sha256:tampered");
+                "apply", operations("ADD_BLOCK"),
+                "--preview-hash", "sha256:tampered",
+                "--expected-edit-sequence", "7");
         assertThat(tampered.exitCode()).isEqualTo(5);
         assertThat(JSON.readTree(tampered.stderr()).path("error").path("code").asText())
                 .isEqualTo("PREVIEW_MISMATCH");
@@ -171,10 +179,12 @@ class ExternalAiToolE2eTest {
         if (exchange.getRequestURI().getPath().endsWith("/preview")) {
             reviewedOperations.set(body.path("operations").deepCopy());
             respond(exchange, 200,
-                    "{\"previewHash\":\"sha256:reviewed-diff\",\"diff\":[{\"op\":\"replace\",\"path\":\"/blocks/0/value\"}]}");
+                    "{\"previewHash\":\"sha256:reviewed-diff\",\"expectedEditSequence\":7,"
+                            + "\"diff\":[{\"op\":\"replace\",\"path\":\"/blocks/0/value\"}]}");
             return;
         }
         if (!"sha256:reviewed-diff".equals(body.path("previewHash").asText())
+                || body.path("expectedEditSequence").asLong(-1) != 7L
                 || !body.path("operations").equals(reviewedOperations.get())) {
             respond(exchange, 409,
                     "{\"code\":\"PREVIEW_MISMATCH\",\"message\":\"preview hash was not reviewed\"}");

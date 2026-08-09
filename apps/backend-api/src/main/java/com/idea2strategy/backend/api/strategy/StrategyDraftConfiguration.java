@@ -4,6 +4,7 @@ import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.strategy.BasicStrategyDraftCommandService;
 import com.idea2strategy.backend.application.strategy.BasicStructureCatalogQueryService;
 import com.idea2strategy.backend.application.strategy.BasicStrategyValidationCommandService;
+import com.idea2strategy.backend.application.strategy.DelegatedBasicStrategyEditService;
 import com.idea2strategy.backend.application.strategy.SecureStrategyEditLeaseTokenGenerator;
 import com.idea2strategy.backend.application.strategy.StrategyCopyCommandService;
 import com.idea2strategy.backend.application.strategy.StrategyDeletionCommandService;
@@ -13,6 +14,7 @@ import com.idea2strategy.backend.application.strategy.StrategyValidationQuerySer
 import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalogQueryService;
 import com.idea2strategy.backend.persistence.strategy.BasicStrategyDraftJpaCommandAdapter;
 import com.idea2strategy.backend.persistence.strategy.BasicStructureCatalogJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.DelegatedBasicStrategyEditJooqAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJpaEntity;
 import com.idea2strategy.backend.persistence.strategy.StrategyDeletionJooqAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
@@ -60,7 +62,8 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
     StrategyDeletionJooqAdapter.class,
     StrategyValidationRunJpaCommandAdapter.class,
     StrategyValidationRunJooqQueryAdapter.class,
-    StrategyReleaseInputCatalogJooqQueryAdapter.class
+    StrategyReleaseInputCatalogJooqQueryAdapter.class,
+    DelegatedBasicStrategyEditJooqAdapter.class
 })
 public class StrategyDraftConfiguration {
     @Bean
@@ -154,6 +157,19 @@ public class StrategyDraftConfiguration {
             StrategyDocumentJooqQueryAdapter documentQueryAdapter,
             CurrentPrincipal principal) {
         return new StrategyValidationQueryService(validationQueryAdapter, documentQueryAdapter, principal);
+    }
+
+    @Bean
+    DelegatedBasicStrategyEditService delegatedBasicStrategyEditService(
+            StrategyJooqQueryAdapter strategyQueryAdapter,
+            StrategyDocumentJooqQueryAdapter documentQueryAdapter,
+            DelegatedBasicStrategyEditJooqAdapter delegatedEditAdapter) {
+        return new DelegatedBasicStrategyEditService(
+                strategyQueryAdapter,
+                documentQueryAdapter,
+                delegatedEditAdapter,
+                delegatedEditAdapter,
+                Clock.systemUTC());
     }
 
     @Bean

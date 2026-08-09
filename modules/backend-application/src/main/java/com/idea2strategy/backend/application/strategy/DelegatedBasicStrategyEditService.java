@@ -78,7 +78,7 @@ public final class DelegatedBasicStrategyEditService {
                 editor, strategyId, expectedEditSequence, catalog, operations,
                 DelegatedStrategyScope.STRATEGY_EDIT);
         if (!preview.previewHash().equals(reviewedPreviewHash)) {
-            throw new DelegatedBasicEditRejectedException(
+            throw new DelegatedBasicEditPreviewMismatchException(
                     "Reviewed preview does not match the requested edit");
         }
         if (!preview.valid()) {
@@ -97,7 +97,7 @@ public final class DelegatedBasicStrategyEditService {
         return switch (commandPort.replace(replacement, expectedEditSequence, editor, clock.instant())) {
             case UPDATED -> replacement;
             case STALE_EDIT_SEQUENCE -> throw new StrategyDraftConflictException();
-            case UNAUTHORIZED -> throw new DelegatedBasicEditRejectedException(
+            case UNAUTHORIZED -> throw new DelegatedStrategyScopeDeniedException(
                     "Delegated authorization is not active for strategy editing");
         };
     }

@@ -107,11 +107,44 @@ class Idea2StrategyCliTest {
         Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
                 "strategy", "edit", "apply", "--strategy-id", "strategy-1",
                 "--authorization-id", "auth-1", "--credential-id", "credential-1",
-                "--operations-file", operations.toString(), "--preview-hash", "sha256:reviewed");
+                "--operations-file", operations.toString(), "--preview-hash", "sha256:reviewed",
+                "--expected-edit-sequence", "12");
 
         assertThat(result.exitCode()).isZero();
         assertThat(requestPath.get()).isEqualTo("/api/v1/strategies/strategy-1/basic-edits/apply");
-        assertThat(requestBody.get()).contains("sha256:reviewed", "SET_VALUE", "auth-1", "credential-1");
+        assertThat(requestBody.get())
+                .contains("sha256:reviewed", "SET_VALUE", "auth-1", "credential-1")
+                .contains("\"expectedEditSequence\":12");
+    }
+
+    /**
+     * A delegation with no pinned target is granted and then denies every edit, so the failure
+     * would surface later as an unexplained scope denial rather than as the bad request it is.
+     */
+    @Test
+    void delegationCreateWithoutATargetStrategyIsUsageErrorBeforeNetworkCall() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "delegation", "create", "--name", "assistant", "--scopes", "STRATEGY_EDIT");
+
+        assertThat(result.exitCode()).isEqualTo(2);
+        assertThat(requestPath.get()).isNull();
+    }
+
+    @Test
+    void basicEditApplyWithoutReviewedEditSequenceIsUsageErrorBeforeNetworkCall() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+        Path operations = tempDir.resolve("operations.json");
+        Files.writeString(operations, "[{\"action\":\"SET_VALUE\",\"arguments\":{\"value\":14}}]");
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "strategy", "edit", "apply", "--strategy-id", "strategy-1",
+                "--authorization-id", "auth-1", "--credential-id", "credential-1",
+                "--operations-file", operations.toString(), "--preview-hash", "sha256:reviewed");
+
+        assertThat(result.exitCode()).isEqualTo(2);
+        assertThat(requestPath.get()).isNull();
     }
 
     @Test
@@ -162,7 +195,7 @@ class Idea2StrategyCliTest {
         Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
 
         assertRoute("delegation", "create", "--name", "assistant", "--scopes", "STRATEGY_EDIT,STRATEGY_VALIDATE",
-                "POST", "/api/v1/delegations");
+                "--strategy-id", "s1", "POST", "/api/v1/delegations");
         assertRoute("strategy", "create", "--name", "draft", "POST", "/api/v1/strategies");
         assertRoute("strategy", "copy", "--strategy-id", "s1", "--name", "copy", "POST",
                 "/api/v1/strategies/s1/copies");

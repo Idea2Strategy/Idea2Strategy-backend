@@ -3,6 +3,17 @@
 The CLI provides a JSON-only automation boundary for Basic strategy workflows. It does not expose arbitrary code,
 external-data fetching, or direct-order commands.
 
+## Install
+
+Download `idea2strategy-<version>.zip` from a `cli-v*` release, verify it against the published
+`.sha256`, and unzip it. The launcher is `bin/idea2strategy` (`bin/idea2strategy.bat` on Windows);
+put its directory on `PATH`. **Java 21 must already be installed** — the archive carries no runtime.
+
+An external AI tool should run `idea2strategy tool-contract` first and follow the JSON it returns
+rather than this file: the contract is what the released binary actually enforces.
+
+## Build from source
+
 Build a local distribution:
 
 ```powershell
@@ -23,13 +34,15 @@ Supported commands:
 
 ```text
 tool-contract
-delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE
+delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE --strategy-id ID[,ID...]
+  [--expires-at ISO_8601_INSTANT]
 delegation revoke --authorization-id ID
 strategy list [--limit 1..100] [--cursor CURSOR]
 strategy create --name NAME [--description TEXT]
 strategy copy --strategy-id ID --name NAME
 strategy edit preview --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE
 strategy edit apply --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE --preview-hash HASH
+  --expected-edit-sequence SEQUENCE
 strategy validate --strategy-id ID
 strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount AMOUNT --budget-cap-bps BPS
   --broker-rules-version VERSION --accounting-rules-version VERSION --precision-rules-version VERSION
@@ -37,6 +50,11 @@ strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount A
   --execution-policy-version VERSION --candidate-conflict-policy JSON_OBJECT
 operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
+
+A delegation must name the strategies it may edit; one that names none would be granted and then
+authorize nothing. `--expires-at` is optional and defaults to 24 hours from the grant. The raw
+credential is returned once, in the `create` response, and only its digest is stored — a lost
+credential is revoked and replaced, never recovered.
 
 `operator bootstrap` is a one-shot SSM/deployment command, never an HTTP bootstrap route. The reviewed manifest
 must name the dedicated PostgreSQL role expected for the deployment and contain only HMAC-protected operator
@@ -47,7 +65,9 @@ duplicate JSON keys, unknown fields, and any mismatch with the separately review
 
 External AI tools must call `tool-contract` first. The returned JSON describes the allowed Basic edit operations,
 forbidden capabilities, stable exit codes, and the required two-step edit flow. An AI tool must inspect the preview
-`diff`, retain its `previewHash`, and send that exact hash with the same operations when applying the reviewed change.
+`diff`, retain its `previewHash` and `expectedEditSequence`, and send both back with the same operations when applying
+the reviewed change. The sequence is what makes the review gate hold across a concurrent owner edit: without it the
+server would re-read the document and apply a diff nobody reviewed against its current state.
 The CLI rejects arbitrary code, external-data access, direct orders, unapproved delegation scopes, and apply requests
 that omit the reviewed preview hash.
 

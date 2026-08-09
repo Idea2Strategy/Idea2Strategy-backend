@@ -1,11 +1,11 @@
 package com.idea2strategy.backend.persistence.strategy;
 
 import com.idea2strategy.backend.application.strategy.DelegatedBasicEditCommandPort;
-import com.idea2strategy.backend.application.strategy.DelegatedBasicEditRejectedException;
 import com.idea2strategy.backend.application.strategy.DelegatedBasicEditReplaceResult;
 import com.idea2strategy.backend.application.strategy.DelegatedStrategyAuthorizationPort;
 import com.idea2strategy.backend.application.strategy.DelegatedStrategyEditor;
 import com.idea2strategy.backend.application.strategy.DelegatedStrategyScope;
+import com.idea2strategy.backend.application.strategy.DelegatedStrategyScopeDeniedException;
 import com.idea2strategy.backend.application.strategy.StrategyDocumentJson;
 import com.idea2strategy.backend.domain.strategy.StrategyDocument;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +32,7 @@ public class DelegatedBasicStrategyEditJooqAdapter
             DelegatedStrategyScope scope,
             Instant at) {
         if (!isAuthorized(editor, strategyId, scope, at)) {
-            throw new DelegatedBasicEditRejectedException(
+            throw new DelegatedStrategyScopeDeniedException(
                     "Delegated authorization is not active for " + scope.name());
         }
     }

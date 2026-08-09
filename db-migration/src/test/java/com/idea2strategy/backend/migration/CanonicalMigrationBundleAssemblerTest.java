@@ -83,6 +83,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260808000000__backend_publish_live_strategy_timeframes.sql",
                         "V20260808120000__backend_publish_production_backtest_resolutions.sql",
                         "V20260809120000__backend_account_email_notification_preference.sql",
+                        "V20260809140000__backend_publish_delegation_disclosure_policy.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))

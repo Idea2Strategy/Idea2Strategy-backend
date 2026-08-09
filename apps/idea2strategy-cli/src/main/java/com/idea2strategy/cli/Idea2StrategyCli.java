@@ -140,7 +140,7 @@ public final class Idea2StrategyCli {
     }
 
     private static JsonNode delegationCreate(Arguments args, ApiClient api, String token) {
-        args.rejectUnknown("--name", "--scopes");
+        args.rejectUnknown("--name", "--scopes", "--strategy-id", "--expires-at");
         ArrayNode scopes = JSON.createArrayNode();
         for (String scope : args.required("--scopes").split(",")) {
             String normalized = scope.trim();
@@ -151,6 +151,20 @@ public final class Idea2StrategyCli {
         }
         ObjectNode body = JSON.createObjectNode().put("name", args.required("--name"));
         body.set("scopes", scopes);
+        // A delegation the server cannot pin to a strategy authorizes nothing, so the CLI refuses
+        // to send one rather than reporting a grant that will deny every edit.
+        ArrayNode strategyIds = JSON.createArrayNode();
+        for (String strategyId : args.required("--strategy-id").split(",")) {
+            String normalized = strategyId.trim();
+            if (!normalized.isEmpty()) {
+                strategyIds.add(normalized);
+            }
+        }
+        if (strategyIds.isEmpty()) {
+            throw Arguments.usage("--strategy-id must name at least one strategy to delegate");
+        }
+        body.set("strategyIds", strategyIds);
+        putOptional(body, "expiresAt", args.optional("--expires-at"));
         return api.post("/api/v1/delegations", body, token);
     }
 
@@ -193,10 +207,18 @@ public final class Idea2StrategyCli {
 
     private static JsonNode basicEdit(Arguments args, ApiClient api, String token, boolean apply) {
         args.rejectUnknown("--strategy-id", "--authorization-id", "--credential-id",
-                "--operations-file", "--preview-hash");
+                "--operations-file", "--preview-hash", "--expected-edit-sequence");
         String previewHash = args.optional("--preview-hash");
+        String expectedEditSequence = args.optional("--expected-edit-sequence");
         if (apply && (previewHash == null || previewHash.isBlank())) {
             throw Arguments.usage("Apply requires --preview-hash from a reviewed preview");
+        }
+        // The preview reports the sequence it read. Returning it on apply is what makes the review
+        // gate hold: without it the server would re-read, and an owner edit landing between the two
+        // calls would be overwritten by a diff nobody reviewed against it.
+        if (apply && (expectedEditSequence == null || expectedEditSequence.isBlank())) {
+            throw Arguments.usage(
+                    "Apply requires --expected-edit-sequence from the same reviewed preview");
         }
         ArrayNode operations = readOperations(args.required("--operations-file"));
         for (JsonNode operation : operations) {
@@ -210,6 +232,13 @@ public final class Idea2StrategyCli {
                 .put("credentialId", args.required("--credential-id"));
         body.set("operations", operations);
         putOptional(body, "previewHash", previewHash);
+        if (expectedEditSequence != null && !expectedEditSequence.isBlank()) {
+            try {
+                body.put("expectedEditSequence", Long.parseLong(expectedEditSequence.trim()));
+            } catch (NumberFormatException exception) {
+                throw Arguments.usage("--expected-edit-sequence must be the integer a preview returned");
+            }
+        }
         String suffix = apply ? "apply" : "preview";
         return api.post("/api/v1/strategies/" + segment(args.required("--strategy-id"))
                 + "/basic-edits/" + suffix, body, token);
