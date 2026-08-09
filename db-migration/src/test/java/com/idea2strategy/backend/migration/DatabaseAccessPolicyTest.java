@@ -354,6 +354,79 @@ class DatabaseAccessPolicyTest {
     }
 
     @Test
+    void grantsTheBacktestRoleTheStorageObjectPromotionItsRegistrarPerforms() throws Exception {
+        // INT03 run 9095f2a3 failed five times against a role that held SELECT and INSERT on
+        // storage.objects and not UPDATE: on the deployed idea2strategy_backtest_runtime,
+        // has_table_privilege reported select=true, insert=true, update=false.
+        //
+        // UPDATE is not a convenience here. StorageObjectRegistrar inserts the row as STAGED and only
+        // then re-reads the bytes; mark_available and quarantine are both
+        // `UPDATE storage.objects SET status = ...`, so a run that writes its detail objects cannot
+        // record that they verified. The row exists, the bytes exist, and the run dies anyway.
+        for (var access : List.of(
+                DatabaseAccessPolicy.Access.READ,
+                DatabaseAccessPolicy.Access.INSERT,
+                DatabaseAccessPolicy.Access.UPDATE)) {
+            assertTrue(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            access,
+                            "storage",
+                            "objects"),
+                    "the registrar stages, verifies and promotes its own rows: " + access);
+        }
+        // A storage row is the identity of bytes that exist. Verification failure moves it to
+        // QUARANTINED; nothing in the worker removes one.
+        assertFalse(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                DatabaseAccessPolicy.Access.DELETE,
+                "storage",
+                "objects"));
+
+        // storage.objects is the only table in the schema today, so the rule being table-scoped rather
+        // than schema-scoped is only observable against a name that does not exist yet. Assert it here:
+        // the next storage table must be granted deliberately, not inherited from this change.
+        for (var table : List.of("buckets", "object_replicas", "retention_holds")) {
+            for (var access : DatabaseAccessPolicy.Access.values()) {
+                assertFalse(
+                        DatabaseAccessPolicy.allows(
+                                DatabaseAccessPolicy.ApplicationRole.BACKTEST, access, "storage", table),
+                        access + " on storage." + table + " is not part of registering a detail object");
+            }
+        }
+
+        // The privilege the deployed database is asked for comes from this generated statement, so the
+        // statement itself is asserted rather than only the predicate that produces it.
+        String baseline;
+        try (var input = getClass().getClassLoader().getResourceAsStream("db/migration/V1__initial_schema.sql")) {
+            baseline = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(baseline));
+
+        assertTrue(
+                sql.contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"storage\".\"objects\" "
+                        + "TO idea2strategy_backtest;"),
+                "the runtime grants must ask for UPDATE, not only SELECT and INSERT");
+        assertFalse(
+                sql.contains("GRANT SELECT, INSERT ON TABLE \"storage\".\"objects\" TO idea2strategy_backtest;"),
+                "the narrower grant must no longer be generated for the backtest role");
+        assertFalse(
+                sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"storage\".\"objects\" "
+                        + "TO idea2strategy_backtest;"),
+                "widening must not have handed the worker DELETE");
+        // Exactly one storage statement for this role: widening a privilege must not widen the surface.
+        assertEquals(
+                1,
+                sql.lines()
+                        .filter(line -> line.contains("ON TABLE \"storage\".")
+                                && line.endsWith("TO idea2strategy_backtest;"))
+                        .count(),
+                "the backtest role must hold storage privileges on storage.objects and nothing else");
+        // The pipeline writes storage rows on its own terms and is not part of this change.
+        assertTrue(sql.contains("GRANT SELECT, INSERT ON TABLE \"storage\".\"objects\" TO idea2strategy_pipeline;"));
+    }
+
+    @Test
     void keepsTheBacktestRoleOutOfTheRestOfTheBotSchema() {
         // Widening the whole schema would hand the worker the bot lifecycle and its runtime state.
         // It reads two rows to resolve what to execute and who owns it; nothing else.

@@ -381,9 +381,19 @@ public final class DatabaseAccessPolicy {
             return "outbox_consumer_receipts".equals(table)
                     && (access == Access.READ || access == Access.INSERT || access == Access.UPDATE);
         }
+        // The worker registers its detail objects in two steps, because an object may not claim to be
+        // published before its bytes have been re-read: `register` inserts the row as STAGED, and
+        // `mark_available` promotes that same row to AVAILABLE once the checksum verifies. `quarantine`
+        // is the third statement, recording a verification failure against the row that already exists.
+        // Both transitions are `UPDATE storage.objects SET status = ...` in the engine's repository, so
+        // INSERT alone stops a run after it has written its bytes — which is what failed INT03 run
+        // 9095f2a3 five times, with SELECT and INSERT held and UPDATE denied on the deployed role.
+        //
+        // DELETE stays out: a storage row is the identity of bytes that exist, and the worker never
+        // retracts one. Corruption is recorded by moving the row to QUARANTINED, not by removing it.
         return "storage".equals(schema)
                 && "objects".equals(table)
-                && (access == Access.READ || access == Access.INSERT);
+                && (access == Access.READ || access == Access.INSERT || access == Access.UPDATE);
     }
 
     private static boolean allowsPipeline(Access access, String schema, String table) {
