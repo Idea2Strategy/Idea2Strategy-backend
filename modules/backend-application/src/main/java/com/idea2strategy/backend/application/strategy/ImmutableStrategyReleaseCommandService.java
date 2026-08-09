@@ -74,9 +74,11 @@ public final class ImmutableStrategyReleaseCommandService {
         var release = prepare(validationRunId, catalog, preparation, clock.instant());
         var validation = validationPort.findOwnedById(validationRunId, principal.accountId())
                 .orElseThrow(() -> new NoSuchElementException("Strategy validation not found"));
-        var plan = planService.compile(validationRunId, catalog);
+        // prepare() already compiled the plan and assembled the contract the release publishes, and the
+        // request now takes its checksum from that contract. Compiling a second time here produced a
+        // digest of a different artifact and was the cause of root #439.
         var backtestRequest = OfficialBacktestRequest.forRelease(
-                release, plan.planHash(), command.datasetManifestId(), command.executionPolicyVersion());
+                release, command.datasetManifestId(), command.executionPolicyVersion());
         return releasePort.saveOnce(
                 release, backtestRequest, validationRunId,
                 validation.requestedEditSequence(), validation.semanticHash());

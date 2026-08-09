@@ -60,6 +60,10 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final String HASH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static final String HASH_C = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     private static final String HASH_D = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    /** The published contract plan digest. Distinct from every other fixture hash on purpose:
+     * it used to reuse HASH_C, the digest the caller passed separately, so a request naming the
+     * wrong artifact still matched and root #439 went undetected here. */
+    private static final String PLAN_CHECKSUM = "sha256:" + "e".repeat(64);
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -204,7 +208,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() throws Exception {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
-                release, HASH_C, DATASET_ID, "backtest-policy-v1");
+                release, DATASET_ID, "backtest-policy-v1");
 
         jdbc.update("update strategy.element_catalog_versions set retired_at = ? where id = ?",
                 NOW.atOffset(ZoneOffset.UTC), CATALOG_ID);
@@ -284,7 +288,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(transported.runId()).isEqualTo(request.runId().toString());
         assertThat(transported.executionPolicyVersion()).isEqualTo("backtest-policy-v1");
         assertThat(transported.expectedSnapshotHash()).isEqualTo("sha256:" + HASH_D);
-        assertThat(transported.compiledPlanChecksum()).isEqualTo("sha256:" + HASH_C);
+        assertThat(transported.compiledPlanChecksum()).isEqualTo(PLAN_CHECKSUM);
         assertThat(transported.datasetManifestId()).isEqualTo(DATASET_ID.toString());
         assertThat(transported.expectedDatasetHash()).isEqualTo("sha256:" + HASH_D);
         assertThat(transported.featureMaterializations()).containsExactly(
@@ -301,7 +305,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         request.runId()))
                 .containsEntry("input_bundle_fingerprint", transported.requestHash())
                 .containsEntry("input_contract_version", "strategy-bot.v1")
-                .containsEntry("compiled_plan_checksum", "sha256:" + HASH_C)
+                .containsEntry("compiled_plan_checksum", PLAN_CHECKSUM)
                 .containsEntry("strategy_snapshot_hash", "sha256:" + HASH_D)
                 .containsEntry("execution_policy_version", "backtest-policy-v1")
                 .containsEntry("bundle_hash", transported.requestHash());
@@ -386,7 +390,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
 
     private static ImmutableStrategyRelease.ContractPlan contractPlan() {
         return new ImmutableStrategyRelease.ContractPlan(
-                "strategy-bot.v1", "basic-compiled-plan.v1", "sha256:" + "c".repeat(64),
+                "strategy-bot.v1", "basic-compiled-plan.v1", PLAN_CHECKSUM,
                 "{\"contractVersion\":\"strategy-bot.v1\",\"requiredFeatures\":[{"
                         + "\"requirementId\":\"rsi-14-pt1m\",\"featureId\":\"" + FEATURE_ID + "\","
                         + "\"featureVersion\":\"1.0.0\",\"instruments\":[\"" + INSTRUMENT_ID + "\"],"
