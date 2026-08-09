@@ -13,7 +13,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
     StrategyDraftController.class,
     StrategyDocumentController.class,
     StrategyCopyController.class,
-    StrategyValidationController.class
+    StrategyValidationController.class,
+    StrategyDeletionController.class
 })
 public class StrategyAuthoringExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
