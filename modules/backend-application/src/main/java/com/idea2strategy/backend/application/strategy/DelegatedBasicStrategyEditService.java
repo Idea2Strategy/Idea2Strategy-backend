@@ -21,6 +21,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public final class DelegatedBasicStrategyEditService {
+    private static final String ADD_GROUP = "ADD_GROUP";
     private static final String ADD_BLOCK = "ADD_BLOCK";
     private static final String REMOVE_BLOCK = "REMOVE_BLOCK";
     private static final String CONNECT_BLOCKS = "CONNECT_BLOCKS";
@@ -157,12 +158,84 @@ public final class DelegatedBasicStrategyEditService {
             DelegatedBasicEditOperation operation,
             List<String> changes) {
         switch (operation.action()) {
+            case ADD_GROUP -> addGroup(root, operation.arguments(), changes);
             case ADD_BLOCK -> addBlock(root, definitions, operation.arguments(), changes);
             case REMOVE_BLOCK -> removeBlock(root, operation.arguments(), changes);
             case CONNECT_BLOCKS -> connectBlocks(root, operation.arguments(), changes);
             case SET_VALUE -> setValue(root, definitions, operation.arguments(), changes);
             default -> throw new DelegatedBasicEditRejectedException(
                     "Delegated operation is not allowed: " + operation.action());
+        }
+    }
+
+    /**
+     * Creates a trade container so a delegated tool can start from an empty strategy.
+     *
+     * <p>A container is more than a bag of blocks: it carries the side, how its blocks combine, how
+     * capital is split, and which instruments it trades. Those are the parts of a strategy a
+     * customer is most likely to have an opinion about, so the arguments are all explicit and the
+     * one-container-per-side rule is enforced here rather than left to validation — a second BUY
+     * container has no defined meaning, and refusing it at the operation says so where the tool can
+     * still react.
+     */
+    private void addGroup(ObjectNode root, Map<String, Object> arguments, List<String> changes) {
+        String groupId = text(arguments, "groupId");
+        ArrayNode groups = array(root, "groups");
+        if (find(groups, "id", groupId) != null) {
+            throw new DelegatedBasicEditRejectedException("Block group id already exists: " + groupId);
+        }
+        String container = enumeration(arguments, "container", BasicBlockAssembly.TradeContainer.class);
+        for (JsonNode existing : groups) {
+            if (container.equals(existing.path("container").asText())) {
+                throw new DelegatedBasicEditRejectedException(
+                        "A strategy holds one container per side; " + container + " already exists");
+            }
+        }
+
+        ObjectNode group = objectMapper.createObjectNode();
+        group.put("id", groupId);
+        group.put("container", container);
+        group.put(
+                "evaluationMode",
+                enumeration(arguments, "evaluationMode", BasicBlockAssembly.EvaluationMode.class));
+        group.put(
+                "allocationMode",
+                enumeration(arguments, "allocationMode", BasicBlockAssembly.AllocationMode.class));
+        group.set("instrumentIds", instrumentIds(arguments));
+        group.set("blocks", objectMapper.createArrayNode());
+        group.set("connections", objectMapper.createArrayNode());
+        groups.add(group);
+        changes.add("ADD_GROUP " + groupId + " " + container);
+    }
+
+    private ArrayNode instrumentIds(Map<String, Object> arguments) {
+        Object value = arguments.get("instrumentIds");
+        if (!(value instanceof List<?> values) || values.isEmpty()) {
+            throw new DelegatedBasicEditRejectedException(
+                    "A container must name the instruments it trades: instrumentIds");
+        }
+        ArrayNode instruments = objectMapper.createArrayNode();
+        for (Object instrument : values) {
+            if (!(instrument instanceof String text)) {
+                throw new DelegatedBasicEditRejectedException("instrumentIds must be identifiers");
+            }
+            try {
+                instruments.add(UUID.fromString(text).toString());
+            } catch (IllegalArgumentException exception) {
+                throw new DelegatedBasicEditRejectedException("Instrument id is not a UUID: " + text);
+            }
+        }
+        return instruments;
+    }
+
+    private static <E extends Enum<E>> String enumeration(
+            Map<String, Object> arguments, String key, Class<E> type) {
+        String value = text(arguments, key);
+        try {
+            return Enum.valueOf(type, value).name();
+        } catch (IllegalArgumentException exception) {
+            throw new DelegatedBasicEditRejectedException(
+                    key + " must be one of " + java.util.Arrays.toString(type.getEnumConstants()));
         }
     }
 

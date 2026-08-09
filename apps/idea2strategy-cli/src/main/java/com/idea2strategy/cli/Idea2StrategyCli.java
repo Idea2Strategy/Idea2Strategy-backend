@@ -24,7 +24,7 @@ import java.util.Set;
 public final class Idea2StrategyCli {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> ALLOWED_EDIT_OPERATIONS =
-            Set.of("ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE");
+            Set.of("ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE");
     private static final Set<String> AUTHENTICATED_COMMANDS = Set.of(
             "delegation.create",
             "delegation.revoke",

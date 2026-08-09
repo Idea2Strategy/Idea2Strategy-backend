@@ -121,6 +121,69 @@ class DelegatedBasicStrategyEditServiceTest {
     }
 
     @Test
+    void createsATradeContainerSoADelegatedToolCanStartFromNothing() {
+        var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
+        var operations = List.of(new DelegatedBasicEditOperation(
+                "ADD_GROUP",
+                Map.of(
+                        "groupId", "sell",
+                        "container", "SELL",
+                        "evaluationMode", "INDEPENDENT",
+                        "allocationMode", "EQUAL",
+                        "instrumentIds", List.of(INSTRUMENT_ID.toString()))));
+
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.changes()).containsExactly("ADD_GROUP sell SELL");
+        assertThat(preview.proposedSemanticDocument()).contains("\"container\":\"SELL\"");
+    }
+
+    /**
+     * Rule 9.9: a strategy holds one container per side. A second BUY container has no defined
+     * meaning, so it is refused at the operation where the tool can still react, rather than
+     * surviving into a document that only fails later.
+     */
+    @Test
+    void refusesASecondContainerOnASideThatAlreadyHasOne() {
+        var commandPort = new RecordingCommandPort();
+        var service = service(new RecordingAuthorizer(), commandPort);
+        var operations = List.of(new DelegatedBasicEditOperation(
+                "ADD_GROUP",
+                Map.of(
+                        "groupId", "buy-2",
+                        "container", "BUY",
+                        "evaluationMode", "INDEPENDENT",
+                        "allocationMode", "EQUAL",
+                        "instrumentIds", List.of(INSTRUMENT_ID.toString()))));
+
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), operations))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("one container per side");
+        assertThat(commandPort.saved).isNull();
+    }
+
+    @Test
+    void refusesAContainerThatNamesNoInstrumentsOrAnUnknownMode() {
+        var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
+
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(),
+                        List.of(new DelegatedBasicEditOperation("ADD_GROUP", Map.of(
+                                "groupId", "sell", "container", "SELL",
+                                "evaluationMode", "INDEPENDENT", "allocationMode", "EQUAL",
+                                "instrumentIds", List.of())))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("instrumentIds");
+
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(),
+                        List.of(new DelegatedBasicEditOperation("ADD_GROUP", Map.of(
+                                "groupId", "sell", "container", "SELL",
+                                "evaluationMode", "SOMETIMES", "allocationMode", "EQUAL",
+                                "instrumentIds", List.of(INSTRUMENT_ID.toString()))))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("evaluationMode");
+    }
+
+    @Test
     void validatesTheCurrentDraftOnlyWithTheDedicatedDelegatedScope() {
         var authorizer = new RecordingAuthorizer();
         var service = service(authorizer, new RecordingCommandPort());
