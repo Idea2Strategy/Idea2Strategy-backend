@@ -29,7 +29,10 @@ SELECT
     'MARKDOWN',
     body,
     encode(sha256(convert_to(body, 'UTF8')), 'hex'),
-    true,
+    -- Not a required consent. is_required drives RequiredPolicySet, which every account must
+    -- satisfy to complete authentication; a customer who never delegates must never be asked
+    -- for this. It is disclosed at the moment a delegation is granted.
+    false,
     TIMESTAMPTZ '2026-08-09 00:00:00+00'
 FROM (
     SELECT $doc$# 외부 도구에 전략 편집을 위임합니다
