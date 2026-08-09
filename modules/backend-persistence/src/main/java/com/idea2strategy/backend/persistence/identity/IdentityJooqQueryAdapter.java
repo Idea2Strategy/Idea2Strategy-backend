@@ -140,7 +140,16 @@ public class IdentityJooqQueryAdapter
     }
 
     @Override
+    public Optional<PasswordLoginAccount> findPasswordLoginByAccountId(UUID accountId) {
+        return findPasswordLogin(field(name("account", "id"), UUID.class).eq(accountId));
+    }
+
+    @Override
     public Optional<PasswordLoginAccount> findPasswordLoginByEmailLookup(String emailLookup) {
+        return findPasswordLogin(field(name("email", "email_lookup_hmac"), String.class).eq(emailLookup));
+    }
+
+    private Optional<PasswordLoginAccount> findPasswordLogin(org.jooq.Condition subject) {
         var emails = table(name("identity", "account_emails")).as("email");
         var accounts = table(name("identity", "accounts")).as("account");
         var identities = table(name("identity", "login_identities")).as("login");
@@ -173,8 +182,7 @@ public class IdentityJooqQueryAdapter
                         .eq(field(name("login", "provider_id"), Short.class)))
                 .join(credentials).on(field(name("credential", "login_identity_id"), UUID.class).eq(loginId))
                 .join(security).on(field(name("security", "account_id"), UUID.class).eq(accountId))
-                .where(field(name("email", "email_lookup_hmac"), String.class).eq(emailLookup)
-                        .and(field(name("provider", "code"), String.class).eq("PASSWORD")))
+                .where(subject.and(field(name("provider", "code"), String.class).eq("PASSWORD")))
                 .fetchOptional(record -> new PasswordLoginAccount(
                         record.get(accountId),
                         record.get(loginId),

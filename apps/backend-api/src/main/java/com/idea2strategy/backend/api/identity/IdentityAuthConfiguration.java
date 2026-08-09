@@ -56,7 +56,8 @@ import org.springframework.context.ApplicationEventPublisher;
         AccountLifecycleJpaCommandAdapter.class,
         AccountPreferencesConsentJooqAdapter.class,
         AccountPreferencesConsentJpaAdapter.class,
-        OidcStepUpChallengeJpaAdapter.class
+        OidcStepUpChallengeJpaAdapter.class,
+        com.idea2strategy.backend.persistence.identity.DeviceAuthorizationJooqAdapter.class
 })
 public class IdentityAuthConfiguration {
     /**
@@ -111,6 +112,29 @@ public class IdentityAuthConfiguration {
     HmacVerificationTokens verificationTokens(
             @Value("${identity.crypto.verification-hmac-key}") String key) {
         return new HmacVerificationTokens(decode(key));
+    }
+
+    @Bean
+    com.idea2strategy.backend.application.identity.DeviceAuthorizationService deviceAuthorizationService(
+            com.idea2strategy.backend.persistence.identity.DeviceAuthorizationJooqAdapter adapter,
+            HmacDeviceCodes deviceCodes,
+            Clock identityClock,
+            @Value("${identity.device-authorization.lifetime:PT10M}") Duration lifetime,
+            @Value("${identity.device-authorization.poll-interval-seconds:5}") short pollIntervalSeconds) {
+        return new com.idea2strategy.backend.application.identity.DeviceAuthorizationService(
+                adapter, deviceCodes, identityClock, lifetime, pollIntervalSeconds);
+    }
+
+    /**
+     * Falls back to the verification key so a deployment without a dedicated device-code key still
+     * stores digests rather than raw codes. A separate key is preferable and is what the property
+     * is for.
+     */
+    @Bean
+    HmacDeviceCodes hmacDeviceCodes(
+            @Value("${identity.crypto.device-code-hmac-key:${identity.crypto.verification-hmac-key}}") String key,
+            @Value("${identity.crypto.device-code-key-version:1}") short keyVersion) {
+        return new HmacDeviceCodes(decode(key), keyVersion);
     }
 
     @Bean
