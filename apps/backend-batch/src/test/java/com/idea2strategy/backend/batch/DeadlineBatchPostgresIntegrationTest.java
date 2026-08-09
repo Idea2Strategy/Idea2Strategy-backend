@@ -86,7 +86,7 @@ class DeadlineBatchPostgresIntegrationTest {
 
         var summary = orchestrator.run(new RunCommand(
                 UUID.randomUUID(), UUID.randomUUID(), "a21-batch-test", "deadline-batch-v1",
-                Duration.ofMinutes(2), 10, categories));
+                Duration.ofMinutes(2), 10, 3, categories));
 
         assertThat(summary.categoryFailures()).as(summary.toString()).isZero();
         assertThat(summary.claimed()).isGreaterThanOrEqualTo(5);
@@ -113,7 +113,7 @@ class DeadlineBatchPostgresIntegrationTest {
 
         var second = orchestrator.run(new RunCommand(
                 UUID.randomUUID(), UUID.randomUUID(), "a21-batch-test", "deadline-batch-v1",
-                Duration.ofMinutes(2), 10, categories));
+                Duration.ofMinutes(2), 10, 3, categories));
         assertThat(second.claimed()).isZero();
         assertThat(second.categoryFailures()).isZero();
     }
