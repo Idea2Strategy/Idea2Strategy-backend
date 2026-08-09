@@ -26,6 +26,18 @@ public final class UserCaseService {
                 .orElseThrow(() -> new UserCaseRejectedException("RESOURCE_NOT_AVAILABLE"));
     }
 
+    public UserCasePage list(UUID accountId, String cursor, int limit) {
+        if (limit < 1 || limit > 50) {
+            throw new UserCaseRejectedException("INVALID_PAGE_SIZE");
+        }
+        return store.findOwnedPage(accountId, cursor, limit);
+    }
+
+    public UserCaseDetailView customerDetail(UUID accountId, UUID caseId) {
+        return store.findOwnedDetail(accountId, caseId)
+                .orElseThrow(() -> new UserCaseRejectedException("RESOURCE_NOT_AVAILABLE"));
+    }
+
     private UserCaseView requireSuccess(UserCaseStore.CommandResult result) {
         return switch (result.outcome()) {
             case APPLIED, REPLAYED -> Objects.requireNonNull(result.view(), "successful command view");

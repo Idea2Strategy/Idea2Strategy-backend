@@ -49,6 +49,25 @@ class UserCaseServiceTest {
     }
 
     @Test
+    void returnsCustomerSafeCaseHistoryAndValidatesPageSize() {
+        var store = new StubStore(null);
+        store.detail = Optional.of(new UserCaseDetailView(
+                CASE, UserCaseType.INQUIRY, UserCaseStatus.OPEN, "입금 문의", "확인해 주세요.",
+                NOW, NOW, null, List.of(new UserCaseHistoryItem(
+                        UserCaseHistoryItem.Actor.CUSTOMER, UserCaseStatus.OPEN,
+                        "문의를 접수했습니다.", NOW))));
+        store.page = new UserCasePage(List.of(new UserCaseSummary(
+                CASE, UserCaseType.INQUIRY, UserCaseStatus.OPEN, "입금 문의", NOW, NOW)), null);
+
+        assertThat(service(store).customerDetail(ACCOUNT, CASE)).isEqualTo(store.detail.orElseThrow());
+        assertThat(service(store).list(ACCOUNT, null, 10)).isEqualTo(store.page);
+        assertThatThrownBy(() -> service(store).list(ACCOUNT, null, 0))
+                .isInstanceOf(UserCaseRejectedException.class)
+                .extracting(error -> ((UserCaseRejectedException) error).code())
+                .isEqualTo("INVALID_PAGE_SIZE");
+    }
+
+    @Test
     void leavesEvidenceOwnershipAndAppendOnlyTransitionAtomicityAtTheStoreBoundary() {
         var expected = view(UserCaseStatus.OPEN, 3);
         var store = new StubStore(new UserCaseStore.CommandResult(
@@ -83,6 +102,8 @@ class UserCaseServiceTest {
         private final CommandResult commandResult;
         private UserCaseSupplementCommand lastSupplement;
         private Instant observedAt;
+        private Optional<UserCaseDetailView> detail = Optional.empty();
+        private UserCasePage page = new UserCasePage(List.of(), null);
 
         private StubStore(CommandResult commandResult) {
             this.commandResult = commandResult;
@@ -104,6 +125,16 @@ class UserCaseServiceTest {
         @Override
         public Optional<UserCaseView> findOwned(UUID accountId, UUID caseId) {
             return Optional.empty();
+        }
+
+        @Override
+        public UserCasePage findOwnedPage(UUID accountId, String cursor, int limit) {
+            return page;
+        }
+
+        @Override
+        public Optional<UserCaseDetailView> findOwnedDetail(UUID accountId, UUID caseId) {
+            return detail;
         }
     }
 }

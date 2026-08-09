@@ -88,7 +88,7 @@ public class OperatorCaseController {
         List<UUID> evidence = request.evidenceIds() == null ? List.of() : List.copyOf(request.evidenceIds());
         OperatorCaseCommand command = new OperatorCaseCommand(
                 action, current(), caseId, request.expectedVersion(), request.assigneeOperatorId(),
-                guards.activeGuard().permissionFor(action), request.reasonCode(), evidence,
+                guards.activeGuard().permissionFor(action), request.reasonCode(), request.customerMessage(), evidence,
                 request.sanctionId(), request.sanctionType(), request.sanctionExpiresAt(),
                 request.expectedSanctionVersion(), correlation, idempotencyKey,
                 hash(action, caseId, request, evidence));
@@ -117,6 +117,9 @@ public class OperatorCaseController {
                 Objects.toString(request.sanctionType(), ""),
                 Objects.toString(request.sanctionExpiresAt(), ""),
                 Long.toString(request.expectedSanctionVersion()));
+        if (request.customerMessage() != null && !request.customerMessage().isBlank()) {
+            material += "\n" + request.customerMessage().trim();
+        }
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(material.getBytes(StandardCharsets.UTF_8)));
@@ -139,6 +142,7 @@ public class OperatorCaseController {
             long expectedVersion,
             UUID assigneeOperatorId,
             String reasonCode,
+            String customerMessage,
             List<UUID> evidenceIds,
             UUID sanctionId,
             AccountSanctionState.Type sanctionType,

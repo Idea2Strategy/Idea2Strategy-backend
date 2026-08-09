@@ -304,6 +304,11 @@ public class OperatorCaseJooqAdapter implements
                     -> "USER_VISIBLE";
             default -> "OPERATOR_ONLY";
         };
+        var eventPayload = json.valueToTree(result.auditEvidence());
+        if (command.customerMessage() != null && !command.customerMessage().isBlank()) {
+            ((com.fasterxml.jackson.databind.node.ObjectNode) eventPayload)
+                    .put("customerMessage", command.customerMessage());
+        }
         jdbc.update("""
                 insert into operations.case_events
                     (id, case_id, account_id, event_sequence, previous_event_id, actor_type,
@@ -314,7 +319,7 @@ public class OperatorCaseJooqAdapter implements
                         ?, ?, cast(? as jsonb), ?)
                 """, eventId, command.caseId(), state.caseView().accountId(), mutation.nextVersion(),
                 previousEvent, command.requestContext().operatorId(), eventType, mutation.status().name(),
-                visibility, command.reasonCode(), command.correlationId(), write(result.auditEvidence()),
+                visibility, command.reasonCode(), command.correlationId(), write(eventPayload),
                 Timestamp.from(evaluatedAt));
         boolean terminal = mutation.status().terminal();
         int changed = jdbc.update("""

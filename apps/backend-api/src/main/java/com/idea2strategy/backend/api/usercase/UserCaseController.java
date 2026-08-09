@@ -5,6 +5,8 @@ import com.idea2strategy.backend.application.identity.CustomerAccessScope;
 import com.idea2strategy.backend.application.identity.SanctionedAccountAccessException;
 import com.idea2strategy.backend.application.usercase.UserCaseCommand;
 import com.idea2strategy.backend.application.usercase.UserCaseEvidenceReference;
+import com.idea2strategy.backend.application.usercase.UserCaseDetailView;
+import com.idea2strategy.backend.application.usercase.UserCasePage;
 import com.idea2strategy.backend.application.usercase.UserCaseService;
 import com.idea2strategy.backend.application.usercase.UserCaseSupplementCommand;
 import com.idea2strategy.backend.application.usercase.UserCaseType;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -71,9 +74,17 @@ public class UserCaseController {
                 correlation(correlationId)));
     }
 
+    @GetMapping
+    public UserCasePage list(
+            @RequestParam(required = false) String cursor,
+            @RequestParam(defaultValue = "10") int limit) {
+        return cases.list(principal.accountId(CustomerAccessScope.STANDARD), cursor, limit);
+    }
+
     @GetMapping("/{caseId}")
-    public UserCaseView detail(@PathVariable UUID caseId) {
-        UserCaseView view = cases.detail(principal.accountId(CustomerAccessScope.APPEAL), caseId);
+    public UserCaseDetailView detail(@PathVariable UUID caseId) {
+        UserCaseDetailView view = cases.customerDetail(
+                principal.accountId(CustomerAccessScope.APPEAL), caseId);
         if (principal.activeSanction() && view.type() != UserCaseType.APPEAL) {
             // Re-enter the central standard-access gate so the denial is audited consistently.
             principal.accountId(CustomerAccessScope.STANDARD);
