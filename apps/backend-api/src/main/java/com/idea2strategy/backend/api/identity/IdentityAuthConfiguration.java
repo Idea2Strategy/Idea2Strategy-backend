@@ -59,6 +59,33 @@ import org.springframework.context.ApplicationEventPublisher;
         OidcStepUpChallengeJpaAdapter.class
 })
 public class IdentityAuthConfiguration {
+    /**
+     * How long a customer access token stays valid.
+     *
+     * <p>Five minutes was the value until 2026-08-09, and it did not survive first contact with real
+     * use: a session that logged in and then worked through authoring, validation and release was
+     * rejected mid-sequence, so a person doing one continuous task had to re-authenticate inside it.
+     * That is a usability defect, not a security control — the token is a bearer credential whose real
+     * revocation lever is the auth epoch and the credential version, both of which are checked on every
+     * request and both of which take effect immediately regardless of this value. Shortening the token
+     * only narrows the window for a stolen token that is not otherwise revoked, and an hour is the
+     * ordinary trade for that.
+     *
+     * <p>Stated once, as a string constant, because {@code @Value} defaults must be compile-time
+     * constants and this value used to be a literal repeated at each injection point. A test asserts
+     * both constants and their relative order.
+     */
+    static final String DEFAULT_ACCESS_LIFETIME = "PT1H";
+
+    /**
+     * How long a refresh token family stays valid: 30 days, unchanged.
+     *
+     * <p>This is the value the access lifetime is measured against — it has to stay comfortably longer
+     * than an access token, or a refresh would be pointless. It was already 720 hours, so raising the
+     * access lifetime to an hour does not move it.
+     */
+    static final String DEFAULT_REFRESH_LIFETIME = "PT720H";
+
     @Bean
     Clock identityClock() {
         return Clock.systemUTC();
@@ -99,7 +126,7 @@ public class IdentityAuthConfiguration {
             @Value("${identity.jwt.issuer:https://ideatostrategy.com}") String issuer,
             @Value("${identity.jwt.access-audience:idea2strategy-api}") String accessAudience,
             @Value("${identity.jwt.refresh-audience:idea2strategy-refresh}") String refreshAudience,
-            @Value("${identity.jwt.access-lifetime:PT5M}") Duration accessLifetime) {
+            @Value("${identity.jwt.access-lifetime:" + DEFAULT_ACCESS_LIFETIME + "}") Duration accessLifetime) {
         return new CustomerJwtCodec(
                 decode(key), identityClock, issuer, accessAudience, refreshAudience, accessLifetime);
     }
@@ -189,7 +216,7 @@ public class IdentityAuthConfiguration {
             AesGcmEmailProtector emailProtector,
             HmacRefreshTokenSecrets refreshTokenSecrets,
             Clock identityClock,
-            @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime) {
+            @Value("${identity.jwt.refresh-lifetime:" + DEFAULT_REFRESH_LIFETIME + "}") Duration refreshLifetime) {
         return new EmailAuthenticationService(
                 queries,
                 commands,
@@ -211,7 +238,7 @@ public class IdentityAuthConfiguration {
             IdentityJpaCommandAdapter commands,
             HmacRefreshTokenSecrets refreshTokenSecrets,
             Clock identityClock,
-            @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime) {
+            @Value("${identity.jwt.refresh-lifetime:" + DEFAULT_REFRESH_LIFETIME + "}") Duration refreshLifetime) {
         return new RefreshTokenService(queries, commands, identityClock, refreshTokenSecrets, refreshLifetime);
     }
 
@@ -283,7 +310,7 @@ public class IdentityAuthConfiguration {
             HmacOidcSubjectProtector subjectProtector,
             HmacRefreshTokenSecrets refreshTokenSecrets,
             Clock identityClock,
-            @Value("${identity.jwt.refresh-lifetime:PT720H}") Duration refreshLifetime,
+            @Value("${identity.jwt.refresh-lifetime:" + DEFAULT_REFRESH_LIFETIME + "}") Duration refreshLifetime,
             AesGcmEmailProtector emailProtector,
             @Value("${identity.preferences.default-language:ko}") String defaultLanguage,
             @Value("${identity.preferences.default-timezone:America/New_York}") String defaultTimezone) {
