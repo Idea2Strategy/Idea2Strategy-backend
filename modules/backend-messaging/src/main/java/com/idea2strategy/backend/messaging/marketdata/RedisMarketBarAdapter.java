@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 public final class RedisMarketBarAdapter implements MarketBarPort, AutoCloseable {
     private final RedisClient client;
@@ -49,11 +50,16 @@ public final class RedisMarketBarAdapter implements MarketBarPort, AutoCloseable
         if (timeframe.displayOnly()) {
             return findRecentDisplayBars(instrumentId, timeframe, limit);
         }
-        List<String> encoded = commands.sync().zrevrange(recentBarsKey(instrumentId, timeframe), 0, limit - 1L);
-        List<MarketBar> bars = new ArrayList<>(encoded.size());
-        encoded.forEach(value -> bars.add(codec.decode(value, timeframe)));
-        Collections.reverse(bars);
-        return List.copyOf(bars);
+        List<String> encoded = commands.sync().zrevrange(
+                recentBarsKey(instrumentId, timeframe), 0, limit - 1L);
+        List<MarketBar> live = new ArrayList<>(encoded.size());
+        encoded.forEach(value -> live.add(codec.decode(value, timeframe)));
+        Collections.reverse(live);
+        String historical = commands.sync().get(historyBarsKey(instrumentId, timeframe));
+        List<MarketBar> history = historical == null
+                ? List.of()
+                : codec.decodeHistory(historical, instrumentId, timeframe);
+        return mergeCanonicalHistoryWithLive(history, live, limit);
     }
 
     private List<MarketBar> findRecentDisplayBars(
@@ -105,6 +111,25 @@ public final class RedisMarketBarAdapter implements MarketBarPort, AutoCloseable
 
     String recentBarsKey(UUID instrumentId, MarketBarTimeframe timeframe) {
         return "{" + keyPrefix + ":market}:bars:" + instrumentId + ":" + timeframe.value();
+    }
+
+    String historyBarsKey(UUID instrumentId, MarketBarTimeframe timeframe) {
+        return "{" + keyPrefix + ":market}:history:bars:"
+                + instrumentId + ":" + timeframe.value();
+    }
+
+    static List<MarketBar> mergeCanonicalHistoryWithLive(
+            List<MarketBar> history, List<MarketBar> live, int limit) {
+        TreeMap<Instant, MarketBar> merged = new TreeMap<>();
+        history.forEach(bar -> merged.put(bar.occurredAt(), bar));
+        Instant historicalCutoff = merged.isEmpty() ? null : merged.lastKey();
+        live.stream()
+                .filter(bar -> historicalCutoff == null || bar.occurredAt().isAfter(historicalCutoff))
+                .forEach(bar -> merged.put(bar.occurredAt(), bar));
+        List<MarketBar> ordered = new ArrayList<>(merged.values());
+        return ordered.size() <= limit
+                ? List.copyOf(ordered)
+                : List.copyOf(ordered.subList(ordered.size() - limit, ordered.size()));
     }
 
     private static String requirePrefix(String value) {

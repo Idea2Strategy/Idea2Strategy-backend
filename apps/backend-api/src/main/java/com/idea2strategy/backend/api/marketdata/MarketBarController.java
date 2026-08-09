@@ -29,7 +29,7 @@ public class MarketBarController {
     public SnapshotResponse recent(
             @PathVariable UUID instrumentId,
             @RequestParam(defaultValue = "30m") String timeframe,
-            @RequestParam(defaultValue = "300") int limit) {
+            @RequestParam(defaultValue = "400") int limit) {
         MarketBarTimeframe parsedTimeframe = MarketBarTimeframe.parse(timeframe);
         MarketBarSnapshot snapshot = service.findRecentSnapshot(instrumentId, parsedTimeframe, limit);
         return new SnapshotResponse(

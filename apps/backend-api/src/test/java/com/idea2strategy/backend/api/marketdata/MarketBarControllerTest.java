@@ -1,5 +1,6 @@
 package com.idea2strategy.backend.api.marketdata;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -13,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -21,13 +23,16 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class MarketBarControllerTest {
     private static final UUID AAPL_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
     private MockMvc mvc;
+    private AtomicInteger requestedLimit;
 
     @BeforeEach
     void setUp() {
+        requestedLimit = new AtomicInteger();
         MarketBarPort port = new MarketBarPort() {
             @Override
             public List<com.idea2strategy.backend.application.marketdata.MarketBar> findRecent(
                     UUID instrumentId, MarketBarTimeframe timeframe, int limit) {
+                requestedLimit.set(limit);
                 return List.of(new com.idea2strategy.backend.application.marketdata.MarketBar(
                         "event-1", AAPL_ID, "ALPACA", "SIP",
                         Instant.parse("2026-08-06T14:30:00Z"), 1, 0,
@@ -48,13 +53,13 @@ class MarketBarControllerTest {
     @Test
     void returnsChronologicalStrategyBarsForTheRequestedTimeframe() throws Exception {
         mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
-                        .queryParam("timeframe", "4h")
-                        .queryParam("limit", "300"))
+                        .queryParam("timeframe", "4h"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.instrumentId").value(AAPL_ID.toString()))
                 .andExpect(jsonPath("$.symbol").value("AAPL"))
                 .andExpect(jsonPath("$.timeframe").value("4h"))
                 .andExpect(jsonPath("$.bars[0].close").value(210.12));
+        assertEquals(400, requestedLimit.get());
     }
 
     @Test

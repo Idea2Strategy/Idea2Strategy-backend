@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.marketdata.MarketBar;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 final class MarketBarJsonCodec {
@@ -31,6 +33,47 @@ final class MarketBarJsonCodec {
                     decimal(values, "volume"));
         } catch (Exception exception) {
             throw new IllegalArgumentException("Invalid market bar payload", exception);
+        }
+    }
+
+    List<MarketBar> decodeHistory(
+            String encoded,
+            UUID instrumentId,
+            com.idea2strategy.backend.application.marketdata.MarketBarTimeframe timeframe) {
+        try {
+            JsonNode root = objectMapper.readTree(encoded);
+            if (root.path("schemaVersion").asInt() != 1) {
+                throw new IllegalArgumentException("Unsupported history schema version");
+            }
+            if (!"all".equals(root.path("adjustment").asText())) {
+                throw new IllegalArgumentException("History bars must use adjustment=all");
+            }
+            if (!timeframe.value().equals(root.path("timeframe").asText())) {
+                throw new IllegalArgumentException("History timeframe does not match the request");
+            }
+            if (!instrumentId.toString().equals(root.path("instrumentId").asText())) {
+                throw new IllegalArgumentException("History instrument does not match the request");
+            }
+            List<MarketBar> bars = new ArrayList<>();
+            for (JsonNode value : root.path("bars")) {
+                Instant occurredAt = Instant.parse(requiredText(value, "t"));
+                long sequence = Math.floorDiv(
+                        occurredAt.getEpochSecond(), timeframe.minutes() * 60L);
+                bars.add(new MarketBar(
+                        "history:" + instrumentId + ":" + timeframe.value() + ":" + occurredAt,
+                        instrumentId,
+                        "ALPACA",
+                        "SIP",
+                        occurredAt,
+                        sequence,
+                        0,
+                        decimal(value, "o"), decimal(value, "h"),
+                        decimal(value, "l"), decimal(value, "c"),
+                        decimal(value, "v")));
+            }
+            return List.copyOf(bars);
+        } catch (Exception exception) {
+            throw new IllegalArgumentException("Invalid historical market bar payload", exception);
         }
     }
 
