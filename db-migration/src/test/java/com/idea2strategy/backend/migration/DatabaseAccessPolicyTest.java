@@ -316,11 +316,14 @@ class DatabaseAccessPolicyTest {
                             target.table()),
                     "no batch adapter deletes from " + target.schema() + "." + target.table());
         }
-        // Tables the batch only reads must stay read-only.
+        // Tables the batch only reads must stay read-only. identity.accounts left this list on
+        // 2026-08-09: the account-closure job the batch application wires locks that row with
+        // `select ... for update` while finalizing a CLOSING account, so asserting it read-only was
+        // asserting that a job in this repository could not run (#456).
         for (var target : List.of(
                 new DatabaseAccessPolicy.QualifiedTable("competition", "scoring_template_versions"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "room_schedules"),
-                new DatabaseAccessPolicy.QualifiedTable("identity", "accounts"),
+                new DatabaseAccessPolicy.QualifiedTable("identity", "account_preferences"),
                 new DatabaseAccessPolicy.QualifiedTable("strategy", "strategies"))) {
             assertFalse(
                     DatabaseAccessPolicy.allows(
