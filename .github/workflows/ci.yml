@@ -35,6 +35,12 @@ jobs:
           chmod +x gradlew
           ./gradlew test --no-daemon --build-cache --parallel
 
+      # The released CLI is an ordinary Gradle distribution, so it can break without any
+      # test failing. Building it on every change keeps the release path from rotting
+      # between the tags that actually publish it.
+      - name: Build the distributable CLI archive
+        run: ./gradlew :apps:idea2strategy-cli:distZip --no-daemon --build-cache
+
   container-contracts:
     runs-on: ubuntu-latest
     timeout-minutes: 5

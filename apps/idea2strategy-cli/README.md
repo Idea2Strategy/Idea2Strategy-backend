@@ -3,6 +3,17 @@
 The CLI provides a JSON-only automation boundary for Basic strategy workflows. It does not expose arbitrary code,
 external-data fetching, or direct-order commands.
 
+## Install
+
+Download `idea2strategy-<version>.zip` from a `cli-v*` release, verify it against the published
+`.sha256`, and unzip it. The launcher is `bin/idea2strategy` (`bin/idea2strategy.bat` on Windows);
+put its directory on `PATH`. **Java 21 must already be installed** — the archive carries no runtime.
+
+An external AI tool should run `idea2strategy tool-contract` first and follow the JSON it returns
+rather than this file: the contract is what the released binary actually enforces.
+
+## Build from source
+
 Build a local distribution:
 
 ```powershell

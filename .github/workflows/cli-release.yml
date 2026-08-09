@@ -1,0 +1,70 @@
+name: CLI release
+
+# Publishes the Idea2Strategy CLI as an installable archive.
+#
+# The archive is the one the Gradle application plugin already produces, so nothing
+# about the build differs from a local `installDist`. Uploading uses the runner's own
+# `gh` rather than a release action: one fewer third-party action to pin and to trust
+# with a write-scoped token.
+
+on:
+  push:
+    tags: ['cli-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish (cli-vX.Y.Z)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Verify immutable GitHub Actions references
+        run: |
+          chmod +x scripts/test-github-actions-pins.sh
+          ./scripts/test-github-actions-pins.sh
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-read-only: true
+
+      # The tool contract is what an external AI reads before it does anything. A release
+      # whose contract does not parse is worse than no release, so it is checked here and
+      # not only in the unit tests that build it.
+      - name: Build and verify the distribution
+        run: |
+          chmod +x gradlew
+          ./gradlew :apps:idea2strategy-cli:test :apps:idea2strategy-cli:distZip \
+            --no-daemon --build-cache
+          jq -e '.contractCommand and .workflow and .exitCodes' \
+            apps/idea2strategy-cli/src/main/resources/idea2strategy-ai-tool-contract.json > /dev/null
+
+      - name: Publish the archive and its checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          archive="$(ls apps/idea2strategy-cli/build/distributions/*.zip)"
+          sha256sum "$archive" > "${archive}.sha256"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 --title "Idea2Strategy CLI $TAG" \
+                 --notes "Requires Java 21. Verify with the published .sha256, unzip, and run \`bin/idea2strategy tool-contract\`."
+          gh release upload "$TAG" "$archive" "${archive}.sha256" \
+            --repo "$GITHUB_REPOSITORY" --clobber
