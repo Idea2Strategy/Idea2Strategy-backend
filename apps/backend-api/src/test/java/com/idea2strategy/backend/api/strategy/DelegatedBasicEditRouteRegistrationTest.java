@@ -52,6 +52,19 @@ class DelegatedBasicEditRouteRegistrationTest {
                 });
     }
 
+    /**
+     * The tool contract names {@code data.diff} as the field an external AI must inspect before
+     * applying. If that field ever becomes the resulting document instead of the change list, the
+     * review gate still passes mechanically while nothing reviewable was reviewed.
+     */
+    @Test
+    void previewReportsTheChangeListAsTheReviewableDiff() throws Exception {
+        var diff = DelegatedBasicEditController.PreviewResponse.class.getRecordComponents()[2];
+
+        assertThat(diff.getName()).isEqualTo("diff");
+        assertThat(diff.getType()).isEqualTo(List.class);
+    }
+
     @Test
     void refusalAdviceStaysScopedToTheDelegatedRoute() {
         var advice = DelegatedBasicEditExceptionHandler.class

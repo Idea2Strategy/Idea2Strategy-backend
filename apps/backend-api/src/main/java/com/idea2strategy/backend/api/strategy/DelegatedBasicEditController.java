@@ -65,8 +65,8 @@ public class DelegatedBasicEditController {
         return new PreviewResponse(
                 preview.beforeHash(),
                 preview.previewHash(),
-                readJson(preview.proposedSemanticDocument()),
                 preview.changes(),
+                readJson(preview.proposedSemanticDocument()),
                 preview.valid(),
                 expectedEditSequence);
     }
@@ -149,11 +149,17 @@ public class DelegatedBasicEditController {
 
     public record OperationRequest(String action, Map<String, Object> arguments) {}
 
+    /**
+     * {@code diff} is the reviewable change list, not the resulting document. The tool contract
+     * tells an external AI to inspect {@code data.diff} before applying, so it has to be the thing
+     * a reviewer can actually read: labelling the whole proposed document a diff would invite the
+     * tool to skim it and call that a review. The full result stays available beside it.
+     */
     public record PreviewResponse(
             String beforeHash,
             String previewHash,
-            Map<String, Object> diff,
-            List<String> changes,
+            List<String> diff,
+            Map<String, Object> proposedSemanticDocument,
             boolean valid,
             long expectedEditSequence) {}
 
