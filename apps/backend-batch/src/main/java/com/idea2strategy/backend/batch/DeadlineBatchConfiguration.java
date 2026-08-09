@@ -126,9 +126,13 @@ public class DeadlineBatchConfiguration {
             @Value("${idea2strategy.batch.deadline.runtime-policy-version:deadline-batch-v1}")
                     String runtimePolicyVersion,
             @Value("${idea2strategy.batch.deadline.lease-duration:PT2M}") Duration leaseDuration,
-            @Value("${batch.runtime.maximum-size:100}") int batchSize) {
+            @Value("${batch.runtime.maximum-size:100}") int batchSize,
+            // The reviewed Development runtime policy declares attempt.maxAttempts = 3. Before #264 no
+            // limit reached this path at all, so an unclassified failure was retried until something
+            // else stopped the container.
+            @Value("${idea2strategy.batch.deadline.maximum-attempts:3}") int maximumAttempts) {
         return new DeadlineBatchRunner(
-                orchestrator, workerId, runtimePolicyVersion, leaseDuration, batchSize,
+                orchestrator, workerId, runtimePolicyVersion, leaseDuration, batchSize, maximumAttempts,
                 ports.stream().map(BatchCategoryPort::category).collect(java.util.stream.Collectors.toUnmodifiableSet()));
     }
 
