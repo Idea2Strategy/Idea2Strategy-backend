@@ -97,6 +97,16 @@ public final class StrategyBotCompiledPlanAssembler {
     private static final String CONTAINER_PLACEHOLDER = "container";
     private static final Set<String> LIVE_RESOLUTIONS = Set.of("30m", "1h", "4h", "1d");
 
+    /**
+     * The compiled-plan contract spells money as a fixed 8-decimal string
+     * ({@code ^-?[0-9]{1,16}\.[0-9]{8}$}), and the public release API accepts any scale a caller
+     * writes. A release requesting {@code 100000} therefore produced a plan the Backtest runtime
+     * rejected before simulation, and the run failed with a contract violation rather than a result
+     * (backend #255, INT03 run 66956d2d). Normalizing at this producer boundary keeps one amount to
+     * one spelling for every caller — API, CLI or UI — instead of loosening the consumer's contract.
+     */
+    private static final int MONEY_SCALE = 8;
+
     private final ObjectMapper objectMapper = new ObjectMapper()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
 
@@ -164,7 +174,7 @@ public final class StrategyBotCompiledPlanAssembler {
         version.put("semanticHash", prefixed(semanticHash));
         version.put("snapshotHash", prefixed(snapshotHash));
         snapshot.put("mode", "BASIC");
-        snapshot.put("initialCashAmount", initialCashAmount.toPlainString());
+        snapshot.put("initialCashAmount", moneyAmount(initialCashAmount));
         snapshot.put("currency", "USD");
         ArrayNode partitions = snapshot.putArray("partitions");
         ObjectNode partition = partitions.addObject();
@@ -521,6 +531,25 @@ public final class StrategyBotCompiledPlanAssembler {
 
     private static String prefixed(String hash) {
         return hash.startsWith("sha256:") ? hash : "sha256:" + hash;
+    }
+
+    /**
+     * The contract's fixed 8-decimal spelling of an amount. See {@link #MONEY_SCALE}.
+     *
+     * <p>{@link java.math.RoundingMode#UNNECESSARY} rather than a rounding mode: an amount carrying
+     * more than eight decimals is a caller error, and silently discarding the remainder would make
+     * the plan disagree with the release that asked for it. The checksum reads this field back out of
+     * the document, so normalizing here is also what keeps the checksum a function of one spelling.
+     */
+    private static String moneyAmount(BigDecimal amount) {
+        try {
+            return amount.setScale(MONEY_SCALE, java.math.RoundingMode.UNNECESSARY).toPlainString();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(
+                    "initialCashAmount " + amount.toPlainString() + " carries more precision than the "
+                            + "compiled-plan contract's " + MONEY_SCALE + " decimal places",
+                    exception);
+        }
     }
 
     private static String requiredText(JsonNode parent, String field) {

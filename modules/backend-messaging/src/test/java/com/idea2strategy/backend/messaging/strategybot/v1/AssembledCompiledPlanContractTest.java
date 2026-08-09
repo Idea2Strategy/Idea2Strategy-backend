@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.messaging.strategybot.v1;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalog;
@@ -77,7 +78,54 @@ class AssembledCompiledPlanContractTest {
                 .doesNotContain("directOrder");
     }
 
+    /**
+     * The amount as the public release API accepts it, not as the contract spells it.
+     *
+     * <p>This test suite used to pass {@code 100000.00000000} and so could never have caught backend
+     * #255: the release surface takes a JSON number, {@code 100000} arrived scale-less, the plan
+     * carried it verbatim, and the deployed Backtest runtime rejected it against
+     * {@code ^-?[0-9]{1,16}\.[0-9]{8}$} before simulation. Every case below now starts from the
+     * spelling a caller actually sends.
+     */
+    @Test
+    void aScaleLessReleaseAmountIsPublishedAtTheContractsFixedScale() throws Exception {
+        String document = assembled();
+
+        assertThat(document).contains("\"initialCashAmount\":\"100000.00000000\"");
+        assertThat(document).doesNotContain("\"initialCashAmount\":\"100000\"");
+
+        var plan = OBJECT_MAPPER.treeToValue(
+                OBJECT_MAPPER.readTree(document), StrategyBotContractFixtures.BasicCompiledPlan.class);
+        assertThat(plan.executionSnapshot().initialCashAmount()).isEqualTo("100000.00000000");
+        // The checksum reads the field back out of the document, so it has to be a function of the
+        // normalized spelling rather than of whatever the caller wrote.
+        assertThat(StrategyBotContractFixtures.calculatePlanChecksum(plan)).isEqualTo(plan.planChecksum());
+    }
+
+    /** Trailing zeros a caller writes are the same amount, so they must produce the same plan. */
+    @Test
+    void everySpellingOfOneAmountProducesOneChecksum() throws Exception {
+        String scaleLess = assembledWith(new BigDecimal("100000"));
+        String alreadyScaled = assembledWith(new BigDecimal("100000.00000000"));
+        String overScaled = assembledWith(new BigDecimal("100000.000000000000"));
+
+        assertThat(alreadyScaled).isEqualTo(scaleLess);
+        assertThat(overScaled).isEqualTo(scaleLess);
+    }
+
+    /** Precision the contract cannot carry is a caller error, never something to round away. */
+    @Test
+    void anAmountFinerThanTheContractScaleIsRefused() {
+        assertThatThrownBy(() -> assembledWith(new BigDecimal("100000.000000005")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("more precision than");
+    }
+
     private static String assembled() throws Exception {
+        return assembledWith(new BigDecimal("100000"));
+    }
+
+    private static String assembledWith(BigDecimal initialCashAmount) throws Exception {
         var flow = new Flow(
                 FLOW_ID, "buy", CATALOG_ID, PLAN_ID, "{}", "{}", HASH_A, HASH_B, HASH_A,
                 List.of(AAPL), List.of(), 0);
@@ -87,7 +135,7 @@ class AssembledCompiledPlanContractTest {
                         catalog(),
                         PARTITION_ID,
                         10_000,
-                        new BigDecimal("100000.00000000"),
+                        initialCashAmount,
                         List.of(flow),
                         HASH_A,
                         HASH_B,
