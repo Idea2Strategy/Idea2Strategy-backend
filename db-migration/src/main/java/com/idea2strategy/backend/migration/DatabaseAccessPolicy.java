@@ -55,13 +55,21 @@ public final class DatabaseAccessPolicy {
 
     /**
      * Tables {@code backend-batch} updates outside the schemas it owns. See
-     * {@link #allowsBatchScheduledWrite}: these three are also the tables its {@code ... for update}
+     * {@link #allowsBatchScheduledWrite}: these are also the tables its {@code ... for update}
      * statements lock, and PostgreSQL requires UPDATE on every table a FOR UPDATE names.
+     *
+     * <p>{@code bot.continuation_deadlines} is here for the lock alone — no batch adapter issues an
+     * UPDATE against it. {@code PrivateContinuationTransitionJooqAdapter} selects it {@code for
+     * update} and {@code BotStopCommandJooqAdapter} names it in {@code for update of b, d}, which is
+     * enough for PostgreSQL to demand the privilege. Derived by extracting every write and every lock
+     * target from the seven adapters the batch instantiates and comparing them against the deployed
+     * role, rather than by waiting for the third instance of this trap to fail in a release.
      */
     private static final Set<QualifiedTable> BATCH_UPDATED_TABLES = Set.of(
             new QualifiedTable("competition", "rooms"),
             new QualifiedTable("competition", "participations"),
-            new QualifiedTable("bot", "bots"));
+            new QualifiedTable("bot", "bots"),
+            new QualifiedTable("bot", "continuation_deadlines"));
 
     /**
      * The only {@code bot} tables the backtest worker reads.

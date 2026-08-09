@@ -268,10 +268,16 @@ class DatabaseAccessPolicyTest {
         // `... for update`, and PostgreSQL requires UPDATE on every table a FOR UPDATE names. That is
         // the same trap as #241 with the opposite fix — there the lock was unnecessary and was
         // removed; here the locks are needed, so the privilege must match.
+        //
+        // bot.continuation_deadlines is the third instance of that trap and the clearest one: no batch
+        // adapter updates it, yet PrivateContinuationTransitionJooqAdapter selects it `for update` and
+        // BotStopCommandJooqAdapter names it in `for update of b, d`. A privilege table derived from
+        // UPDATE statements alone would miss it, so it is derived from the locks as well (#251).
         for (var target : List.of(
                 new DatabaseAccessPolicy.QualifiedTable("competition", "rooms"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "participations"),
-                new DatabaseAccessPolicy.QualifiedTable("bot", "bots"))) {
+                new DatabaseAccessPolicy.QualifiedTable("bot", "bots"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"))) {
             assertTrue(
                     DatabaseAccessPolicy.allows(
                             DatabaseAccessPolicy.ApplicationRole.BATCH,
@@ -300,6 +306,7 @@ class DatabaseAccessPolicyTest {
         for (var target : List.of(
                 new DatabaseAccessPolicy.QualifiedTable("competition", "rooms"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "bots"),
+                new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"),
                 new DatabaseAccessPolicy.QualifiedTable("backtest", "runs"))) {
             assertFalse(
                     DatabaseAccessPolicy.allows(
