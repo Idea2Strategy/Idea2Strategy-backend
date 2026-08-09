@@ -71,7 +71,10 @@ public final class DatabaseAccessPolicy {
             new QualifiedTable("bot", "bots"),
             new QualifiedTable("bot", "continuation_deadlines"),
             new QualifiedTable("identity", "accounts"),
-            new QualifiedTable("identity", "account_closure_runs"));
+            new QualifiedTable("identity", "account_closure_runs"),
+            new QualifiedTable("identity", "account_sanctions"),
+            new QualifiedTable("identity", "account_sanction_heads"),
+            new QualifiedTable("identity", "refresh_token_families"));
 
     /**
      * The only {@code bot} tables the backtest worker reads.
@@ -93,7 +96,11 @@ public final class DatabaseAccessPolicy {
             new QualifiedTable("bot", "continuation_deadlines"),
             new QualifiedTable("backtest", "runs"),
             new QualifiedTable("identity", "account_closure_runs"),
-            new QualifiedTable("identity", "account_closure_readiness"));
+            new QualifiedTable("identity", "account_closure_readiness"),
+            new QualifiedTable("identity", "account_sanction_heads"),
+            new QualifiedTable("identity", "account_sanction_events"),
+            new QualifiedTable("identity", "account_sanction_command_receipts"),
+            new QualifiedTable("identity", "account_security_states"));
 
     private DatabaseAccessPolicy() {}
 
@@ -271,7 +278,15 @@ public final class DatabaseAccessPolicy {
      * build rather than leaving this list to be maintained by hand. Read access already comes from the
      * {@code Access.READ} branch above, so only the mutations are listed.
      *
-     * <p>The {@code identity} entries belong to account closure. {@code AccountClosureJpaStore} appends
+     * <p>The sanction entries belong to sanction expiry, which is the one identity job Development runs.
+     * A {@code SUSPENSION} that expired at 05:00 stayed {@code ACTIVE} for three hours because the batch
+     * role could only read {@code identity}: its first statement is an upsert into
+     * {@code account_sanction_heads}, and PostgreSQL reported the denial in SQLState class 42, which
+     * Spring surfaced as {@code BadSqlGrammarException} — an exception that names a syntax problem for
+     * what was a privilege problem (#264). {@code refresh_token_families} is here because expiring a
+     * sanction revokes the sessions it suspended.
+     *
+     * <p>The {@code identity} entries below belong to account closure. {@code AccountClosureJpaStore} appends
      * to {@code account_closure_runs} and {@code account_closure_readiness}, marks a run closed, and
      * locks the account row it is finalizing with {@code select ... from identity.accounts ... for
      * update}; {@code AccountLifecycleJpaCommandAdapter}, imported alongside it, is what advances the
