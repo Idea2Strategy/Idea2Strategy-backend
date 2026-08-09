@@ -510,13 +510,19 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
             var outcome = updateFuture.get();
             var transition = transitionFuture.get();
 
+            // Both counts, not only the transitions. When the configuration update wins the lock the
+            // transition correctly applies nothing, and reporting the opening SELECT's candidate count
+            // made the report say one room advanced with zero transitions — which the report's own
+            // invariant rejects, so this test failed on whichever repetition lost the race (#260).
             if (outcome == RoomConfigurationUpdateOutcome.UPDATED) {
                 assertThat(transition.transitionsApplied()).isZero();
+                assertThat(transition.roomsAdvanced()).isZero();
                 assertThat(roomStatus()).isEqualTo("DRAFT");
                 assertThat(roomName()).isEqualTo("Updated room");
             } else {
                 assertThat(outcome).isEqualTo(RoomConfigurationUpdateOutcome.RECRUITMENT_LOCKED);
                 assertThat(transition.transitionsApplied()).isEqualTo(1);
+                assertThat(transition.roomsAdvanced()).isEqualTo(1);
                 assertThat(roomStatus()).isEqualTo("RECRUITING");
                 assertThat(roomName()).isEqualTo("Draft room");
             }

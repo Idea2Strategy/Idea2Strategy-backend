@@ -47,9 +47,16 @@ public class RoomScheduleTransitionJooqAdapter implements RoomScheduleTransition
                         + "limit ? for update of r skip locked",
                 observed, observed, observed, observed, limit);
 
+        // roomsAdvanced counts rooms that actually applied a transition, not rooms the opening SELECT
+        // saw. Those differ whenever a concurrent configuration update wins the room lock and moves the
+        // schedule out of range: the revalidation below then correctly applies nothing, and reporting
+        // the stale candidate count produced (roomsAdvanced=1, transitionsApplied=0), which the report
+        // invariant rejects as incoherent. The revalidation was right; the count was not (#260).
+        int roomsAdvanced = 0;
         int transitions = 0;
         for (var candidate : candidates) {
             UUID roomId = candidate.get("id", UUID.class);
+            int transitionsBefore = transitions;
             // READ COMMITTED rechecks a room row that changed while FOR UPDATE was waiting, but a
             // joined schedule can still come from the statement's earlier snapshot. Re-read after
             // the room lock is ours so a concurrent configuration update and this transition
@@ -78,6 +85,7 @@ public class RoomScheduleTransitionJooqAdapter implements RoomScheduleTransition
                 if (!observed.isBefore(participationClosesAt)
                         && endIfInsufficient(roomId, "RECRUITING", participationClosesAt, observed)) {
                     transitions++;
+                    roomsAdvanced++;
                     continue;
                 }
                 transition(roomId, "RECRUITING", "EVALUATING", "EVALUATION_STARTED", evaluationStartsAt, observed);
@@ -88,14 +96,18 @@ public class RoomScheduleTransitionJooqAdapter implements RoomScheduleTransition
                     && !observed.isBefore(participationClosesAt)
                     && endIfInsufficient(roomId, "EVALUATING", participationClosesAt, observed)) {
                 transitions++;
+                roomsAdvanced++;
                 continue;
             }
             if ("EVALUATING".equals(status) && !observed.isBefore(evaluationEndsAt)) {
                 transition(roomId, "EVALUATING", "ENDED", "EVALUATION_ENDED", evaluationEndsAt, observed);
                 transitions++;
             }
+            if (transitions > transitionsBefore) {
+                roomsAdvanced++;
+            }
         }
-        return new RoomScheduleTransitionReport(observedAt, candidates.size(), transitions);
+        return new RoomScheduleTransitionReport(observedAt, roomsAdvanced, transitions);
     }
 
     private boolean endIfInsufficient(
