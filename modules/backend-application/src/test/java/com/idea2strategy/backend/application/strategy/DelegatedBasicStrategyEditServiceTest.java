@@ -120,6 +120,48 @@ class DelegatedBasicStrategyEditServiceTest {
         assertThat(commandPort.saved).isNull();
     }
 
+    /**
+     * The whole point of delegated container creation: hand a tool an untouched strategy and it
+     * builds one. This failed on AWS after ADD_GROUP shipped, because a new document carries no
+     * catalogId and every proposed document must parse as an official assembly. The unit fixtures
+     * all had a catalogId already, so nothing here noticed.
+     */
+    @Test
+    void buildsAWholeStrategyFromTheDocumentANewStrategyActuallyStartsWith() {
+        var commandPort = new RecordingCommandPort();
+        var service = service(new RecordingAuthorizer(), commandPort, emptyDocument());
+        var operations = List.of(
+                new DelegatedBasicEditOperation("ADD_GROUP", Map.of(
+                        "groupId", "buy",
+                        "container", "BUY",
+                        "evaluationMode", "INDEPENDENT",
+                        "allocationMode", "EQUAL",
+                        "instrumentIds", List.of(INSTRUMENT_ID.toString()))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy", "blockId", "trigger", "elementCode", "MARKET_OPEN")),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy", "blockId", "condition", "elementCode", "RSI",
+                        "parameters", Map.of("period", 14))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy", "blockId", "order", "elementCode", "BUY_ORDER")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy", "fromBlockId", "trigger", "outputPort", "signal",
+                        "toBlockId", "condition", "inputPort", "input")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy", "fromBlockId", "condition", "outputPort", "result",
+                        "toBlockId", "order", "inputPort", "input")));
+
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.proposedSemanticDocument()).contains("\"catalogId\":\"" + CATALOG_ID + "\"");
+        assertThat(preview.valid()).isTrue();
+
+        var applied = service.apply(editor(), STRATEGY_ID, 7, catalog(), operations, preview.previewHash());
+
+        assertThat(applied.semanticHash()).isEqualTo(preview.previewHash());
+        assertThat(commandPort.saved).isEqualTo(applied);
+    }
+
     @Test
     void createsATradeContainerSoADelegatedToolCanStartFromNothing() {
         var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
@@ -197,8 +239,14 @@ class DelegatedBasicStrategyEditServiceTest {
     private static DelegatedBasicStrategyEditService service(
             DelegatedStrategyAuthorizationPort authorizer,
             DelegatedBasicEditCommandPort commandPort) {
+        return service(authorizer, commandPort, document());
+    }
+
+    private static DelegatedBasicStrategyEditService service(
+            DelegatedStrategyAuthorizationPort authorizer,
+            DelegatedBasicEditCommandPort commandPort,
+            StrategyDocument document) {
         Strategy strategy = Strategy.createBasic(STRATEGY_ID, ACCOUNT_ID, "Momentum", null, NOW.minusSeconds(60));
-        StrategyDocument document = document();
         StrategyQueryPort strategies = (id, owner) -> Optional.of(strategy)
                 .filter(value -> id.equals(STRATEGY_ID) && owner.equals(ACCOUNT_ID));
         StrategyDocumentQueryPort documents = (id, owner) -> Optional.of(document)
@@ -209,6 +257,16 @@ class DelegatedBasicStrategyEditServiceTest {
 
     private static DelegatedStrategyEditor editor() {
         return new DelegatedStrategyEditor(ACCOUNT_ID, AUTHORIZATION_ID, CREDENTIAL_ID);
+    }
+
+    /** Exactly what BasicStrategyDraftCommandService writes for a newly created strategy. */
+    private static StrategyDocument emptyDocument() {
+        String semantic = StrategyDocumentJson.canonicalize("{\"groups\":[],\"mode\":\"BASIC\"}");
+        String presentation = "{\"positions\":{}}";
+        return new StrategyDocument(
+                STRATEGY_ID, semantic, presentation, "basic-semantic/v1", "basic-presentation/v1",
+                StrategyDocumentJson.sha256(semantic), StrategyDocumentJson.sha256(presentation), 7,
+                NOW.minusSeconds(60), NOW.minusSeconds(1));
     }
 
     private static StrategyDocument document() {

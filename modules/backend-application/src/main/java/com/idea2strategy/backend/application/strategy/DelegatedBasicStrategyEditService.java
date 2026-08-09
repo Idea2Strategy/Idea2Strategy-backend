@@ -122,6 +122,14 @@ public final class DelegatedBasicStrategyEditService {
             throw new StrategyDraftConflictException();
         }
         ObjectNode root = parseRoot(current.semanticDocument());
+        // A strategy starts as {"groups":[],"mode":"BASIC"} with no catalogId, and every proposed
+        // document has to parse as an official assembly, which requires one. Without this a
+        // delegated tool could create a container and still never produce a readable document —
+        // the first edit would fail on a field no delegated operation can set. The value is not
+        // invented: it is the catalog this very edit is being validated against.
+        if (!root.hasNonNull("catalogId") || root.path("catalogId").asText().isBlank()) {
+            root.put("catalogId", catalog.version().id().toString());
+        }
         Map<String, StrategyElementDefinition> definitions = catalog.elements().stream()
                 .collect(Collectors.toMap(StrategyElementDefinition::elementCode, Function.identity()));
         var changes = new ArrayList<String>();

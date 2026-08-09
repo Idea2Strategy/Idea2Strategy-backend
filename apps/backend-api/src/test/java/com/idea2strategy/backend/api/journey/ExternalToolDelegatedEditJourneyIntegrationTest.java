@@ -122,25 +122,28 @@ class ExternalToolDelegatedEditJourneyIntegrationTest {
 
         String editBody = """
                 {"authorizationId":"%s","credentialId":"%s","operations":[
-                  {"action":"ADD_BLOCK","arguments":{"groupId":"buy","blockId":"b1",
-                   "elementCode":"PRICE_CHANGE_PERCENT"}}]}
+                  {"action":"ADD_GROUP","arguments":{"groupId":"buy","container":"BUY",
+                   "evaluationMode":"INDEPENDENT","allocationMode":"EQUAL",
+                   "instrumentIds":["11111111-1111-4111-8111-111111111111"]}}]}
                 """.formatted(
                         grant.path("authorizationId").asText(), grant.path("credentialId").asText());
 
-        // A freshly created strategy is {"groups":[],"mode":"BASIC"} and the four delegated
-        // operations cannot create a group, so this edit is refused on its merits — which is the
-        // assertion that matters here. EDIT_REJECTED means the delegation was accepted and the
-        // request reached the edit service; a delegation that did not authorize would answer 403
-        // SCOPE_DENIED, and a missing route would answer 404, which is what it did before this
-        // change. Applying real blocks needs a valid Basic skeleton and is covered separately.
-        JsonNode refusal = json.readTree(mvc.perform(
+        // The strategy is untouched — {"groups":[],"mode":"BASIC"} — and the tool builds its
+        // container anyway. Before this work the same call answered 404 because the route did not
+        // exist, and after ADD_GROUP shipped it answered 422 because a new document carries no
+        // catalogId for the proposed assembly to parse against.
+        JsonNode preview = json.readTree(mvc.perform(
                                 post("/api/v1/strategies/" + strategyId + "/basic-edits/preview")
                                         .header("Authorization", "Bearer " + accessToken)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(editBody))
-                        .andExpect(status().isUnprocessableEntity())
+                        .andExpect(status().isOk())
                         .andReturn().getResponse().getContentAsString());
-        assertThat(refusal.path("code").asText()).isEqualTo("EDIT_REJECTED");
+        assertThat(preview.path("diff").isArray()).isTrue();
+        assertThat(preview.path("diff").get(0).asText()).isEqualTo("ADD_GROUP buy BUY");
+        assertThat(preview.path("previewHash").asText()).isNotBlank();
+        assertThat(preview.path("expectedEditSequence").isNumber()).isTrue();
+        assertThat(preview.path("proposedSemanticDocument").path("catalogId").asText()).isNotBlank();
 
         // Revoking takes effect at once: the same call now fails authorization instead of merits.
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders

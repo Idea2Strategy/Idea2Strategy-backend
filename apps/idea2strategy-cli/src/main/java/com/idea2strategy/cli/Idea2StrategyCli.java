@@ -26,6 +26,8 @@ public final class Idea2StrategyCli {
     private static final Set<String> ALLOWED_EDIT_OPERATIONS =
             Set.of("ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE");
     private static final Set<String> AUTHENTICATED_COMMANDS = Set.of(
+            "catalog.elements",
+            "catalog.instruments",
             "delegation.create",
             "delegation.revoke",
             "strategy.list",
@@ -88,6 +90,8 @@ public final class Idea2StrategyCli {
                 ? credentials.load()
                 : invocation.environmentToken();
         return switch (commandKey) {
+            case "catalog.elements" -> catalogElements(arguments, api, token);
+            case "catalog.instruments" -> catalogInstruments(arguments, api, token);
             case "delegation.create" -> delegationCreate(arguments, api, token);
             case "delegation.revoke" -> delegationRevoke(arguments, api, token);
             case "strategy.list" -> strategyList(arguments, api, token);
@@ -137,6 +141,45 @@ public final class Idea2StrategyCli {
         ObjectNode result = JSON.createObjectNode().put("credentialSaved", true);
         copyIfPresent(response, result, "accountId", "expiresAt");
         return result;
+    }
+
+    /**
+     * The catalog an edit is validated against.
+     *
+     * <p>Without this an external tool cannot turn "use RSI" into an operation: element codes and
+     * their declared parameters live in the published catalog, and guessing a code produces an
+     * edit the server refuses. Reading beats guessing.
+     */
+    private static JsonNode catalogElements(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown();
+        return api.get("/api/v1/strategy-catalogs/basic", token);
+    }
+
+    /**
+     * Symbol to instrument id.
+     *
+     * <p>A container names the instruments it trades by id, and a person asks for "Apple". Without
+     * a lookup the tool has no way to cross that gap.
+     */
+    private static JsonNode catalogInstruments(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--symbol");
+        JsonNode instruments = api.get("/api/v1/strategy-catalogs/basic/instruments", token);
+        String symbol = args.optional("--symbol");
+        if (symbol == null || symbol.isBlank()) {
+            return instruments;
+        }
+        ArrayNode matches = JSON.createArrayNode();
+        for (String requested : symbol.split(",")) {
+            String wanted = requested.trim();
+            for (JsonNode instrument : instruments.path("instruments")) {
+                if (instrument.path("symbol").asText().equalsIgnoreCase(wanted)) {
+                    matches.add(instrument);
+                }
+            }
+        }
+        ObjectNode filtered = JSON.createObjectNode();
+        filtered.set("instruments", matches);
+        return filtered;
     }
 
     private static JsonNode delegationCreate(Arguments args, ApiClient api, String token) {
@@ -359,6 +402,7 @@ public final class Idea2StrategyCli {
             List<String> words = values.stream().takeWhile(value -> !value.startsWith("--")).toList();
             int commandWordCount = switch (words.getFirst()) {
                 case "login" -> 1;
+                case "catalog" -> 2;
                 case "delegation" -> 2;
                 case "strategy" -> words.size() >= 2 && "edit".equals(words.get(1)) ? 3 : 2;
                 case "operator" -> 2;
