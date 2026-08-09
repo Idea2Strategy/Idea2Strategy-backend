@@ -40,16 +40,28 @@ public record OfficialBacktestRequest(
         }
     }
 
+    /**
+     * The request for a release, naming the plan that release published.
+     *
+     * <p>The checksum is taken from {@code release.contractPlan()} rather than accepted as an
+     * argument. It used to be a parameter, and the caller supplied a second, freshly compiled
+     * {@code CompiledFlowPlan.planHash()} — a digest of a different artifact than the one written to
+     * {@code bot.launch_contract_plans}. The consumer resolves this checksum against exactly that
+     * table, so the request named a row that was never stored and execution failed with
+     * {@code JobNotSatisfiable: compiled plan ... is not resolvable} before the simulation began
+     * (root #439, INT03 run {@code c0df2755}).
+     *
+     * <p>Reading it from the release makes the mismatch unrepresentable instead of merely checked.
+     */
     public static OfficialBacktestRequest forRelease(
             ImmutableStrategyRelease release,
-            String compiledPlanHash,
             UUID datasetManifestId,
             String executionPolicyVersion) {
         Objects.requireNonNull(release, "release");
         Objects.requireNonNull(datasetManifestId, "datasetManifestId");
         requireText(executionPolicyVersion, "executionPolicyVersion");
         String snapshotHash = prefixed(release.snapshotHash());
-        String planChecksum = prefixed(compiledPlanHash);
+        String planChecksum = release.contractPlan().planChecksum();
         String operationKey = "OFFICIAL_BACKTEST|" + datasetManifestId + "|"
                 + release.launchConfiguration().accountingRulesVersion();
         String material = String.join("\n",
