@@ -62,6 +62,11 @@ public final class ScoringTemplateCatalogService {
         }
     }
 
+    /** Parses the immutable version locked by a room even if it retired after room creation. */
+    public ScoringTemplateVersion parseLocked(ScoringTemplateCatalogRecord record) {
+        return parse(Objects.requireNonNull(record, "record"));
+    }
+
     private ScoringTemplateVersion parse(ScoringTemplateCatalogRecord record) {
         try {
             JsonNode root = objectMapper.readTree(record.rulesDocument());

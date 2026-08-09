@@ -276,6 +276,8 @@ class DatabaseAccessPolicyTest {
         for (var target : List.of(
                 new DatabaseAccessPolicy.QualifiedTable("competition", "rooms"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "participations"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "live_evaluation_segments"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_snapshots"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "bots"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"))) {
             assertTrue(
@@ -291,6 +293,9 @@ class DatabaseAccessPolicyTest {
                 new DatabaseAccessPolicy.QualifiedTable("competition", "participation_events"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "backtest_period_runs"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "live_evaluation_segments"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_snapshots"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_entries"),
+                new DatabaseAccessPolicy.QualifiedTable("competition", "room_final_access_grants"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"),
                 new DatabaseAccessPolicy.QualifiedTable("backtest", "runs"))) {
             assertTrue(
@@ -333,6 +338,17 @@ class DatabaseAccessPolicyTest {
                             target.table()),
                     "batch has no write path into " + target.schema() + "." + target.table());
         }
+
+        // The batch can only EXPIRE an existing sanction. Manual APPLY commands are rejected by
+        // DeadlineBatchConfiguration, so granting INSERT here would widen the runtime role beyond
+        // the only sanction mutation the scheduled job can perform.
+        assertFalse(
+                DatabaseAccessPolicy.allows(
+                        DatabaseAccessPolicy.ApplicationRole.BATCH,
+                        DatabaseAccessPolicy.Access.INSERT,
+                        "identity",
+                        "account_sanctions"),
+                "sanction expiry updates an existing row and must not create a sanction");
     }
     @Test
     void grantsTheBacktestRoleTheBotReadsItsExecutorPerforms() {
