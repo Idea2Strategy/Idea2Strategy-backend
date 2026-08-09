@@ -107,11 +107,29 @@ class Idea2StrategyCliTest {
         Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
                 "strategy", "edit", "apply", "--strategy-id", "strategy-1",
                 "--authorization-id", "auth-1", "--credential-id", "credential-1",
-                "--operations-file", operations.toString(), "--preview-hash", "sha256:reviewed");
+                "--operations-file", operations.toString(), "--preview-hash", "sha256:reviewed",
+                "--expected-edit-sequence", "12");
 
         assertThat(result.exitCode()).isZero();
         assertThat(requestPath.get()).isEqualTo("/api/v1/strategies/strategy-1/basic-edits/apply");
-        assertThat(requestBody.get()).contains("sha256:reviewed", "SET_VALUE", "auth-1", "credential-1");
+        assertThat(requestBody.get())
+                .contains("sha256:reviewed", "SET_VALUE", "auth-1", "credential-1")
+                .contains("\"expectedEditSequence\":12");
+    }
+
+    @Test
+    void basicEditApplyWithoutReviewedEditSequenceIsUsageErrorBeforeNetworkCall() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+        Path operations = tempDir.resolve("operations.json");
+        Files.writeString(operations, "[{\"action\":\"SET_VALUE\",\"arguments\":{\"value\":14}}]");
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "strategy", "edit", "apply", "--strategy-id", "strategy-1",
+                "--authorization-id", "auth-1", "--credential-id", "credential-1",
+                "--operations-file", operations.toString(), "--preview-hash", "sha256:reviewed");
+
+        assertThat(result.exitCode()).isEqualTo(2);
+        assertThat(requestPath.get()).isNull();
     }
 
     @Test

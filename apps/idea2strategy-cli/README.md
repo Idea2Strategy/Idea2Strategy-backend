@@ -30,6 +30,7 @@ strategy create --name NAME [--description TEXT]
 strategy copy --strategy-id ID --name NAME
 strategy edit preview --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE
 strategy edit apply --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE --preview-hash HASH
+  --expected-edit-sequence SEQUENCE
 strategy validate --strategy-id ID
 strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount AMOUNT --budget-cap-bps BPS
   --broker-rules-version VERSION --accounting-rules-version VERSION --precision-rules-version VERSION
@@ -47,7 +48,9 @@ duplicate JSON keys, unknown fields, and any mismatch with the separately review
 
 External AI tools must call `tool-contract` first. The returned JSON describes the allowed Basic edit operations,
 forbidden capabilities, stable exit codes, and the required two-step edit flow. An AI tool must inspect the preview
-`diff`, retain its `previewHash`, and send that exact hash with the same operations when applying the reviewed change.
+`diff`, retain its `previewHash` and `expectedEditSequence`, and send both back with the same operations when applying
+the reviewed change. The sequence is what makes the review gate hold across a concurrent owner edit: without it the
+server would re-read the document and apply a diff nobody reviewed against its current state.
 The CLI rejects arbitrary code, external-data access, direct orders, unapproved delegation scopes, and apply requests
 that omit the reviewed preview hash.
 

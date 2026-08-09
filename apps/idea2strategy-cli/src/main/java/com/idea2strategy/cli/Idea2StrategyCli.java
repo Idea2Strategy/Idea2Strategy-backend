@@ -193,10 +193,18 @@ public final class Idea2StrategyCli {
 
     private static JsonNode basicEdit(Arguments args, ApiClient api, String token, boolean apply) {
         args.rejectUnknown("--strategy-id", "--authorization-id", "--credential-id",
-                "--operations-file", "--preview-hash");
+                "--operations-file", "--preview-hash", "--expected-edit-sequence");
         String previewHash = args.optional("--preview-hash");
+        String expectedEditSequence = args.optional("--expected-edit-sequence");
         if (apply && (previewHash == null || previewHash.isBlank())) {
             throw Arguments.usage("Apply requires --preview-hash from a reviewed preview");
+        }
+        // The preview reports the sequence it read. Returning it on apply is what makes the review
+        // gate hold: without it the server would re-read, and an owner edit landing between the two
+        // calls would be overwritten by a diff nobody reviewed against it.
+        if (apply && (expectedEditSequence == null || expectedEditSequence.isBlank())) {
+            throw Arguments.usage(
+                    "Apply requires --expected-edit-sequence from the same reviewed preview");
         }
         ArrayNode operations = readOperations(args.required("--operations-file"));
         for (JsonNode operation : operations) {
@@ -210,6 +218,13 @@ public final class Idea2StrategyCli {
                 .put("credentialId", args.required("--credential-id"));
         body.set("operations", operations);
         putOptional(body, "previewHash", previewHash);
+        if (expectedEditSequence != null && !expectedEditSequence.isBlank()) {
+            try {
+                body.put("expectedEditSequence", Long.parseLong(expectedEditSequence.trim()));
+            } catch (NumberFormatException exception) {
+                throw Arguments.usage("--expected-edit-sequence must be the integer a preview returned");
+            }
+        }
         String suffix = apply ? "apply" : "preview";
         return api.post("/api/v1/strategies/" + segment(args.required("--strategy-id"))
                 + "/basic-edits/" + suffix, body, token);
