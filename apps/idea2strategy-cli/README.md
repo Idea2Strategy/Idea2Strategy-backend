@@ -34,6 +34,8 @@ Supported commands:
 
 ```text
 tool-contract
+catalog elements
+catalog instruments [--symbol TICKER[,TICKER...]]
 delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE --strategy-id ID[,ID...]
   [--expires-at ISO_8601_INSTANT]
 delegation revoke --authorization-id ID

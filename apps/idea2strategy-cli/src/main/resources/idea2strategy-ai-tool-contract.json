@@ -3,7 +3,38 @@
   "tool": "idea2strategy",
   "outputMode": "JSON",
   "contractCommand": ["tool-contract"],
+  "discovery": [
+    {
+      "name": "resolve-instruments",
+      "purpose": "Turn a company or ticker a person named into the instrument ids a container needs.",
+      "command": ["catalog", "instruments", "--symbol", "<TICKER[,TICKER...]>"],
+      "requiredOutputFields": ["data.instruments"]
+    },
+    {
+      "name": "read-element-catalog",
+      "purpose": "Read the official element codes and their declared parameters. Never guess a code; an unpublished code is refused.",
+      "command": ["catalog", "elements"],
+      "requiredOutputFields": ["data.elements"]
+    }
+  ],
   "workflow": [
+    {
+      "name": "create-strategy",
+      "purpose": "A new strategy starts empty; the container and blocks are built by the operations below.",
+      "command": ["strategy", "create", "--name", "<name>"],
+      "requiredOutputFields": ["data.id"]
+    },
+    {
+      "name": "delegate-editing",
+      "purpose": "Grant this tool scoped, expiring permission to edit that strategy. The credential is returned once.",
+      "command": [
+        "delegation", "create",
+        "--name", "<tool name>",
+        "--scopes", "STRATEGY_EDIT",
+        "--strategy-id", "<data.id from create-strategy>"
+      ],
+      "requiredOutputFields": ["data.authorizationId", "data.credentialId"]
+    },
     {
       "name": "preview-basic-edit",
       "command": [
