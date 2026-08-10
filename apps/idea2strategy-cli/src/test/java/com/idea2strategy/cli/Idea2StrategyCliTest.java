@@ -45,6 +45,31 @@ class Idea2StrategyCliTest {
         server.stop(0);
     }
 
+    /**
+     * A device request that nobody confirmed in time is not a fault, and saying "REQUEST_REJECTED
+     * ... status 410" sends the reader looking for one. The answer is to run login again, so the
+     * CLI has to say that.
+     */
+    @Test
+    void browserLoginExplainsAnApprovalWindowThatClosed() throws Exception {
+        server.removeContext("/");
+        server.createContext("/api/v1/auth/device/authorize", exchange -> respond(exchange, 201,
+                "{\"deviceCode\":\"device-1\",\"userCode\":\"ABCD-EFGH\","
+                        + "\"verificationUriComplete\":\"https://example.test/cli-auth?code=ABCD-EFGH\","
+                        + "\"intervalSeconds\":1}"));
+        server.createContext("/api/v1/auth/device/token", exchange -> respond(exchange, 410,
+                "{\"error\":\"expired_token\"}"));
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "login", "--browser", "--no-open");
+
+        assertThat(result.exitCode()).isEqualTo(5);
+        assertThat(JSON.readTree(result.stderr()).path("error").path("code").asText())
+                .isEqualTo("DEVICE_AUTHORIZATION_EXPIRED");
+        assertThat(JSON.readTree(result.stderr()).path("error").path("message").asText())
+                .contains("Run login again");
+    }
+
     @Test
     void loginReadsPasswordFromStandardInputAndStoresTokenWithoutEchoingSecrets() throws Exception {
         server.removeContext("/");
