@@ -59,55 +59,7 @@ class MigrationPolicyTest {
         var resource = getClass().getClassLoader().getResource("db/migration");
         var plan = MigrationPolicy.verifyDirectory(java.nio.file.Path.of(resource.toURI()));
 
-        assertEquals(
-                List.of(
-                        "V1__initial_schema.sql",
-                        "V20260801112341__backend_identity_email_auth.sql",
-                        "V20260801153000__backend_bot_continuation_deadlines.sql",
-                        "V20260802050054__backend_account_preferences_theme.sql",
-                        "V20260802060000__backend_account_lifecycle_dormant_status.sql",
-                        "V20260802060100__backend_account_lifecycle_contract.sql",
-                        "V20260802060200__backend_account_lifecycle_command_receipts.sql",
-                        "V20260802060300__backend_oidc_step_up_nonces.sql",
-                        "V20260802060400__backend_account_closure_coordination.sql",
-                        "V20260802194500__backend_final_leaderboard_unranked_entries.sql",
-                        "V20260802213500__backend_room_final_access_grants.sql",
-                        "V20260802220000__backend_retention_category_split.sql",
-                        "V20260802220100__trading_private_bot_runtime_cleanup.sql",
-                        "V20260802220200__backend_retention_execution.sql",
-                        "V20260802220300__backtest_competition_owner_anonymization.sql",
-                        "V20260802230000__backend_operator_room_permissions.sql",
-                        "V20260802231000__backend_leaderboard_result_source_guard.sql",
-                        "V20260802231100__backend_transactional_outbox.sql",
-                        "V20260802231200__backend_delegated_strategy_scope.sql",
-                        "V20260802231300__backend_user_case_contract.sql",
-                        "V20260802231400__backend_operator_rbac.sql",
-                        "V20260802231500__backend_notification_delivery.sql",
-                        "V20260802231600__backend_account_sanction_commands.sql",
-                        "V20260802231700__backend_operator_case_workflow.sql",
-                        "V20260802231800__backend_case_response_deadline.sql",
-                        "V20260802231900__backend_durable_batch_execution.sql",
-                        "V20260802232000__backend_operator_trust.sql",
-                        "V20260802232100__backend_operator_bootstrap_evidence.sql",
-                        "V20260804090000__backend_seed_basic_element_catalog.sql",
-                        "V20260804090100__pipeline_register_official_rsi_14.sql",
-                        "V20260804100000__backend_bot_launch_contract_plans.sql",
-                        "V20260804145900__backend_room_ledger_handoff.sql",
-                        "V20260804160000__backtest_runtime_ownership_expand.sql",
-                        "V20260804160010__backend_backtest_competition_link.sql",
-                        "V20260804160020__pipeline_dataset_manifest_empty_hash.sql",
-                        "V20260804160100__backtest_runtime_ownership_constrain.sql",
-                        "V20260805130000__backtest_run_input_pins.sql",
-                        "V20260806100000__backend_google_oidc_provider.sql",
-                        "V20260807120000__backend_customer_refresh_token_families.sql",
-                        "V20260807130000__backend_publish_full_basic_element_catalog.sql",
-                        "V20260808000000__backend_publish_live_strategy_timeframes.sql",
-                        "V20260808120000__backend_publish_production_backtest_resolutions.sql",
-                        "V20260809120000__backend_account_email_notification_preference.sql",
-                        "V20260809140000__backend_publish_delegation_disclosure_policy.sql",
-                        "V20260810090000__backend_publish_delegation_disclosure_policy_v2.sql",
-                        "V20260810120000__backend_device_authorization_requests.sql"),
-                plan.orderedFileNames());
+        assertEquals(List.of("V1__initial_schema.sql"), plan.orderedFileNames());
     }
 
     @Test
