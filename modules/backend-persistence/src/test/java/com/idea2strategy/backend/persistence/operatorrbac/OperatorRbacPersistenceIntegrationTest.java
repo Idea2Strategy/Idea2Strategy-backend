@@ -186,6 +186,17 @@ class OperatorRbacPersistenceIntegrationTest {
                 insert into operations.operator_accounts (id, status, created_at)
                 values (?, ?, clock_timestamp())
                 """, id, active ? "ACTIVE" : "DISABLED");
+        if (mfa) {
+            jdbc.update("""
+                    insert into operations.operator_login_credentials
+                        (operator_account_id, login_name, password_hash, password_parameters,
+                         password_version, totp_ciphertext, totp_nonce, totp_key_version,
+                         totp_enrolled_at, password_changed_at)
+                    values (?, ?, 'test-password-hash', '{}'::jsonb, 1,
+                            decode('00', 'hex'), decode('000000000000000000000000', 'hex'), 1,
+                            clock_timestamp(), clock_timestamp())
+                    """, id, key);
+        }
         return id;
     }
 

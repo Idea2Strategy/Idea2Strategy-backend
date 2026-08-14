@@ -45,7 +45,7 @@ class RoomEvaluationStartPersistenceIntegrationTest {
     private static final UUID OPERATOR_ID = id(8);
     private static final UUID SECOND_BOT_ID = id(9);
     private static final UUID SECOND_PARTICIPATION_ID = id(10);
-    private static final UUID PROVIDER_ID = id(11);
+    private static final UUID PROVIDER_ID = UUID.fromString("b9146ed9-dbb0-5323-93e3-8518f3851236");
     private static final UUID FEED_ID = id(12);
     private static final UUID FIRST_DATASET_ID = id(13);
     private static final UUID SECOND_DATASET_ID = id(14);
@@ -129,7 +129,6 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from market_data.dataset_manifests where id in (?, ?)", FIRST_DATASET_ID, SECOND_DATASET_ID);
         jdbc.update("delete from market_data.feeds where id in (?, ?)", FEED_ID, FEATURE_FEED_ID);
-        jdbc.update("delete from market_data.providers where id = ?", PROVIDER_ID);
         jdbc.update("delete from market_data.instruments where id = ?", FEATURE_INSTRUMENT_ID);
         jdbc.update("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
         jdbc.update("delete from identity.accounts where id = ?", OWNER_ID);
@@ -154,11 +153,6 @@ class RoomEvaluationStartPersistenceIntegrationTest {
                         + "(id, policy_code, version, buffer_bps, rounding_rules_version, rules_hash, "
                         + "effective_from, published_at) values (?, 'DEFAULT', 'v1', 0, 'v1', 'buffer-e11', ?, ?)",
                 BUFFER_ID, at.minusDays(2), at.minusDays(2));
-        jdbc.update(
-                "insert into market_data.providers "
-                        + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'E11 Backtest', 'internal-derived-v1', 'ACTIVE', ?)",
-                PROVIDER_ID, at.minusDays(2));
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
