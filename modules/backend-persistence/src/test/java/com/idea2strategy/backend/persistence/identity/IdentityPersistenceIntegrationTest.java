@@ -202,6 +202,54 @@ class IdentityPersistenceIntegrationTest {
     }
 
     @Test
+    void signupWithoutEmailDeliveryIsImmediatelyLoginReady() {
+        var tokenSequence = new AtomicInteger();
+        var registration = registrationService(tokenSequence, false);
+        var signup = registration.signup(new SignupCommand(
+                "immediate@example.com", "ValidPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
+
+        assertThat(signup.verificationToken()).isNull();
+        assertThat(signup.expiresAt()).isNull();
+        assertThat(authenticationService().login(new LoginCommand(
+                "immediate@example.com", "ValidPass!2026", UUID.randomUUID())).accountId())
+                .isEqualTo(signup.accountId());
+        assertThat(jdbcTemplate.queryForObject(
+                        "select lifecycle_status::text from identity.accounts where id = ?",
+                        String.class,
+                        signup.accountId()))
+                .isEqualTo("ACTIVE");
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.email_verification_requests where account_id = ?",
+                        Integer.class,
+                        signup.accountId()))
+                .isZero();
+    }
+
+    @Test
+    void signupWithoutEmailDeliveryActivatesAnExistingPendingAccountWithoutReplacingItsPassword() {
+        var tokenSequence = new AtomicInteger();
+        var pending = registrationService(tokenSequence).signup(new SignupCommand(
+                "pending@example.com", "OriginalPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
+
+        var activated = registrationService(tokenSequence, false).signup(new SignupCommand(
+                "pending@example.com", "ReplacementPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
+
+        assertThat(activated.accountId()).isEqualTo(pending.accountId());
+        assertThat(authenticationService().login(new LoginCommand(
+                "pending@example.com", "OriginalPass!2026", UUID.randomUUID())).accountId())
+                .isEqualTo(pending.accountId());
+        assertThatThrownBy(() -> authenticationService().login(new LoginCommand(
+                        "pending@example.com", "ReplacementPass!2026", UUID.randomUUID())))
+                .isInstanceOf(AuthenticationRejectedException.class);
+        assertThat(jdbcTemplate.queryForObject(
+                        "select count(*) from identity.email_verification_requests "
+                                + "where account_id = ? and revoked_at is not null",
+                        Integer.class,
+                        pending.accountId()))
+                .isEqualTo(1);
+    }
+
+    @Test
     void verificationResendEnforcesCooldownAndFiveRequestsPerAccountPerHour() {
         var tokenSequence = new AtomicInteger();
         var signup = registrationService(tokenSequence, NOW).signup(new SignupCommand(
@@ -680,6 +728,31 @@ class IdentityPersistenceIntegrationTest {
                     (short) 1,
                     (short) 1);
         });
+    }
+
+    private EmailRegistrationService registrationService(
+            AtomicInteger tokenSequence, boolean verificationRequired) {
+        return new EmailRegistrationService(
+                queryAdapter,
+                commandAdapter,
+                raw -> {
+                    String normalized = raw.trim().toLowerCase();
+                    return new ProtectedEmail(
+                            normalized,
+                            "ciphertext:" + normalized,
+                            "lookup:" + normalized,
+                            (short) 1,
+                            (short) 1);
+                },
+                new NistPasswordPolicy(List.of()),
+                raw -> new PasswordHash("hash:" + raw, "TEST", "{}"),
+                () -> {
+                    String raw = "raw-verification-token-" + tokenSequence.incrementAndGet() + "-" + UUID.randomUUID();
+                    return new VerificationToken(raw, "digest:" + raw);
+                },
+                raw -> "digest:" + raw,
+                verificationRequired,
+                Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private EmailRegistrationService registrationService(AtomicInteger tokenSequence, Instant now) {

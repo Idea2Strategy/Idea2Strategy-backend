@@ -215,7 +215,8 @@ public class IdentityAuthConfiguration {
             HmacVerificationTokens verificationTokens,
             Clock identityClock,
             @Value("${identity.preferences.default-language:ko}") String defaultLanguage,
-            @Value("${identity.preferences.default-timezone:America/New_York}") String defaultTimezone) {
+            @Value("${identity.preferences.default-timezone:America/New_York}") String defaultTimezone,
+            @Value("${identity.email-verification-required:false}") boolean emailVerificationRequired) {
         return new EmailRegistrationService(
                 queries,
                 commands,
@@ -229,6 +230,7 @@ public class IdentityAuthConfiguration {
                 verificationTokens,
                 verificationTokens,
                 new AccountPreferenceDefaults(defaultLanguage, defaultTimezone, ThemePreference.SYSTEM),
+                emailVerificationRequired,
                 identityClock);
     }
 
