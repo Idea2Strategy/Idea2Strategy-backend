@@ -177,15 +177,23 @@ public final class FeatureMaterializationPinResolver {
                 "feature-output-feed", definitionHash, calculatorVersion, definitionResolution, OUTPUT_SCHEMA);
         if (!INTERNAL_PROVIDER_CODE.equals(candidate.get("provider_code", String.class))
                 || !INTERNAL_PROVIDER_RIGHTS.equals(candidate.get("provider_rights_version", String.class))
-                || !"ACTIVE".equals(candidate.get("provider_status", String.class))
-                || !expectedFeedId.equals(candidate.get("feed_id", UUID.class))
-                || !expectedFeedCode(featureCode, definitionResolution, calculatorVersion)
-                        .equals(candidate.get("feed_code", String.class))
-                || !expectedFeedVersion(calculatorVersion).equals(candidate.get("feed_version", String.class))
-                || !"FEATURE_SERIES".equals(candidate.get("feed_data_kind", String.class))
+                || !"ACTIVE".equals(candidate.get("provider_status", String.class))) {
+            throw mismatch("feature output feed identity: provider");
+        }
+        if (!expectedFeedId.equals(candidate.get("feed_id", UUID.class))) {
+            throw mismatch("feature output feed identity: deterministic id");
+        }
+        if (!expectedFeedCode(featureCode, definitionResolution, calculatorVersion)
+                .equals(candidate.get("feed_code", String.class))) {
+            throw mismatch("feature output feed identity: code");
+        }
+        if (!expectedFeedVersion(calculatorVersion).equals(candidate.get("feed_version", String.class))) {
+            throw mismatch("feature output feed identity: version");
+        }
+        if (!"FEATURE_SERIES".equals(candidate.get("feed_data_kind", String.class))
                 || !"UTC".equals(candidate.get("feed_timezone_name", String.class))
                 || !normalizedDuration(candidate.get("feed_resolution", String.class)).equals(resolution)) {
-            throw mismatch("feature output feed identity");
+            throw mismatch("feature output feed identity: contract");
         }
         OffsetDateTime feedRetiredAt = candidate.get("feed_retired_at", OffsetDateTime.class);
         if (feedRetiredAt != null && !feedRetiredAt.isAfter(asOf)) {

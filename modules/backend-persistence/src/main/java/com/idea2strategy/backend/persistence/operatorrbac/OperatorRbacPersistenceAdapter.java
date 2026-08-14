@@ -158,7 +158,7 @@ public class OperatorRbacPersistenceAdapter implements OperatorRbacCommandPort {
                 where a.id = ?
                 """, (rs, row) -> new OperatorRbacState.Operator(rs.getObject(1, UUID.class),
                 "ACTIVE".equals(rs.getString(2)),
-                rs.getTimestamp(3) != null), id);
+                rs.getBoolean(3)), id);
         return rows.isEmpty() ? null : rows.getFirst();
     }
 

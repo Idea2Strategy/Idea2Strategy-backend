@@ -244,11 +244,12 @@ class SeededBasicElementCatalogTest {
         UUID activeCatalog = jdbc.queryForObject(
                 "select id from strategy.element_catalog_versions where retired_at is null",
                 UUID.class);
-        // Feature definitions are owned by Data Pipeline and enter production through the root
-        // canonical bundle assembler. This repository's central-only fixture must not duplicate
-        // that contribution under the same Flyway version.
+        // V1 is the post-AWS launch baseline, so its canonical feature definitions are present
+        // directly and must cover every production resolution exposed by the active catalog.
         assertThat(catalogAdapter.findFeatures(activeCatalog))
-                .isEmpty();
+                .hasSize(4)
+                .extracting(definition -> definition.resolution())
+                .containsExactlyInAnyOrder("30m", "1h", "4h", "1d");
 
         assertThat(jdbc.queryForList("""
                 select jsonb_array_elements_text(parameter_schema #> '{properties,executionMode,enum}')
