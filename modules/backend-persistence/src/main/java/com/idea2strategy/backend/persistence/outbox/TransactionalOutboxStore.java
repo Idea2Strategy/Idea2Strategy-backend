@@ -404,7 +404,6 @@ public class TransactionalOutboxStore {
                 join operations.role_permissions rp on rp.role_id = r.id
                 join operations.permissions p on p.id = rp.permission_id
                 where oa.id = ? and oa.status = 'ACTIVE' and oa.disabled_at is null
-                  and oa.mfa_enrolled_at is not null and oa.last_mfa_verified_at is not null
                   and r.status = 'ACTIVE' and p.code = 'OPERATIONS_OUTBOX_REPLAY'
                   and a.granted_at <= clock_timestamp()
                   and (a.expires_at is null or a.expires_at > clock_timestamp())

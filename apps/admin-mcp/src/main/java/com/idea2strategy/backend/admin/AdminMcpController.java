@@ -49,7 +49,7 @@ public class AdminMcpController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestHeader(value = "X-Correlation-Id", required = false) String correlationHeader) {
         OperatorRequestContext actor = securityContext.current()
-                .filter(OperatorRequestContext::trustedExternalSubject)
+                .filter(OperatorRequestContext::sessionAuthenticated)
                 .orElseThrow(AdminMcpAuthenticationRejectedException::new);
         UUID correlationId = correlation(correlationHeader);
         AdminMcpInvocation invocation = new AdminMcpInvocation(

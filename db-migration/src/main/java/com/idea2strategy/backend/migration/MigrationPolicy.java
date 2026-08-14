@@ -20,7 +20,7 @@ import java.util.regex.Pattern;
 
 public final class MigrationPolicy {
     public static final String BASELINE_FILE = "V1__initial_schema.sql";
-    public static final String BASELINE_SHA256 = "e3bec37557b570d9a33c10a07e3e5c706ab56105dec409ad5ddb800720517282";
+    public static final String BASELINE_SHA256 = "ccc5950a4d23b9c8f07b895a83dbea18a9fb072523b56b121eecb65bec15c533";
 
     private static final Pattern TIMESTAMP_MIGRATION = Pattern.compile(
             "^V(?<version>\\d{14})__(?<owner>[a-z]+)_(?<description>[a-z0-9]+(?:_[a-z0-9]+)*)\\.sql$");

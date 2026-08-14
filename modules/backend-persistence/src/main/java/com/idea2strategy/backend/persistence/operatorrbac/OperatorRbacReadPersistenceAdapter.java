@@ -35,13 +35,12 @@ public class OperatorRbacReadPersistenceAdapter implements OperatorRbacReadPort 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public OperatorRbacReadModels.ActorState loadActorState(UUID actorId, Instant evaluatedAt) {
         List<Map<String, Object>> operators = jdbc.queryForList("""
-                select status, last_mfa_verified_at
+                select status
                 from operations.operator_accounts where id = ?
                 """, actorId);
         String catalogVersion = activeCatalogVersion();
         boolean active = operators.size() == 1 && "ACTIVE".equals(operators.getFirst().get("status"));
-        Instant lastMfa = operators.size() == 1
-                ? instant(operators.getFirst().get("last_mfa_verified_at")) : null;
+        Instant lastMfa = null;
         if (!active || catalogVersion == null) {
             var self = new OperatorRbacReadModels.SelfView(
                     actorId, catalogVersion, false, null, lastMfa,

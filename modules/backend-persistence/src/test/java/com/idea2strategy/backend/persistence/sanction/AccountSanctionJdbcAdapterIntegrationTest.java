@@ -71,10 +71,9 @@ class AccountSanctionJdbcAdapterIntegrationTest {
         jdbc.update("insert into identity.accounts(id, lifecycle_status) values (?, 'ACTIVE')", ACCOUNT);
         jdbc.update("""
                 insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, external_identity_key_version,
-                     status, mfa_enrolled_at, created_at)
-                values (?, ?, 1, 'ACTIVE', ?, ?)
-                """, OPERATOR, "a".repeat(64), NOW.atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC));
+                    (id, status, created_at)
+                values (?, 'ACTIVE', ?)
+                """, OPERATOR, NOW.atOffset(ZoneOffset.UTC));
     }
 
     @Test

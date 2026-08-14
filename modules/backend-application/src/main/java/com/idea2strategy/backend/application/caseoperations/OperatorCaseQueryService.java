@@ -80,7 +80,7 @@ public final class OperatorCaseQueryService {
     }
 
     private static void requireTrusted(OperatorRequestContext context) {
-        if (!context.trustedExternalSubject()) {
+        if (!context.sessionAuthenticated()) {
             throw new OperatorCaseAuthenticationRejectedException();
         }
     }

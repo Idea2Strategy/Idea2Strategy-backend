@@ -159,9 +159,8 @@ class DeadlineBatchPostgresIntegrationTest {
         Timestamp expired = Timestamp.from(Instant.now().minus(Duration.ofHours(1)));
         Timestamp now = Timestamp.from(Instant.now());
         jdbc.update("insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, "
-                        + "mfa_enrolled_at, created_at) values (?, ?, 1, 'ACTIVE', ?, ?)",
-                OPERATOR, "f".repeat(64), now, now);
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
+                OPERATOR, now);
         jdbc.update("insert into identity.account_sanctions "
                         + "(id, account_id, sanction_type, status, reason_code, applied_by_operator_id, "
                         + "applied_at, effective_at, expires_at, status_changed_at) "
