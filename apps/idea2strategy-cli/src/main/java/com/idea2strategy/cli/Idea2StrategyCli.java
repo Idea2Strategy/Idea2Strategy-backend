@@ -71,7 +71,13 @@ public final class Idea2StrategyCli {
     private static JsonNode execute(Invocation invocation, InputStream stdin, Map<String, String> environment) {
         Arguments arguments = Arguments.parse(invocation.commandArguments());
         if (arguments.positionals().equals(List.of("operator", "bootstrap"))) {
-            return OperatorBootstrapCommand.execute(arguments, environment);
+            return OperatorBootstrapCommand.execute(arguments, environment, stdin);
+        }
+        if (arguments.positionals().equals(List.of("operator", "credential-provision"))) {
+            return OperatorCredentialProvisionCommand.execute(arguments, environment, stdin);
+        }
+        if (arguments.positionals().equals(List.of("operator", "credential-reset"))) {
+            return OperatorCredentialResetCommand.execute(arguments, environment, stdin);
         }
         ApiClient api = new ApiClient(invocation.baseUrl());
         CredentialStore credentials = new CredentialStore(invocation.configDirectory());

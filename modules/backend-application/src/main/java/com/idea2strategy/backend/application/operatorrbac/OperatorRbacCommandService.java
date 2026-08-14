@@ -18,7 +18,7 @@ public final class OperatorRbacCommandService {
 
     public OperatorRbacResult execute(OperatorRbacCommand command) {
         Objects.requireNonNull(command, "command");
-        if (!command.requestContext().trustedExternalSubject()) {
+        if (!command.requestContext().sessionAuthenticated()) {
             throw new OperatorRbacAuthenticationRejectedException();
         }
         Instant now = clock.instant();
@@ -130,7 +130,7 @@ public final class OperatorRbacCommandService {
     private static Evaluation evaluateActor(
             OperatorRbacCommand command, OperatorRbacState state, Instant now) {
         OperatorRequestContext context = command.requestContext();
-        if (!context.trustedExternalSubject()) {
+        if (!context.sessionAuthenticated()) {
             return Evaluation.rejected("OPERATOR_AUTHENTICATION_REQUIRED", context, false);
         }
         if (state.actor() == null || !state.actor().id().equals(context.operatorId()) || !state.actor().active()) {
@@ -239,7 +239,7 @@ public final class OperatorRbacCommandService {
                     permissions,
                     delegable,
                     targetPermissions,
-                    context.trustedExternalSubject(),
+                    context.sessionAuthenticated(),
                     mfaSatisfied,
                     strictHierarchySatisfied);
         }

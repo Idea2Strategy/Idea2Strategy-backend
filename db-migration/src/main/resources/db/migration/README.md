@@ -6,7 +6,7 @@
 
 It is a deterministic dump of the final schema and canonical seed/reference data produced by the last historical migration bundle. The rebaseline equivalence check recorded:
 
-- baseline SHA-256: `e3bec37557b570d9a33c10a07e3e5c706ab56105dec409ad5ddb800720517282`
+- baseline SHA-256: `ccc5950a4d23b9c8f07b895a83dbea18a9fb072523b56b121eecb65bec15c533`
 - schema fingerprint: `301075f9a6c9c1dd5b1f766d099b5fdd3b6149bfc5842fb0f59671e91e719571`
 - seed-data fingerprint: `e14e81ad82c679420aa3f0c27a48a82f853d3fcc7fcea214ce1ef626599076db`
 - 10 application schemas, 70 enum types, and 181 application tables

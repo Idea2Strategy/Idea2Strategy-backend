@@ -104,11 +104,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 CREATED_AT.atOffset(ZoneOffset.UTC));
         jdbcTemplate.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, last_mfa_verified_at, created_at) "
-                        + "values (?, 'operator-e06', 1, 'ACTIVE', ?, ?, ?)",
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
                 OPERATOR_ID,
-                CREATED_AT.atOffset(ZoneOffset.UTC),
-                CREATED_AT.atOffset(ZoneOffset.UTC),
                 CREATED_AT.atOffset(ZoneOffset.UTC));
         jdbcTemplate.update(
                 "insert into competition.scoring_template_versions "

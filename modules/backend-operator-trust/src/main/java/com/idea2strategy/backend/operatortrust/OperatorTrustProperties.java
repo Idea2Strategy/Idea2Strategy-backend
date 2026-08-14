@@ -1,82 +1,86 @@
 package com.idea2strategy.backend.operatortrust;
 
-import java.net.URI;
 import java.time.Duration;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("idea2strategy.operator-auth")
 public class OperatorTrustProperties {
     private boolean enabled;
-    private String issuer;
-    private URI jwkSetUri;
-    private String audience;
-    private String algorithm = "RS256";
-    private Duration maximumTokenAge = Duration.ofMinutes(5);
-    private Duration maximumMfaAge = Duration.ofMinutes(10);
-    private Duration clockSkew = Duration.ofSeconds(30);
-    private Set<String> allowedAcrValues = Set.of();
-    private Set<String> allowedAmrValues = Set.of("mfa");
-    private String mfaClaimName;
-    private Set<String> allowedMfaClaimValues = Set.of();
-    private int currentSubjectHmacKeyVersion;
-    private String currentSubjectHmacKey;
-    private Integer previousSubjectHmacKeyVersion;
-    private String previousSubjectHmacKey;
+    private boolean secureCookie = true;
+    private Duration idleLifetime = Duration.ofMinutes(15);
+    private Duration absoluteLifetime = Duration.ofHours(8);
+    private int passwordMemoryKb = 65536;
+    private int passwordIterations = 3;
+    private int passwordParallelism = 1;
+    private String throttleRedisUri = "";
+    private Duration throttleWindow = Duration.ofMinutes(5);
+    private int throttleLoginLimit = 10;
+    private int throttleSourceLimit = 60;
+    private VersionedKey totpEncryption = new VersionedKey();
+    private VersionedKey sessionHmac = new VersionedKey();
+    private VersionedKey csrfHmac = new VersionedKey();
+    private VersionedKey sourceHmac = new VersionedKey();
+    private VersionedKey loginHmac = new VersionedKey();
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public boolean isSecureCookie() { return secureCookie; }
+    public void setSecureCookie(boolean secureCookie) { this.secureCookie = secureCookie; }
+    public Duration getIdleLifetime() { return idleLifetime; }
+    public void setIdleLifetime(Duration value) { this.idleLifetime = value; }
+    public Duration getAbsoluteLifetime() { return absoluteLifetime; }
+    public void setAbsoluteLifetime(Duration value) { this.absoluteLifetime = value; }
+    public int getPasswordMemoryKb() { return passwordMemoryKb; }
+    public void setPasswordMemoryKb(int value) { this.passwordMemoryKb = value; }
+    public int getPasswordIterations() { return passwordIterations; }
+    public void setPasswordIterations(int value) { this.passwordIterations = value; }
+    public int getPasswordParallelism() { return passwordParallelism; }
+    public void setPasswordParallelism(int value) { this.passwordParallelism = value; }
+    public String getThrottleRedisUri() { return throttleRedisUri; }
+    public void setThrottleRedisUri(String value) { this.throttleRedisUri = value; }
+    public Duration getThrottleWindow() { return throttleWindow; }
+    public void setThrottleWindow(Duration value) { this.throttleWindow = value; }
+    public int getThrottleLoginLimit() { return throttleLoginLimit; }
+    public void setThrottleLoginLimit(int value) { this.throttleLoginLimit = value; }
+    public int getThrottleSourceLimit() { return throttleSourceLimit; }
+    public void setThrottleSourceLimit(int value) { this.throttleSourceLimit = value; }
+    public VersionedKey getTotpEncryption() { return totpEncryption; }
+    public void setTotpEncryption(VersionedKey value) { this.totpEncryption = value; }
+    public VersionedKey getSessionHmac() { return sessionHmac; }
+    public void setSessionHmac(VersionedKey value) { this.sessionHmac = value; }
+    public VersionedKey getCsrfHmac() { return csrfHmac; }
+    public void setCsrfHmac(VersionedKey value) { this.csrfHmac = value; }
+    public VersionedKey getSourceHmac() { return sourceHmac; }
+    public void setSourceHmac(VersionedKey value) { this.sourceHmac = value; }
+    public VersionedKey getLoginHmac() { return loginHmac; }
+    public void setLoginHmac(VersionedKey value) { this.loginHmac = value; }
 
-    public OperatorTrustConfiguration validated() {
-        if (!"RS256".equals(algorithm)) {
-            throw new IllegalArgumentException("OPERATOR_TRUST_CONFIGURATION_INVALID");
+    public void validate() {
+        if (idleLifetime == null || idleLifetime.isNegative() || idleLifetime.isZero()
+                || absoluteLifetime == null || absoluteLifetime.compareTo(idleLifetime) < 0
+                || passwordMemoryKb < 8192 || passwordIterations < 1 || passwordParallelism < 1
+                || throttleWindow == null || throttleWindow.isNegative() || throttleWindow.isZero()
+                || throttleLoginLimit < 1 || throttleSourceLimit < throttleLoginLimit) {
+            throw new IllegalArgumentException("OPERATOR_AUTH_CONFIGURATION_INVALID");
         }
-        Map<Integer, byte[]> keys = new LinkedHashMap<>();
-        keys.put(currentSubjectHmacKeyVersion, OperatorTrustConfiguration.decodeKey(currentSubjectHmacKey));
-        if (previousSubjectHmacKeyVersion != null || previousSubjectHmacKey != null) {
-            if (previousSubjectHmacKeyVersion == null || previousSubjectHmacKey == null
-                    || previousSubjectHmacKeyVersion == currentSubjectHmacKeyVersion) {
-                throw new IllegalArgumentException("OPERATOR_TRUST_CONFIGURATION_INVALID");
-            }
-            keys.put(previousSubjectHmacKeyVersion,
-                    OperatorTrustConfiguration.decodeKey(previousSubjectHmacKey));
-        }
-        return new OperatorTrustConfiguration(
-                issuer, jwkSetUri, audience, maximumTokenAge, maximumMfaAge, clockSkew,
-                allowedAcrValues, allowedAmrValues, mfaClaimName, allowedMfaClaimValues,
-                keys, currentSubjectHmacKeyVersion);
+        totpEncryption.require("TOTP");
+        sessionHmac.require("SESSION");
+        csrfHmac.require("CSRF");
+        sourceHmac.require("SOURCE");
+        loginHmac.require("LOGIN");
     }
 
-    public String getIssuer() { return issuer; }
-    public void setIssuer(String issuer) { this.issuer = issuer; }
-    public URI getJwkSetUri() { return jwkSetUri; }
-    public void setJwkSetUri(URI jwkSetUri) { this.jwkSetUri = jwkSetUri; }
-    public String getAudience() { return audience; }
-    public void setAudience(String audience) { this.audience = audience; }
-    public String getAlgorithm() { return algorithm; }
-    public void setAlgorithm(String algorithm) { this.algorithm = algorithm; }
-    public Duration getMaximumTokenAge() { return maximumTokenAge; }
-    public void setMaximumTokenAge(Duration maximumTokenAge) { this.maximumTokenAge = maximumTokenAge; }
-    public Duration getMaximumMfaAge() { return maximumMfaAge; }
-    public void setMaximumMfaAge(Duration maximumMfaAge) { this.maximumMfaAge = maximumMfaAge; }
-    public Duration getClockSkew() { return clockSkew; }
-    public void setClockSkew(Duration clockSkew) { this.clockSkew = clockSkew; }
-    public Set<String> getAllowedAcrValues() { return allowedAcrValues; }
-    public void setAllowedAcrValues(Set<String> values) { this.allowedAcrValues = values; }
-    public Set<String> getAllowedAmrValues() { return allowedAmrValues; }
-    public void setAllowedAmrValues(Set<String> values) { this.allowedAmrValues = values; }
-    public String getMfaClaimName() { return mfaClaimName; }
-    public void setMfaClaimName(String value) { this.mfaClaimName = value; }
-    public Set<String> getAllowedMfaClaimValues() { return allowedMfaClaimValues; }
-    public void setAllowedMfaClaimValues(Set<String> values) { this.allowedMfaClaimValues = values; }
-    public int getCurrentSubjectHmacKeyVersion() { return currentSubjectHmacKeyVersion; }
-    public void setCurrentSubjectHmacKeyVersion(int value) { this.currentSubjectHmacKeyVersion = value; }
-    public String getCurrentSubjectHmacKey() { return currentSubjectHmacKey; }
-    public void setCurrentSubjectHmacKey(String value) { this.currentSubjectHmacKey = value; }
-    public Integer getPreviousSubjectHmacKeyVersion() { return previousSubjectHmacKeyVersion; }
-    public void setPreviousSubjectHmacKeyVersion(Integer value) { this.previousSubjectHmacKeyVersion = value; }
-    public String getPreviousSubjectHmacKey() { return previousSubjectHmacKey; }
-    public void setPreviousSubjectHmacKey(String value) { this.previousSubjectHmacKey = value; }
+    public static class VersionedKey {
+        private int version;
+        private String key;
+        public int getVersion() { return version; }
+        public void setVersion(int version) { this.version = version; }
+        public String getKey() { return key; }
+        public void setKey(String key) { this.key = key; }
+        void require(String name) {
+            if (version <= 0 || key == null || key.isBlank()) {
+                throw new IllegalArgumentException("OPERATOR_" + name + "_KEY_CONFIGURATION_INVALID");
+            }
+        }
+    }
 }

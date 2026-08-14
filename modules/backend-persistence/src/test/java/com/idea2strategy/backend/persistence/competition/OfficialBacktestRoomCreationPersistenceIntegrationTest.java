@@ -138,9 +138,8 @@ class OfficialBacktestRoomCreationPersistenceIntegrationTest {
     private void seedCatalogAndInputs() {
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, "
-                        + "mfa_enrolled_at, created_at) values (?, 'int04-a-room-operator', 1, 'ACTIVE', ?, ?)",
-                OPERATOR, utc(NOW.minusSeconds(100)), utc(NOW.minusSeconds(100)));
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
+                OPERATOR, utc(NOW.minusSeconds(100)));
         jdbc.update(
                 "insert into competition.scoring_template_versions "
                         + "(id, template_code, version, rules_document, rules_hash, published_at) values "

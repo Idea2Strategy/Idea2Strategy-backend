@@ -137,9 +137,8 @@ class RoomEvaluationStartPersistenceIntegrationTest {
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", OWNER_ID);
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, created_at) "
-                        + "values (?, 'operator-e11', 1, 'ACTIVE', ?, ?)",
-                OPERATOR_ID, at.minusDays(2), at.minusDays(2));
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
+                OPERATOR_ID, at.minusDays(2));
         jdbc.update(
                 "insert into competition.scoring_template_versions "
                         + "(id, template_code, version, rules_document, rules_hash, published_at) "

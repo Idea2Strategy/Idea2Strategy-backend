@@ -74,10 +74,8 @@ class RoomScheduleTransitionPersistenceIntegrationTest {
         jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", BOT_OWNER_ID);
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, "
-                        + "mfa_enrolled_at, created_at) values (?, 'operator-room-schedule', 1, 'ACTIVE', ?, ?)",
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
                 OPERATOR_ID,
-                RECRUITMENT.minusSeconds(7200).atOffset(ZoneOffset.UTC),
                 RECRUITMENT.minusSeconds(7200).atOffset(ZoneOffset.UTC));
     }
 

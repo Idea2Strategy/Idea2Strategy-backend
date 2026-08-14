@@ -25,8 +25,7 @@ public final class OperatorBootstrapService {
                 || !HASH.matcher(nullToEmpty(manifest.catalogContentHash())).matches()
                 || !validText(manifest.expectedDatabaseRole(), 63)
                 || !HASH.matcher(nullToEmpty(manifestHash)).matches()
-                || manifest.externalIdentityKeyVersion() <= 0
-                || !HASH.matcher(nullToEmpty(manifest.externalIdentityKeyHmac())).matches()
+                || !nullToEmpty(manifest.loginName()).matches("[a-z0-9][a-z0-9._-]{2,119}")
                 || manifest.operatorAccountId() == null
                 || manifest.operatorRoleAssignmentId() == null || manifest.initialRoleId() == null
                 || manifest.deploymentActorId() == null || !validText(manifest.grantProvenance(), 160)
