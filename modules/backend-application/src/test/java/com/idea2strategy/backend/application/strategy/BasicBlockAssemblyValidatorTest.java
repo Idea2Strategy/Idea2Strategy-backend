@@ -150,6 +150,40 @@ class BasicBlockAssemblyValidatorTest {
                 .contains("IMPOSSIBLE_PERIOD_COMBINATION", "INVALID_PARAMETER_VALUE");
     }
 
+    @Test
+    void enforcesPublishedBasicCompositionLimits() {
+        List<UUID> sixInstruments = java.util.stream.IntStream.range(0, 6)
+                .mapToObj(index -> index == 0 ? AAPL_ID : UUID.randomUUID())
+                .toList();
+        List<BasicBlock> blocks = new java.util.ArrayList<>();
+        for (int index = 0; index < 6; index++) {
+            blocks.add(new BasicBlock("condition-" + index, "RSI", Map.of("period", 14)));
+        }
+        blocks.add(new BasicBlock("order", "BUY_ORDER", Map.of()));
+        List<BasicBlockConnection> connections = new java.util.ArrayList<>();
+        for (int index = 0; index < blocks.size() - 1; index++) {
+            connections.add(new BasicBlockConnection(
+                    blocks.get(index).id(), "result", blocks.get(index + 1).id(), "input"));
+        }
+        var oversized = new BasicBlockGroup(
+                "oversized", TradeContainer.BUY, EvaluationMode.INDEPENDENT, AllocationMode.EQUAL,
+                sixInstruments, blocks, connections);
+        List<BasicBlockGroup> groups = new java.util.ArrayList<>();
+        groups.add(oversized);
+        for (int index = 0; index < 4; index++) {
+            groups.add(group("extra-buy-" + index, TradeContainer.BUY, "BUY_ORDER"));
+        }
+
+        BasicBlockAssemblyValidationResult result = validator.validate(
+                new BasicBlockAssembly(CATALOG_ID, groups), catalog());
+
+        assertThat(result.issues()).extracting(BasicBlockAssemblyIssue::code, BasicBlockAssemblyIssue::location)
+                .contains(
+                        org.assertj.core.groups.Tuple.tuple("TOO_MANY_BUY_CONTAINERS", "groups"),
+                        org.assertj.core.groups.Tuple.tuple("TOO_MANY_INSTRUMENTS", "groups[0].instrumentIds"),
+                        org.assertj.core.groups.Tuple.tuple("TOO_MANY_CONDITIONS", "groups[0].blocks"));
+    }
+
     private static BasicBlockGroup group(String id, TradeContainer container, String orderElement) {
         return new BasicBlockGroup(
                 id,

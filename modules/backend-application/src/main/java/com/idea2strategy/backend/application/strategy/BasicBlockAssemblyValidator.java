@@ -15,10 +15,15 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
 public final class BasicBlockAssemblyValidator {
+    private static final int MAX_SECTIONS = 4;
+    private static final int MAX_CONTAINERS_PER_SIDE = MAX_SECTIONS;
+    private static final int MAX_INSTRUMENTS_PER_GROUP = 5;
+    private static final int MAX_CONDITIONS_PER_GROUP = 5;
     private final ObjectMapper objectMapper;
 
     public BasicBlockAssemblyValidator() {
@@ -42,6 +47,17 @@ public final class BasicBlockAssemblyValidator {
         Set<UUID> supportedInstruments = new HashSet<>();
         catalog.instruments().forEach(instrument -> supportedInstruments.add(instrument.id()));
         boolean terminalStructurePublished = catalog.elements().stream().anyMatch(this::isTerminal);
+
+        if (assembly.groups().stream().filter(group -> group.container() == BasicBlockAssembly.TradeContainer.BUY).count()
+                > MAX_CONTAINERS_PER_SIDE) {
+            add(issues, "TOO_MANY_BUY_CONTAINERS", "groups",
+                    "A Basic strategy may contain at most four buy containers");
+        }
+        if (assembly.groups().stream().filter(group -> group.container() == BasicBlockAssembly.TradeContainer.SELL).count()
+                > MAX_CONTAINERS_PER_SIDE) {
+            add(issues, "TOO_MANY_SELL_CONTAINERS", "groups",
+                    "A Basic strategy may contain at most four sell containers");
+        }
 
         for (int groupIndex = 0; groupIndex < assembly.groups().size(); groupIndex++) {
             validateGroup(
@@ -71,6 +87,13 @@ public final class BasicBlockAssemblyValidator {
             add(issues, "EQUAL_ALLOCATION_REQUIRED", groupPath + ".allocationMode",
                     "Basic permits equal allocation only");
         }
+        if (group.instrumentIds().isEmpty()) {
+            add(issues, "INSTRUMENT_REQUIRED", groupPath + ".instrumentIds",
+                    "A Basic container needs at least one instrument");
+        } else if (group.instrumentIds().size() > MAX_INSTRUMENTS_PER_GROUP) {
+            add(issues, "TOO_MANY_INSTRUMENTS", groupPath + ".instrumentIds",
+                    "A Basic section may contain at most five instruments");
+        }
         for (int instrumentIndex = 0; instrumentIndex < group.instrumentIds().size(); instrumentIndex++) {
             if (!supportedInstruments.contains(group.instrumentIds().get(instrumentIndex))) {
                 add(issues, "UNSUPPORTED_INSTRUMENT", groupPath + ".instrumentIds[" + instrumentIndex + "]",
@@ -96,6 +119,16 @@ public final class BasicBlockAssemblyValidator {
 
         if (terminalStructurePublished) {
             validateTerminalStructure(group, groupIndex, blockDefinitions, issues);
+            long conditionCount = group.blocks().stream()
+                    .map(block -> blockDefinitions.get(block.id()))
+                    .filter(Objects::nonNull)
+                    .filter(definition -> !isTerminal(definition))
+                    .filter(definition -> !"TRIGGER".equals(definition.elementKind()))
+                    .count();
+            if (conditionCount > MAX_CONDITIONS_PER_GROUP) {
+                add(issues, "TOO_MANY_CONDITIONS", groupPath + ".blocks",
+                        "A Basic container may contain at most five conditions");
+            }
         }
 
         if (!isSequential(group)) {
