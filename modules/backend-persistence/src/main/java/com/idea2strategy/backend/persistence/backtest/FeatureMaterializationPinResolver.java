@@ -234,7 +234,8 @@ public final class FeatureMaterializationPinResolver {
                         + "where dox.dataset_manifest_id = ? "
                         + "order by dox.period_start, dox.period_end, dox.shard_key, dox.part_number, dox.id",
                 manifestId);
-        OffsetDateTime coveredUntil = requiredStart;
+        OffsetDateTime latestEnd = null;
+        OffsetDateTime previousStart = null;
         for (Record receipt : receipts) {
             OffsetDateTime membershipStart = receipt.get("membership_period_start", OffsetDateTime.class);
             OffsetDateTime membershipEnd = receipt.get("membership_period_end", OffsetDateTime.class);
@@ -249,17 +250,23 @@ public final class FeatureMaterializationPinResolver {
                     || membershipRows.longValue() != objectRows.longValue()) {
                 throw incompleteObjects();
             }
+            if (previousStart != null && membershipStart.isBefore(previousStart)) {
+                throw incompleteObjects();
+            }
+            previousStart = membershipStart;
             if (!membershipEnd.isAfter(requiredStart)) {
                 continue;
             }
-            if (membershipStart.isAfter(coveredUntil)) {
-                throw incompleteObjects();
-            }
-            if (membershipEnd.isAfter(coveredUntil)) {
-                coveredUntil = membershipEnd;
+            if (latestEnd == null || membershipEnd.isAfter(latestEnd)) {
+                latestEnd = membershipEnd;
             }
         }
-        if (coveredUntil.isBefore(requiredEnd)) {
+        /* Feature rows are sparse on market holidays and begin only after the calculator's
+           warm-up window.  The manifest/materialization interval is the authoritative requested
+           coverage; object receipts describe rows that actually exist and therefore must not be
+           forced into a gapless wall-clock interval.  We still require authoritative receipt
+           metadata and an output reaching the evaluation boundary. */
+        if (latestEnd == null || latestEnd.isBefore(requiredEnd)) {
             throw incompleteObjects();
         }
     }
