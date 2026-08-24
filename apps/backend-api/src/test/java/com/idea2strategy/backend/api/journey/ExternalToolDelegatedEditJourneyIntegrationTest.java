@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.idea2strategy.backend.api.identity.AccountVerificationEmailRequested;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
@@ -15,8 +14,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.event.ApplicationEvents;
-import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
@@ -41,7 +38,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
-@RecordApplicationEvents
 class ExternalToolDelegatedEditJourneyIntegrationTest {
     private static final String EMAIL = "delegated-edit@example.com";
     private static final String PASSWORD = "CorrectHorse!2026";
@@ -69,28 +65,20 @@ class ExternalToolDelegatedEditJourneyIntegrationTest {
 
     @Autowired WebApplicationContext context;
     @Autowired ObjectMapper json;
-    @Autowired ApplicationEvents events;
 
     @Test
     void anExternalToolDelegatesThenPreviewsAndAppliesABasicEdit() throws Exception {
         MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
 
-        mvc.perform(post("/api/v1/auth/signup")
+        JsonNode signup = json.readTree(mvc.perform(post("/api/v1/auth/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"email":"%s","password":"%s","nickname":"delegator"}
                                 """.formatted(EMAIL, PASSWORD)))
-                .andExpect(status().isAccepted());
-        String verificationToken = events.stream(AccountVerificationEmailRequested.class)
-                .findFirst()
-                .map(AccountVerificationEmailRequested::verificationToken)
-                .orElseThrow();
-        mvc.perform(post("/api/v1/auth/verify-email")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"verificationToken":"%s"}
-                                """.formatted(verificationToken)))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(signup.path("verificationRequired").asBoolean()).isFalse();
+        assertThat(signup.path("verificationExpiresAt").isNull()).isTrue();
 
         String accessToken = json.readTree(mvc.perform(post("/api/v1/auth/login")
                                 .contentType(MediaType.APPLICATION_JSON)
