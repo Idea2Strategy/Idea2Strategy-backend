@@ -67,6 +67,27 @@ class IdentityAuthControllerTest {
     }
 
     @Test
+    void signupWithoutVerificationTokenReportsThatVerificationIsNotRequired() {
+        var registration = mock(EmailRegistrationService.class);
+        var authentication = mock(EmailAuthenticationService.class);
+        var delivery = mock(VerificationDeliveryPort.class);
+        UUID accountId = UUID.randomUUID();
+        when(registration.signup(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new SignupResult(accountId, null, null));
+        var controller = new IdentityAuthController(registration, authentication, delivery, jwt(), cookies());
+
+        var response = controller.signup(
+                new IdentityAuthController.SignupRequest("person@example.com", "ValidPass!2026"),
+                UUID.randomUUID().toString(),
+                "192.0.2.0/24");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(202);
+        assertThat(response.getBody().verificationRequired()).isFalse();
+        assertThat(response.getBody().verificationExpiresAt()).isNull();
+        verifyNoInteractions(delivery);
+    }
+
+    @Test
     void repeatedPendingSignupDoesNotSendAnotherVerificationEmail() {
         var registration = mock(EmailRegistrationService.class);
         var delivery = mock(VerificationDeliveryPort.class);
