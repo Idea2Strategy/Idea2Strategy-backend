@@ -25,16 +25,16 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = FeatureMaterializationPinResolverIntegrationTest.TestApplication.class)
 class FeatureMaterializationPinResolverIntegrationTest {
-    private static final UUID CATALOG = id(1);
+    private static final UUID CATALOG = UUID.fromString("0f4a0000-0000-4000-8000-000000000001");
     private static final String HASH = "a".repeat(64);
-    private static final String DEFINITION_HASH = "sha256:" + HASH;
+    private static final String DEFINITION_HASH = "0cf646eb9cacf5826d26f7dcb982bf7cec9213cc438b99716ac47883aa04ba04";
     private static final UUID PROVIDER = FeatureMaterializationPinResolver.deterministicUuid(
             "provider", "IDEA2STRATEGY_INTERNAL");
     private static final UUID FEED = FeatureMaterializationPinResolver.deterministicUuid(
             "feature-output-feed", DEFINITION_HASH, "rsi:test.0.0", "1d",
             FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
     private static final UUID INSTRUMENT = id(4);
-    private static final UUID FEATURE = id(5);
+    private static final UUID FEATURE = UUID.fromString("eddfb2d4-8586-5260-8fc9-9c8125990270");
     private static final UUID PIPELINE = id(6);
     private static final UUID MANIFEST = id(7);
     private static final UUID OBJECT = id(8);
@@ -70,19 +70,10 @@ class FeatureMaterializationPinResolverIntegrationTest {
         jdbc.update("delete from market_data.pipeline_runs where pipeline_code = 'MATERIALIZE_FEATURE_OUTPUT'");
         jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
         jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
+        jdbc.update("delete from market_data.feeds where provider_id = ? and code = 'FEATURE_RSI_14_1D_RSI_1_0_0'", PROVIDER);
         jdbc.update("delete from market_data.feeds where id = ?", FEED);
-        jdbc.update("delete from strategy.element_catalog_versions where id = ?", CATALOG);
+        jdbc.update("update market_data.providers set rights_version = 'internal-derived-v1', status = 'ACTIVE' where id = ?", PROVIDER);
         var created = AS_OF.minusDays(1);
-        jdbc.update("insert into strategy.element_catalog_versions "
-                        + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
-                        + "definition_hash, published_at) values (?, 'basic/v1', 'schema/v1', 'catalog/v1', "
-                        + "'data/v1', ?, ?)", CATALOG, HASH, created);
-        jdbc.update("insert into market_data.providers "
-                        + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Feature Test', 'internal-derived-v1', 'ACTIVE', ?) "
-                        + "on conflict (id) do update set code = excluded.code, display_name = excluded.display_name, "
-                        + "rights_version = excluded.rights_version, status = excluded.status",
-                PROVIDER, created);
         jdbc.update("insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'FEATURE_RSI_14_1D_RSI_TEST_0_0', 'FEATURE_SERIES', '1d', 'UTC', "

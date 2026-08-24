@@ -52,6 +52,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
     private static final UUID SECOND_FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000012");
     private static final UUID FEATURE_FEED_ID = UUID.fromString("39e0e076-89e0-5159-b113-a8f6778b7c9e");
+    private static final UUID PROVIDER_ID = UUID.fromString("b9146ed9-dbb0-5323-93e3-8518f3851236");
     private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_OBJECT_ID = UUID.fromString("e3000000-0000-4000-8000-000000000011");
@@ -121,26 +122,23 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "plan_document, plan_hash, created_at) values (?, ?, ?, 'basic-compiler:1.0.0', ?, "
                         + "'{}'::jsonb, ?, ?)",
                 PLAN_ID, CATALOG_ID, HASH_A, HASH_B, HASH_C, at);
-        jdbc.update(
-                "insert into market_data.providers (id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Test', 'internal-derived-v1', 'ACTIVE', ?)",
-                UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+        jdbc.update("delete from market_data.feeds where provider_id = ? and code = 'FEATURE_RSI_14_1M_RSI_1_0_0'", PROVIDER_ID);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'OFFICIAL', 'BAR', '1d', 'UTC', 'v1', ?)",
-                FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+                FEED_ID, PROVIDER_ID, at);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'OFFICIAL_4H', 'BAR', '4h', 'UTC', 'v1', ?)",
-                SECOND_FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+                SECOND_FEED_ID, PROVIDER_ID, at);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'FEATURE_RSI_14_1M_RSI_1_0_0', 'FEATURE_SERIES', '1m', 'UTC', "
                         + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
-                FEATURE_FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+                FEATURE_FEED_ID, PROVIDER_ID, at);
         jdbc.update(
                 "insert into market_data.dataset_manifests "
                         + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "

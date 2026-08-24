@@ -29,7 +29,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class CustomBacktestJooqAdapterIntegrationTest {
     private static final UUID ACCOUNT = id(1);
     private static final UUID BOT = id(2);
-    private static final UUID PROVIDER = id(3);
+    private static final UUID PROVIDER = UUID.fromString("b9146ed9-dbb0-5323-93e3-8518f3851236");
     private static final UUID FEED = id(4);
     private static final UUID DATASET = id(5);
     private static final UUID FEE = id(6);
@@ -85,8 +85,8 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
         jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.dataset_manifests where id = ?", DATASET);
+        jdbc.update("delete from market_data.feeds where provider_id = ? and code = 'FEATURE_RSI_14_1D_RSI_1_0_0'", PROVIDER);
         jdbc.update("delete from market_data.feeds where id in (?, ?)", FEED, FEATURE_FEED);
-        jdbc.update("delete from market_data.providers where id = ?", PROVIDER);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER);
         jdbc.update("delete from backtest.execution_policy_versions where version = ?", POLICY);
@@ -99,11 +99,6 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "(version, policy_artifact_hash, policy_document, locked_at) "
                         + "values (?, ?, '{}'::jsonb, ?)",
                 POLICY, "9".repeat(64), at.minusDays(1));
-        jdbc.update(
-                "insert into market_data.providers "
-                        + "(id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Custom Test', 'internal-derived-v1', 'ACTIVE', ?)",
-                PROVIDER, at);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "

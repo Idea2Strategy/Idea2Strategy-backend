@@ -152,10 +152,13 @@ public class OperatorRbacPersistenceAdapter implements OperatorRbacCommandPort {
 
     private OperatorRbacState.Operator operator(UUID id) {
         List<OperatorRbacState.Operator> rows = jdbc.query("""
-                select id, status, mfa_enrolled_at from operations.operator_accounts where id = ?
+                select a.id, a.status, (c.totp_enrolled_at is not null)
+                from operations.operator_accounts a
+                left join operations.operator_login_credentials c on c.operator_account_id = a.id
+                where a.id = ?
                 """, (rs, row) -> new OperatorRbacState.Operator(rs.getObject(1, UUID.class),
                 "ACTIVE".equals(rs.getString(2)),
-                rs.getTimestamp(3) != null), id);
+                rs.getBoolean(3)), id);
         return rows.isEmpty() ? null : rows.getFirst();
     }
 
@@ -231,7 +234,7 @@ public class OperatorRbacPersistenceAdapter implements OperatorRbacCommandPort {
         value.put("actorPermissionIds", sorted(evidence.actorPermissionIds()));
         value.put("actorDelegablePermissionIds", sorted(evidence.actorDelegablePermissionIds()));
         value.put("targetRolePermissionIds", sorted(evidence.targetRolePermissionIds()));
-        value.put("trustedExternalSubject", evidence.trustedExternalSubject());
+        value.put("sessionAuthenticated", evidence.sessionAuthenticated());
         value.put("mfaSatisfied", evidence.mfaSatisfied());
         value.put("strictHierarchySatisfied", evidence.strictHierarchySatisfied());
         return value;

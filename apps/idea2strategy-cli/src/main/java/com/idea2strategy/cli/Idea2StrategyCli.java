@@ -71,7 +71,13 @@ public final class Idea2StrategyCli {
     private static JsonNode execute(Invocation invocation, InputStream stdin, Map<String, String> environment) {
         Arguments arguments = Arguments.parse(invocation.commandArguments());
         if (arguments.positionals().equals(List.of("operator", "bootstrap"))) {
-            return OperatorBootstrapCommand.execute(arguments, environment);
+            return OperatorBootstrapCommand.execute(arguments, environment, stdin);
+        }
+        if (arguments.positionals().equals(List.of("operator", "credential-provision"))) {
+            return OperatorCredentialProvisionCommand.execute(arguments, environment, stdin);
+        }
+        if (arguments.positionals().equals(List.of("operator", "credential-reset"))) {
+            return OperatorCredentialResetCommand.execute(arguments, environment, stdin);
         }
         ApiClient api = new ApiClient(invocation.baseUrl());
         CredentialStore credentials = new CredentialStore(invocation.configDirectory());
@@ -156,7 +162,21 @@ public final class Idea2StrategyCli {
             // the blank check below is the wait. Denied, expired, and unknown all arrive as
             // failures and propagate: none of them will ever turn into an approval, and polling on
             // would just burn the deadline.
-            JsonNode response = api.post("/api/v1/auth/device/token", poll, null);
+            JsonNode response;
+            try {
+                response = api.post("/api/v1/auth/device/token", poll, null);
+            } catch (CliFailure failure) {
+                // Nobody approved in time. Reporting the raw 410 leaves a person reading
+                // "REQUEST_REJECTED ... status 410" and looking for a fault; the request did
+                // exactly what it promised, and the answer is to run login again.
+                if (failure.status() != null && failure.status() == 410) {
+                    throw new CliFailure(
+                            5,
+                            "DEVICE_AUTHORIZATION_EXPIRED",
+                            "The approval window closed before the code was confirmed. Run login again.");
+                }
+                throw failure;
+            }
             String token = response.path("accessToken").asText();
             if (token.isBlank()) {
                 continue;

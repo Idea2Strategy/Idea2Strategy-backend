@@ -24,22 +24,28 @@ email:
 idea2strategy:
   operator-auth:
     enabled: ${OPERATOR_AUTH_ENABLED:false}
-    issuer: ${OPERATOR_AUTH_ISSUER:}
-    jwk-set-uri: ${OPERATOR_AUTH_JWK_SET_URI:}
-    audience: ${OPERATOR_AUTH_AUDIENCE:}
-    algorithm: ${OPERATOR_AUTH_ALGORITHM:RS256}
-    maximum-token-age: ${OPERATOR_AUTH_MAXIMUM_TOKEN_AGE:PT5M}
-    maximum-mfa-age: ${OPERATOR_AUTH_MAXIMUM_MFA_AGE:PT10M}
-    clock-skew: ${OPERATOR_AUTH_CLOCK_SKEW:PT30S}
-    allowed-acr-values: ${OPERATOR_AUTH_ALLOWED_ACR_VALUES:}
-    allowed-amr-values: ${OPERATOR_AUTH_ALLOWED_AMR_VALUES:mfa}
-    mfa-claim-name: ${OPERATOR_AUTH_MFA_CLAIM_NAME:}
-    allowed-mfa-claim-values: ${OPERATOR_AUTH_ALLOWED_MFA_CLAIM_VALUES:}
-    current-subject-hmac-key-version: ${OPERATOR_AUTH_CURRENT_HMAC_KEY_VERSION:0}
-    current-subject-hmac-key: ${OPERATOR_AUTH_CURRENT_HMAC_KEY:}
-    # Optional rotation uses Spring's direct relaxed-binding names:
-    # IDEA2STRATEGY_OPERATOR_AUTH_PREVIOUS_SUBJECT_HMAC_KEY_VERSION and
-    # IDEA2STRATEGY_OPERATOR_AUTH_PREVIOUS_SUBJECT_HMAC_KEY.
+    secure-cookie: ${OPERATOR_AUTH_SECURE_COOKIE:true}
+    idle-lifetime: ${OPERATOR_AUTH_IDLE_LIFETIME:PT15M}
+    absolute-lifetime: ${OPERATOR_AUTH_ABSOLUTE_LIFETIME:PT8H}
+    password-memory-kb: ${OPERATOR_AUTH_PASSWORD_MEMORY_KB:65536}
+    password-iterations: ${OPERATOR_AUTH_PASSWORD_ITERATIONS:3}
+    password-parallelism: ${OPERATOR_AUTH_PASSWORD_PARALLELISM:1}
+    throttle-redis-uri: ${OPERATOR_AUTH_THROTTLE_REDIS_URI:}
+    totp-encryption:
+      version: ${OPERATOR_AUTH_TOTP_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_TOTP_KEY:}
+    session-hmac:
+      version: ${OPERATOR_AUTH_SESSION_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_SESSION_HMAC_KEY:}
+    csrf-hmac:
+      version: ${OPERATOR_AUTH_CSRF_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_CSRF_HMAC_KEY:}
+    source-hmac:
+      version: ${OPERATOR_AUTH_SOURCE_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_SOURCE_HMAC_KEY:}
+    login-hmac:
+      version: ${OPERATOR_AUTH_LOGIN_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_LOGIN_HMAC_KEY:}
   operator-rbac:
     read-guard:
       enabled: ${OPERATOR_RBAC_READ_ENABLED:false}

@@ -31,7 +31,7 @@ public final class AdminMcpService {
 
     public AdminMcpExecutionResult invoke(AdminMcpInvocation invocation) {
         Objects.requireNonNull(invocation, "invocation");
-        if (!invocation.requestContext().trustedExternalSubject()) {
+        if (!invocation.requestContext().sessionAuthenticated()) {
             throw new AdminMcpAuthenticationRejectedException();
         }
         Instant now = clock.instant();

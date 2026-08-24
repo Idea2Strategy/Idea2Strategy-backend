@@ -52,7 +52,6 @@ class AdminMcpJdbcConfiguration {
                 join operations.rbac_catalog_permissions p
                   on p.catalog_version = rp.catalog_version and p.permission_id = rp.permission_id
                 where o.id = ? and o.status = 'ACTIVE' and o.disabled_at is null
-                  and o.mfa_enrolled_at is not null and o.last_mfa_verified_at is not null
                   and v.status = 'ACTIVE' and p.permission_status = 'ACTIVE'
                   and rp.permission_id = ? and a.granted_at <= ?
                   and (a.expires_at is null or a.expires_at > ?) and a.revoked_at is null
