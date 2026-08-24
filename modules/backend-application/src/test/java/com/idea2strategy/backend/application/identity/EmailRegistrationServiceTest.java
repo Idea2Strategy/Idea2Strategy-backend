@@ -18,20 +18,20 @@ class EmailRegistrationServiceTest {
     private static final Instant NOW = Instant.parse("2026-08-01T12:00:00Z");
 
     @Test
-    void signupStoresOnlyProtectedEmailPasswordHashAndTokenDigest() {
+    void signupCreatesAnActiveAccountWithoutIssuingAVerificationToken() {
         var commands = new RecordingRegistrationPort();
         var service = service(false, commands);
 
         SignupResult result = service.signup(new SignupCommand(
                 " Person@Example.com ", "ValidPass!2026", UUID.randomUUID(), "192.0.2.0/24"));
 
-        assertThat(result.verificationToken()).isEqualTo("raw-verification-token");
-        assertThat(commands.registrations).singleElement().satisfies(registration -> {
+        assertThat(result.verificationToken()).isNull();
+        assertThat(result.expiresAt()).isNull();
+        assertThat(commands.activeRegistrations).singleElement().satisfies(registration -> {
             assertThat(registration.email().normalized()).isEqualTo("person@example.com");
             assertThat(registration.email().ciphertext()).isEqualTo("ciphertext:person@example.com");
             assertThat(registration.email().lookupHmac()).isEqualTo("lookup:person@example.com");
             assertThat(registration.password().encodedHash()).isEqualTo("hash:ValidPass!2026");
-            assertThat(registration.verificationTokenDigest()).isEqualTo("digest:raw-verification-token");
             assertThat(registration.preferences().languageCode()).isEqualTo("ko");
             assertThat(registration.preferences().timezoneName()).isEqualTo("America/New_York");
             assertThat(registration.preferences().themePreference()).isEqualTo(ThemePreference.SYSTEM);
@@ -48,7 +48,7 @@ class EmailRegistrationServiceTest {
         service.signup(new SignupCommand(
                 "person@example.com", "ValidPass!2026", UUID.randomUUID(), null));
 
-        assertThat(commands.registrations).singleElement().satisfies(registration -> {
+        assertThat(commands.activeRegistrations).singleElement().satisfies(registration -> {
             assertThat(registration.preferences().languageCode()).isEqualTo("en");
             assertThat(registration.preferences().timezoneName()).isEqualTo("America/Chicago");
             assertThat(registration.preferences().themePreference()).isEqualTo(ThemePreference.SYSTEM);
@@ -68,7 +68,7 @@ class EmailRegistrationServiceTest {
     }
 
     @Test
-    void pendingEmailSignupKeepsTheOriginalPasswordAndVerificationToken() {
+    void pendingEmailSignupActivatesTheExistingAccountWithoutReplacingItsPassword() {
         UUID accountId = UUID.randomUUID();
         var commands = new RecordingRegistrationPort();
         var queries = new RegistrationQueryPort() {
@@ -96,8 +96,11 @@ class EmailRegistrationServiceTest {
 
         assertThat(result.accountId()).isEqualTo(accountId);
         assertThat(result.verificationToken()).isNull();
+        assertThat(result.expiresAt()).isNull();
         assertThat(commands.registrations).isEmpty();
+        assertThat(commands.activeRegistrations).isEmpty();
         assertThat(commands.replacements).isEmpty();
+        assertThat(commands.activatedAccounts).containsExactly(accountId);
     }
 
     @Test
@@ -189,13 +192,26 @@ class EmailRegistrationServiceTest {
                 () -> new VerificationToken("raw-verification-token", "digest:raw-verification-token"),
                 raw -> "digest:" + raw,
                 defaults,
+                false,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static final class RecordingRegistrationPort implements RegistrationCommandPort {
+        private final List<ActiveEmailRegistration> activeRegistrations = new ArrayList<>();
         private final List<PendingRegistration> registrations = new ArrayList<>();
         private final List<VerificationReplacement> replacements = new ArrayList<>();
+        private final List<UUID> activatedAccounts = new ArrayList<>();
         private VerificationOutcome verificationOutcome = VerificationOutcome.VERIFIED;
+
+        @Override
+        public void createActive(ActiveEmailRegistration registration) {
+            activeRegistrations.add(registration);
+        }
+
+        @Override
+        public void activatePending(UUID accountId, Instant activatedAt, UUID correlationId) {
+            activatedAccounts.add(accountId);
+        }
 
         @Override
         public void createPending(PendingRegistration registration) {

@@ -31,7 +31,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
     private static final UUID PROVIDER = FeatureMaterializationPinResolver.deterministicUuid(
             "provider", "IDEA2STRATEGY_INTERNAL");
     private static final UUID FEED = FeatureMaterializationPinResolver.deterministicUuid(
-            "feature-output-feed", DEFINITION_HASH, "rsi:1.0.0", "1d",
+            "feature-output-feed", DEFINITION_HASH, "rsi:test.0.0", "1d",
             FeatureMaterializationPinResolver.OUTPUT_SCHEMA);
     private static final UUID INSTRUMENT = id(4);
     private static final UUID FEATURE = UUID.fromString("eddfb2d4-8586-5260-8fc9-9c8125990270");
@@ -76,8 +76,8 @@ class FeatureMaterializationPinResolverIntegrationTest {
         var created = AS_OF.minusDays(1);
         jdbc.update("insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
-                        + "values (?, ?, 'FEATURE_RSI_14_1D_RSI_1_0_0', 'FEATURE_SERIES', '1d', 'UTC', "
-                        + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
+                        + "values (?, ?, 'FEATURE_RSI_14_1D_RSI_TEST_0_0', 'FEATURE_SERIES', '1d', 'UTC', "
+                        + "'rsi-test.0.0+feature-series.parquet.v1', ?)",
                 FEED, PROVIDER, created);
         jdbc.update("insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -85,7 +85,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
         jdbc.update("insert into market_data.feature_definitions "
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
-                        + "values (?, ?, 'RSI_14', 'rsi:1.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
+                        + "values (?, ?, 'RSI_14', 'rsi:test.0.0', '1d', '{}'::jsonb, 'DECIMAL', 14, ?)",
                 FEATURE, CATALOG, DEFINITION_HASH);
         seedMaterialization(MATERIALIZATION, PIPELINE, MANIFEST, OBJECT, DATASET_OBJECT, "b".repeat(64));
     }
@@ -176,13 +176,13 @@ class FeatureMaterializationPinResolverIntegrationTest {
 
     @Test
     void rejectsAFeedThatDoesNotMatchTheDefinitionsDeterministicIdentity() {
-        jdbc.update("update market_data.feeds set code = 'FEATURE_OTHER_1D_RSI_1_0_0' where id = ?", FEED);
+        jdbc.update("update market_data.feeds set code = 'FEATURE_OTHER_1D_RSI_TEST_0_0' where id = ?", FEED);
         assertRejected("feature output feed identity");
-        jdbc.update("update market_data.feeds set code = 'FEATURE_RSI_14_1D_RSI_1_0_0' where id = ?", FEED);
+        jdbc.update("update market_data.feeds set code = 'FEATURE_RSI_14_1D_RSI_TEST_0_0' where id = ?", FEED);
 
         jdbc.update("update market_data.feeds set feed_version = 'rsi-2.0.0+feature-series.parquet.v1' where id = ?", FEED);
         assertRejected("feature output feed identity");
-        jdbc.update("update market_data.feeds set feed_version = 'rsi-1.0.0+feature-series.parquet.v1' where id = ?", FEED);
+        jdbc.update("update market_data.feeds set feed_version = 'rsi-test.0.0+feature-series.parquet.v1' where id = ?", FEED);
 
         jdbc.update("update market_data.providers set rights_version = 'wrong-rights' where id = ?", PROVIDER);
         assertRejected("feature output feed identity");
@@ -214,6 +214,17 @@ class FeatureMaterializationPinResolverIntegrationTest {
 
         jdbc.update("update storage.objects set period_end = '2024-06-01T00:00:00Z' where id = ?", OBJECT);
         assertRejected("complete versioned");
+    }
+
+    @Test
+    void acceptsSparseFeatureRowsThatBeginAfterTheRequestedWarmupWindow() {
+        jdbc.update("update market_data.dataset_objects set period_start = '2024-01-05T00:00:00Z' where id = ?",
+                DATASET_OBJECT);
+        jdbc.update("update storage.objects set period_start = '2024-01-05T00:00:00Z' where id = ?", OBJECT);
+
+        assertThat(resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .containsExactly(new BacktestRunInputPinWriter.FeaturePin(MATERIALIZATION, "sha256:" + HASH));
     }
 
     private void assertRejected(String message) {
@@ -267,7 +278,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
 
     private static String plan() {
         return "{\"requiredFeatures\":[{\"requirementId\":\"rsi-14-pt24h\",\"featureId\":\"" + FEATURE
-                + "\",\"featureVersion\":\"1.0.0\",\"instruments\":[\"" + INSTRUMENT
+                + "\",\"featureVersion\":\"test.0.0\",\"instruments\":[\"" + INSTRUMENT
                 + "\"],\"resolution\":\"PT24H\",\"requiredObservations\":13}]}";
     }
 
