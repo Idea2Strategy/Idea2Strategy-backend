@@ -51,6 +51,8 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     private static final UUID BUFFER_ID = UUID.fromString("76000000-0000-4000-8000-000000000008");
     private static final UUID OPERATOR_ID = UUID.fromString("76000000-0000-4000-8000-000000000009");
     private static final UUID OUT_OF_SCOPE_INSTRUMENT = UUID.fromString("76000000-0000-4000-8000-000000000010");
+    private static final UUID CATALOG_ID = UUID.fromString("76000000-0000-4000-8000-000000000011");
+    private static final UUID PLAN_ID = UUID.fromString("76000000-0000-4000-8000-000000000012");
     private static final Instant NOW = Instant.parse("2026-08-02T00:00:00Z");
 
     @Container
@@ -85,6 +87,8 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
         jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.rooms");
         jdbc.update("delete from market_data.instruments where id = ?", OUT_OF_SCOPE_INSTRUMENT);
+        jdbc.update("delete from strategy.compiled_flow_plans where id = ?", PLAN_ID);
+        jdbc.update("delete from strategy.element_catalog_versions where id = ?", CATALOG_ID);
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
@@ -128,6 +132,19 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                         + "(id, status, created_at) values (?, 'ACTIVE', ?)",
                 OPERATOR_ID,
                 at.minusDays(2));
+        jdbc.update(
+                "insert into strategy.element_catalog_versions "
+                        + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
+                        + "definition_hash, published_at) values (?, 'basic/v1', 'schema/v1', 'catalog/v1', "
+                        + "'data/v1', 'admission-catalog', ?)",
+                CATALOG_ID, at.minusDays(1));
+        jdbc.update(
+                "insert into strategy.compiled_flow_plans "
+                        + "(id, element_catalog_version_id, semantic_hash, compiler_version, "
+                        + "required_feature_set_hash, plan_document, plan_hash, created_at) values "
+                        + "(?, ?, 'admission-semantic', 'basic-compiler:1.0.0', 'admission-features', "
+                        + "'{}'::jsonb, 'admission-plan', ?)",
+                PLAN_ID, CATALOG_ID, at.minusDays(1));
     }
 
     @Test
@@ -352,7 +369,7 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     }
 
     @Test
-    void rollsBackAProvisionedBotWhoseImmutableSnapshotIsOutsideTheRoomMarketScope() {
+    void rollsBackAProvisionedBotWhoseLockedFlowInstrumentIsOutsideTheRoomMarketScope() {
         insertRoom(ROOM_A, 2, 2);
         jdbc.update("update competition.room_rules set market_scope_document = '{\"market\":\"US\"}'::jsonb where room_id = ?", ROOM_A);
         jdbc.update("insert into market_data.instruments (id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XETR', 'EUR')", OUT_OF_SCOPE_INSTRUMENT);
@@ -360,7 +377,7 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
 
         var outcome = adapter.admit(request(65, ROOM_A, OWNER_A, "wrong-market"), context -> {
             insertBot(botId, OWNER_A, context.executionEligibleFrom());
-            jdbc.update("insert into bot.launch_snapshots (bot_id, snapshot_schema_version, semantic_snapshot, presentation_snapshot, semantic_hash, presentation_hash, snapshot_hash, created_at) values (?, 'v1', ?::jsonb, '{}'::jsonb, 'a', 'b', 'c', ?)", botId, "{\"groups\":[{\"instrumentIds\":[\"" + OUT_OF_SCOPE_INSTRUMENT + "\"]}]}", NOW.atOffset(ZoneOffset.UTC));
+            insertFlowInstrument(botId, OUT_OF_SCOPE_INSTRUMENT);
             return botId;
         });
 
@@ -412,6 +429,26 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 eligibleFrom.atOffset(ZoneOffset.UTC),
                 at,
                 at);
+    }
+
+    private void insertFlowInstrument(UUID botId, UUID instrumentId) {
+        var at = NOW.atOffset(ZoneOffset.UTC);
+        UUID partitionId = UUID.nameUUIDFromBytes((botId + ":partition").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        UUID flowId = UUID.nameUUIDFromBytes((botId + ":flow").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        jdbc.update(
+                "insert into bot.bot_partitions "
+                        + "(id, bot_id, name, budget_cap_bps, position_x, position_y, configuration_hash, created_at, updated_at) "
+                        + "values (?, ?, 'Main', 10000, 0, 0, 'admission-partition', ?, ?)",
+                partitionId, botId, at, at);
+        jdbc.update(
+                "insert into bot.flows "
+                        + "(id, partition_id, name, element_catalog_version_id, compiled_flow_plan_id, position_x, position_y, "
+                        + "semantic_document, layout_document, layout_schema_version, semantic_hash, layout_hash, "
+                        + "configuration_hash, created_at, updated_at) values "
+                        + "(?, ?, 'Admission flow', ?, ?, 0, 0, '{}'::jsonb, '{}'::jsonb, '1', "
+                        + "'admission-semantic', 'admission-layout', 'admission-flow', ?, ?)",
+                flowId, partitionId, CATALOG_ID, PLAN_ID, at, at);
+        jdbc.update("insert into bot.flow_instruments (flow_id, instrument_id) values (?, ?)", flowId, instrumentId);
     }
 
     private void insertRoom(UUID roomId, int roomLimit, int accountLimit) {

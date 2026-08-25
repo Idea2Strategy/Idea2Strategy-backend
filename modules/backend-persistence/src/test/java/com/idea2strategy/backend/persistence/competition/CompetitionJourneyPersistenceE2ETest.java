@@ -213,6 +213,23 @@ class CompetitionJourneyPersistenceE2ETest {
                         + "effective_from, published_at) values (?, 'E34', '1', 0, 'v1', "
                         + "'sha256:e34-buffer', ?, ?)",
                 BUFFER_ID, utc(CREATED_AT.minusSeconds(1)), utc(CREATED_AT.minusSeconds(1)));
+        jdbc.update(
+                "insert into strategy.element_catalog_versions "
+                        + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
+                        + "definition_hash, published_at) values (?, 'basic/v1', 'schema/v1', 'catalog/v1', "
+                        + "'data/v1', 'e34-catalog', ?)",
+                CATALOG_ID, utc(CREATED_AT.minusSeconds(1)));
+        jdbc.update(
+                "insert into strategy.compiled_flow_plans "
+                        + "(id, element_catalog_version_id, semantic_hash, compiler_version, "
+                        + "required_feature_set_hash, plan_document, plan_hash, created_at) "
+                        + "values (?, ?, 'e34-semantic', 'basic-compiler:1.0.0', 'e34-features', "
+                        + "'{}'::jsonb, 'e34-plan', ?)",
+                PLAN_ID, CATALOG_ID, utc(CREATED_AT.minusSeconds(1)));
+        jdbc.update(
+                "insert into market_data.instruments "
+                        + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
+                INSTRUMENT_ID);
     }
 
     private void createRoom(UUID roomId, RoomAccessType accessType, String name) {
@@ -314,6 +331,22 @@ class CompetitionJourneyPersistenceE2ETest {
                         + "configuration_hash) values "
                         + "(?, 100000, 'USD', 'v1', 'v1', 'v1', ?, 5, ?, '{}'::jsonb, ?)",
                 botId, FEE_ID, BUFFER_ID, "e34-config-" + botId);
+        UUID partitionId = UUID.nameUUIDFromBytes((botId + ":partition").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        UUID flowId = UUID.nameUUIDFromBytes((botId + ":flow").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        jdbc.update(
+                "insert into bot.bot_partitions "
+                        + "(id, bot_id, name, budget_cap_bps, position_x, position_y, configuration_hash, created_at, updated_at) "
+                        + "values (?, ?, 'Main', 10000, 0, 0, ?, ?, ?)",
+                partitionId, botId, "e34-partition-" + botId, utc(ADMISSION_AT), utc(ADMISSION_AT));
+        jdbc.update(
+                "insert into bot.flows "
+                        + "(id, partition_id, name, element_catalog_version_id, compiled_flow_plan_id, position_x, position_y, "
+                        + "semantic_document, layout_document, layout_schema_version, semantic_hash, layout_hash, "
+                        + "configuration_hash, created_at, updated_at) values "
+                        + "(?, ?, 'Journey flow', ?, ?, 0, 0, '{}'::jsonb, '{}'::jsonb, '1', "
+                        + "'e34-semantic', 'e34-layout', 'e34-flow', ?, ?)",
+                flowId, partitionId, CATALOG_ID, PLAN_ID, utc(ADMISSION_AT), utc(ADMISSION_AT));
+        jdbc.update("insert into bot.flow_instruments (flow_id, instrument_id) values (?, ?)", flowId, INSTRUMENT_ID);
     }
 
     private void choose(UUID ownerId, UUID participationId, PostEvaluationAction action) {
@@ -439,6 +472,9 @@ class CompetitionJourneyPersistenceE2ETest {
     private static final UUID INVALID_BOT_ID = id(18);
     private static final UUID INVALID_PARTICIPATION_ID = id(19);
     private static final UUID INVALID_EVENT_ID = id(20);
+    private static final UUID CATALOG_ID = id(21);
+    private static final UUID PLAN_ID = id(22);
+    private static final UUID INSTRUMENT_ID = id(23);
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
