@@ -48,12 +48,16 @@ public final class BasicBlockAssemblyValidator {
         catalog.instruments().forEach(instrument -> supportedInstruments.add(instrument.id()));
         boolean terminalStructurePublished = catalog.elements().stream().anyMatch(this::isTerminal);
 
-        if (assembly.groups().stream().filter(group -> group.container() == BasicBlockAssembly.TradeContainer.BUY).count()
+        if (assembly.groups().stream()
+                .filter(group -> group.container() == BasicBlockAssembly.TradeContainer.BUY)
+                .map(BasicBlockGroup::allocationGroupId).distinct().count()
                 > MAX_CONTAINERS_PER_SIDE) {
             add(issues, "TOO_MANY_BUY_CONTAINERS", "groups",
                     "A Basic strategy may contain at most four buy containers");
         }
-        if (assembly.groups().stream().filter(group -> group.container() == BasicBlockAssembly.TradeContainer.SELL).count()
+        if (assembly.groups().stream()
+                .filter(group -> group.container() == BasicBlockAssembly.TradeContainer.SELL)
+                .map(BasicBlockGroup::allocationGroupId).distinct().count()
                 > MAX_CONTAINERS_PER_SIDE) {
             add(issues, "TOO_MANY_SELL_CONTAINERS", "groups",
                     "A Basic strategy may contain at most four sell containers");
@@ -180,14 +184,50 @@ public final class BasicBlockAssemblyValidator {
 
     private static void validateKnownSemantics(
             BasicBlock block, String blockPath, List<BasicBlockAssemblyIssue> issues) {
+        Object resolution = block.parameters().get("resolution");
+        if (resolution != null && (!(resolution instanceof String value)
+                || !Set.of("30m", "1h", "4h", "1d").contains(value))) {
+            add(issues, "BASIC_INVALID_RESOLUTION", blockPath + ".parameters.resolution",
+                    "Basic supports only 30m, 1h, 4h, and 1d resolutions");
+        }
         if ("BASIC_SMA_CROSS".equals(block.elementCode())) {
             BigDecimal shortPeriod = decimal(block.parameters().get("shortPeriod"));
             BigDecimal longPeriod = decimal(block.parameters().get("longPeriod"));
             if (shortPeriod != null && longPeriod != null
                     && shortPeriod.compareTo(longPeriod) >= 0) {
+                add(issues, "BASIC_PERIOD_ORDER_INVALID", blockPath + ".parameters",
+                        "The short moving average period must be smaller than the long period");
                 add(issues, "IMPOSSIBLE_PERIOD_COMBINATION", blockPath + ".parameters",
                         "The short moving average period must be smaller than the long period");
             }
+        }
+        if ("BASIC_MACD_CROSS".equals(block.elementCode())) {
+            BigDecimal fastPeriod = decimal(block.parameters().get("fastPeriod"));
+            BigDecimal slowPeriod = decimal(block.parameters().get("slowPeriod"));
+            if (fastPeriod != null && slowPeriod != null && fastPeriod.compareTo(slowPeriod) >= 0) {
+                add(issues, "BASIC_PERIOD_ORDER_INVALID", blockPath + ".parameters",
+                        "The fast MACD period must be smaller than the slow period");
+            }
+        }
+        validatePositive(block, blockPath, issues, "multiplier", "BASIC_PARAMETER_OUT_OF_RANGE", false);
+        validatePositive(block, blockPath, issues, "bars", "BASIC_PARAMETER_OUT_OF_RANGE", true);
+        validatePositive(block, blockPath, issues, "deviations", "BASIC_PARAMETER_OUT_OF_RANGE", false);
+        validatePositive(block, blockPath, issues, "interval", "BASIC_PARAMETER_OUT_OF_RANGE", true);
+        validatePositive(block, blockPath, issues, "waitInterval", "BASIC_PARAMETER_OUT_OF_RANGE", true);
+        validatePositive(block, blockPath, issues, "maxExecutions", "BASIC_PARAMETER_OUT_OF_RANGE", true);
+        if ("BASIC_HOLDING_PERIOD".equals(block.elementCode())) {
+            validateNonNegativeInteger(block, blockPath, issues, "amount");
+        }
+        if ("BASIC_RSI_CROSS".equals(block.elementCode())) {
+            validateRange(block, blockPath, issues, "threshold", BigDecimal.ZERO, BigDecimal.valueOf(100),
+                    "BASIC_PARAMETER_OUT_OF_RANGE");
+        }
+        if (Set.of("BASIC_PEAK_RETURN", "BASIC_DRAWDOWN_FROM_PEAK").contains(block.elementCode())) {
+            validateRange(block, blockPath, issues, "thresholdPercent", BigDecimal.ZERO, BigDecimal.valueOf(100),
+                    "BASIC_PARAMETER_OUT_OF_RANGE");
+        }
+        if ("BASIC_EQUAL_ALLOCATION_ORDER".equals(block.elementCode())) {
+            validatePositionCap(block, blockPath, issues);
         }
         for (String name : List.of(
                 "threshold", "thresholdPercent", "orderPercent", "waitInterval",
@@ -216,6 +256,67 @@ public final class BasicBlockAssemblyValidator {
                 add(issues, "INVALID_PARAMETER_VALUE", location,
                         "Order percent must not exceed 100");
             }
+        }
+    }
+
+    private static void validatePositionCap(
+            BasicBlock block, String blockPath, List<BasicBlockAssemblyIssue> issues) {
+        if (!block.parameters().containsKey("maxPositionPercent")) {
+            return;
+        }
+        Object raw = block.parameters().get("maxPositionPercent");
+        String location = blockPath + ".parameters.maxPositionPercent";
+        if (raw == null || raw instanceof String text && text.isBlank()) {
+            add(issues, "BASIC_POSITION_CAP_REQUIRED", location, "Position cap is required");
+            return;
+        }
+        BigDecimal value = decimal(raw);
+        if (value == null) {
+            add(issues, "BASIC_POSITION_CAP_NUMBER_REQUIRED", location, "Position cap must be a decimal number");
+        } else if (value.signum() <= 0 || value.compareTo(BigDecimal.valueOf(100)) > 0) {
+            add(issues, "BASIC_POSITION_CAP_OUT_OF_RANGE", location,
+                    "Position cap must be greater than zero and at most 100");
+        }
+    }
+
+    private static void validatePositive(
+            BasicBlock block,
+            String blockPath,
+            List<BasicBlockAssemblyIssue> issues,
+            String name,
+            String code,
+            boolean integer) {
+        if (!block.parameters().containsKey(name)) return;
+        BigDecimal value = decimal(block.parameters().get(name));
+        if (value == null || value.signum() <= 0 || integer && value.stripTrailingZeros().scale() > 0) {
+            add(issues, code, blockPath + ".parameters." + name,
+                    integer ? "Parameter must be a positive integer" : "Parameter must be greater than zero");
+        }
+    }
+
+    private static void validateNonNegativeInteger(
+            BasicBlock block, String blockPath, List<BasicBlockAssemblyIssue> issues, String name) {
+        if (!block.parameters().containsKey(name)) return;
+        BigDecimal value = decimal(block.parameters().get(name));
+        if (value == null || value.signum() < 0 || value.stripTrailingZeros().scale() > 0) {
+            add(issues, "BASIC_PARAMETER_INTEGER_REQUIRED", blockPath + ".parameters." + name,
+                    "Parameter must be a non-negative integer");
+        }
+    }
+
+    private static void validateRange(
+            BasicBlock block,
+            String blockPath,
+            List<BasicBlockAssemblyIssue> issues,
+            String name,
+            BigDecimal minimum,
+            BigDecimal maximum,
+            String code) {
+        if (!block.parameters().containsKey(name)) return;
+        BigDecimal value = decimal(block.parameters().get(name));
+        if (value == null || value.compareTo(minimum) < 0 || value.compareTo(maximum) > 0) {
+            add(issues, code, blockPath + ".parameters." + name,
+                    "Parameter is outside the supported numeric range");
         }
     }
 
@@ -255,6 +356,12 @@ public final class BasicBlockAssemblyValidator {
         for (JsonNode required : schema.path("required")) {
             String name = required.asText();
             if (!block.parameters().containsKey(name)) {
+                if (block.elementCode().startsWith("BASIC_")) {
+                    String code = name.equals("maxPositionPercent")
+                            ? "BASIC_POSITION_CAP_REQUIRED" : "BASIC_PARAMETER_REQUIRED";
+                    add(issues, code, blockPath + ".parameters." + name,
+                            "Required parameter is missing");
+                }
                 add(issues, "REQUIRED_PARAMETER_MISSING", blockPath + ".parameters." + name,
                         "Required parameter is missing");
             }
@@ -288,12 +395,65 @@ public final class BasicBlockAssemblyValidator {
                 && actual.textValue().length() < schema.path("minLength").asInt()) {
             return false;
         }
+        if (schema.has("maxLength") && actual.isTextual()
+                && actual.textValue().length() > schema.path("maxLength").asInt()) {
+            return false;
+        }
+        if (schema.has("pattern") && actual.isTextual()
+                && !actual.textValue().matches(schema.path("pattern").asText())) {
+            return false;
+        }
+        if (schema.has("minItems") && actual.isArray() && actual.size() < schema.path("minItems").asInt()) {
+            return false;
+        }
+        if (schema.has("maxItems") && actual.isArray() && actual.size() > schema.path("maxItems").asInt()) {
+            return false;
+        }
         if (schema.path("enum").isArray()) {
+            boolean matched = false;
             for (JsonNode permitted : schema.path("enum")) {
                 if (permitted.equals(actual)) {
-                    return true;
+                    matched = true;
+                    break;
                 }
             }
+            if (!matched) return false;
+        }
+        BigDecimal numeric = decimal(value);
+        if (schema.has("minimum") && (numeric == null
+                || numeric.compareTo(schema.path("minimum").decimalValue()) < 0)) {
+            return false;
+        }
+        if (schema.has("maximum") && (numeric == null
+                || numeric.compareTo(schema.path("maximum").decimalValue()) > 0)) {
+            return false;
+        }
+        if (schema.has("exclusiveMinimum") && (numeric == null
+                || numeric.compareTo(schema.path("exclusiveMinimum").decimalValue()) <= 0)) {
+            return false;
+        }
+        if (schema.has("exclusiveMaximum") && (numeric == null
+                || numeric.compareTo(schema.path("exclusiveMaximum").decimalValue()) >= 0)) {
+            return false;
+        }
+        if (schema.has("x-numericMinimum") && (numeric == null
+                || numeric.compareTo(new BigDecimal(schema.path("x-numericMinimum").asText())) < 0)) {
+            return false;
+        }
+        if (schema.has("x-numericMaximum") && (numeric == null
+                || numeric.compareTo(new BigDecimal(schema.path("x-numericMaximum").asText())) > 0)) {
+            return false;
+        }
+        if (schema.has("x-numericExclusiveMinimum") && (numeric == null
+                || numeric.compareTo(new BigDecimal(schema.path("x-numericExclusiveMinimum").asText())) <= 0)) {
+            return false;
+        }
+        if (schema.has("x-numericExclusiveMaximum") && (numeric == null
+                || numeric.compareTo(new BigDecimal(schema.path("x-numericExclusiveMaximum").asText())) >= 0)) {
+            return false;
+        }
+        if (schema.path("x-integer").asBoolean(false)
+                && (numeric == null || numeric.stripTrailingZeros().scale() > 0)) {
             return false;
         }
         return true;
