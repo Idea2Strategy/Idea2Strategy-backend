@@ -21,6 +21,7 @@ public final class RoomParticipationAdmissionException extends RuntimeException 
             case ROOM_CAPACITY_REACHED -> "Room participation capacity has been reached";
             case ACCOUNT_ROOM_LIMIT_REACHED -> "Per-account room participation limit has been reached";
             case ACCOUNT_EXECUTION_LIMIT_REACHED -> "Account running and reserved bot limit has been reached";
+            case MARKET_SCOPE_MISMATCH -> "Provisioned bot instruments are outside the room market scope";
             case PROVISIONED_BOT_INVALID -> "Provisioned room bot is invalid";
             case ANONYMOUS_ALIAS_CONFLICT -> "Anonymous room alias is already in use";
         };
