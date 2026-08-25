@@ -190,6 +190,17 @@ class StrategyLibraryPersistenceIntegrationTest {
         assertThat(draft.validationStatus()).isNull();
     }
 
+    @Test
+    void excludesArchivedDraftsFromTheEditableStrategyLibrary() {
+        jdbc.update(
+                "update strategy.strategies set archived_at = ? where id = ?",
+                NOW.minusSeconds(1).atOffset(ZoneOffset.UTC), DRAFT_ID);
+
+        assertThat(adapter.findVisible(OWNER_ID, NOW, null, 10))
+                .extracting(StrategyLibraryItem::id)
+                .doesNotContain(DRAFT_ID);
+    }
+
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import(StrategyLibraryJooqQueryAdapter.class)

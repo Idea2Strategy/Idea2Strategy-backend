@@ -117,6 +117,7 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
                 .on(documentStrategyId.eq(id))
                 .where(owner.eq(ownerAccountId)
                         .and(deletedAt.isNull())
+                        .and(archivedAt.isNull())
                         .and(updatedAt.le(snapshot))
                         .and(afterCondition(updatedAt, StrategyLibraryItemKind.DRAFT, id, after)))
                 .orderBy(updatedAt.desc(), id.asc())
