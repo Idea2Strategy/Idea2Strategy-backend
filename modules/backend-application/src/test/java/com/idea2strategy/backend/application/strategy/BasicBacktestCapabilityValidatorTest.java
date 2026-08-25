@@ -111,7 +111,7 @@ class BasicBacktestCapabilityValidatorTest {
         assertThat(mixed.issues()).extracting(BasicBacktestCapabilityIssue::code)
                 .contains("BACKTEST_MULTIPLE_RESOLUTIONS");
         assertThat(legacy.issues()).extracting(BasicBacktestCapabilityIssue::code)
-                .contains("BACKTEST_RESOLUTION_UNSUPPORTED");
+                .contains("BASIC_INVALID_RESOLUTION");
     }
 
     private static BasicBlockAssembly assembly() {

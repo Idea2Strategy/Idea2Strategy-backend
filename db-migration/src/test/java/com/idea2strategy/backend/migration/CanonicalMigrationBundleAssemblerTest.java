@@ -41,6 +41,8 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V1__initial_schema.sql",
                         "V20260802110000__pipeline_add_manifest_marker.sql",
                         "V20260802120000__trading_add_execution_marker.sql",
+                        "V20260825000000__backend_basic_strategy_execution_completion.sql",
+                        "V20260825000001__pipeline_basic_strategy_feature_catalog.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))

@@ -59,7 +59,12 @@ class MigrationPolicyTest {
         var resource = getClass().getClassLoader().getResource("db/migration");
         var plan = MigrationPolicy.verifyDirectory(java.nio.file.Path.of(resource.toURI()));
 
-        assertEquals(List.of("V1__initial_schema.sql"), plan.orderedFileNames());
+        assertEquals(
+                List.of(
+                        "V1__initial_schema.sql",
+                        "V20260825000000__backend_basic_strategy_execution_completion.sql",
+                        "V20260825000001__pipeline_basic_strategy_feature_catalog.sql"),
+                plan.orderedFileNames());
     }
 
     @Test
