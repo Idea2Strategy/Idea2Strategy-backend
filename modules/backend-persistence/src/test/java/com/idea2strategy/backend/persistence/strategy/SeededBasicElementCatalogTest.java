@@ -54,9 +54,9 @@ class SeededBasicElementCatalogTest {
                 "select catalog_version, language_version, data_requirement_version, retired_at "
                         + "from strategy.element_catalog_versions");
 
-        assertThat(versions).hasSize(4);
+        assertThat(versions).hasSize(5);
         assertThat(versions).filteredOn(version -> version.get("retired_at") == null).singleElement().satisfies(version -> {
-            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-08");
+            assertThat(version.get("catalog_version")).isEqualTo("basic-elements:2026-08-25");
             assertThat(version.get("language_version")).isEqualTo("basic/v1");
             assertThat(version.get("data_requirement_version")).isEqualTo("alpaca-sip/v1");
         });
@@ -65,6 +65,8 @@ class SeededBasicElementCatalogTest {
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-07"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
         assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-08-live-bars"))
+                .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
+        assertThat(versions).filteredOn(version -> version.get("catalog_version").equals("basic-elements:2026-08-08"))
                 .singleElement().satisfies(version -> assertThat(version.get("retired_at")).isNotNull());
     }
 
