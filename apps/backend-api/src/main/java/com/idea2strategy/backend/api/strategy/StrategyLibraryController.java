@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.api.strategy;
 
 import com.idea2strategy.backend.application.strategy.StrategyLibraryPage;
+import com.idea2strategy.backend.application.strategy.StrategyLibraryItemKind;
 import com.idea2strategy.backend.application.strategy.StrategyLibraryQueryService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,7 +22,8 @@ public class StrategyLibraryController {
     @GetMapping
     public StrategyLibraryPage list(
             @RequestParam(required = false) String cursor,
-            @RequestParam(defaultValue = "50") int limit) {
-        return queryService.list(cursor, limit);
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(required = false) String kind) {
+        return queryService.list(cursor, limit, StrategyLibraryItemKind.fromWireValue(kind));
     }
 }

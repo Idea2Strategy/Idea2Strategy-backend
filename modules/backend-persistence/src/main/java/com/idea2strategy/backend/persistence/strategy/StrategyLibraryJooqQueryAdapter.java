@@ -49,13 +49,22 @@ public class StrategyLibraryJooqQueryAdapter implements StrategyLibraryQueryPort
             UUID ownerAccountId,
             Instant snapshotAt,
             StrategyLibraryPosition after,
-            int limit) {
+            int limit,
+            StrategyLibraryItemKind kind) {
         OffsetDateTime snapshot = snapshotAt.atOffset(ZoneOffset.UTC);
         List<StrategyLibraryItem> items = new ArrayList<>();
-        items.addAll(findDrafts(ownerAccountId, snapshot, after, limit));
-        items.addAll(findReleased(ownerAccountId, snapshot, after, limit));
-        items.addAll(findPackages(snapshot, after, limit));
-        items.addAll(findTemplates(snapshot, after, limit));
+        if (kind == null || kind == StrategyLibraryItemKind.DRAFT) {
+            items.addAll(findDrafts(ownerAccountId, snapshot, after, limit));
+        }
+        if (kind == null || kind == StrategyLibraryItemKind.RELEASED) {
+            items.addAll(findReleased(ownerAccountId, snapshot, after, limit));
+        }
+        if (kind == null || kind == StrategyLibraryItemKind.PACKAGE) {
+            items.addAll(findPackages(snapshot, after, limit));
+        }
+        if (kind == null || kind == StrategyLibraryItemKind.TEMPLATE) {
+            items.addAll(findTemplates(snapshot, after, limit));
+        }
         return items.stream().sorted(ITEM_ORDER).limit(limit).toList();
     }
 

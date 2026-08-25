@@ -149,7 +149,7 @@ class StrategyLibraryPersistenceIntegrationTest {
 
     @Test
     void returnsOnlyOwnedPrivateItemsAndActivePublicCatalogEntriesWithStatuses() {
-        var items = adapter.findVisible(OWNER_ID, NOW, null, 10);
+        var items = adapter.findVisible(OWNER_ID, NOW, null, 10, null);
 
         assertThat(items).extracting(StrategyLibraryItem::id)
                 .containsExactly(DRAFT_ID, BOT_ID, PACKAGE_VERSION_ID, TEMPLATE_VERSION_ID);
@@ -170,7 +170,7 @@ class StrategyLibraryPersistenceIntegrationTest {
         assertThat(items).extracting(StrategyLibraryItem::id)
                 .doesNotContain(OTHER_DRAFT_ID, OTHER_BOT_ID);
 
-        var afterRelease = adapter.findVisible(OWNER_ID, NOW, items.get(1).position(), 10);
+        var afterRelease = adapter.findVisible(OWNER_ID, NOW, items.get(1).position(), 10, null);
         assertThat(afterRelease).extracting(StrategyLibraryItem::id)
                 .containsExactly(PACKAGE_VERSION_ID, TEMPLATE_VERSION_ID);
     }
@@ -181,7 +181,7 @@ class StrategyLibraryPersistenceIntegrationTest {
                 "update strategy.strategy_documents set edit_sequence = 1, semantic_hash = ? where strategy_id = ?",
                 "9".repeat(64), DRAFT_ID);
 
-        var draft = adapter.findVisible(OWNER_ID, NOW, null, 10).stream()
+        var draft = adapter.findVisible(OWNER_ID, NOW, null, 10, null).stream()
                 .filter(item -> item.id().equals(DRAFT_ID))
                 .findFirst()
                 .orElseThrow();
@@ -196,9 +196,19 @@ class StrategyLibraryPersistenceIntegrationTest {
                 "update strategy.strategies set archived_at = ? where id = ?",
                 NOW.minusSeconds(1).atOffset(ZoneOffset.UTC), DRAFT_ID);
 
-        assertThat(adapter.findVisible(OWNER_ID, NOW, null, 10))
+        assertThat(adapter.findVisible(OWNER_ID, NOW, null, 10, null))
                 .extracting(StrategyLibraryItem::id)
                 .doesNotContain(DRAFT_ID);
+    }
+
+    @Test
+    void filtersByResourceKindBeforeApplyingThePageLimit() {
+        assertThat(adapter.findVisible(OWNER_ID, NOW, null, 1, StrategyLibraryItemKind.DRAFT))
+                .extracting(StrategyLibraryItem::id)
+                .containsExactly(DRAFT_ID);
+        assertThat(adapter.findVisible(OWNER_ID, NOW, null, 1, StrategyLibraryItemKind.RELEASED))
+                .extracting(StrategyLibraryItem::id)
+                .containsExactly(BOT_ID);
     }
 
     @SpringBootConfiguration

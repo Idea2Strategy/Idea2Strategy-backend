@@ -20,7 +20,7 @@ public final class StrategyLibraryQueryService {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
-    public StrategyLibraryPage list(String cursor, int limit) {
+    public StrategyLibraryPage list(String cursor, int limit, StrategyLibraryItemKind kind) {
         if (limit < 1 || limit > MAX_PAGE_SIZE) {
             throw new IllegalArgumentException("limit must be between 1 and " + MAX_PAGE_SIZE);
         }
@@ -35,10 +35,13 @@ public final class StrategyLibraryQueryService {
             }
             snapshotAt = decoded.snapshotAt();
             after = decoded.position();
+            if (kind != null && after.kind() != kind) {
+                throw new IllegalArgumentException("cursor is invalid");
+            }
         }
 
         List<StrategyLibraryItem> fetched = queryPort.findVisible(
-                principal.accountId(), snapshotAt, after, limit + 1);
+                principal.accountId(), snapshotAt, after, limit + 1, kind);
         boolean hasMore = fetched.size() > limit;
         List<StrategyLibraryItem> items = hasMore ? fetched.subList(0, limit) : fetched;
         String nextCursor = hasMore

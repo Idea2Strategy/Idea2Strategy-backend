@@ -18,4 +18,16 @@ public enum StrategyLibraryItemKind {
     public String wireValue() {
         return wireValue;
     }
+
+    public static StrategyLibraryItemKind fromWireValue(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        for (var kind : values()) {
+            if (kind.wireValue.equalsIgnoreCase(value)) {
+                return kind;
+            }
+        }
+        throw new IllegalArgumentException("unsupported strategy library kind");
+    }
 }
