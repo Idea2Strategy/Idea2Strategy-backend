@@ -41,10 +41,7 @@ class RoomParticipationControllerTest {
                                   "languageVersion":"basic/v1",
                                   "schemaVersion":"schema/v1",
                                   "catalogVersion":"catalog/v1",
-                                  "budgetCapBps":10000,
-                                  "brokerRulesVersion":"broker/v1",
-                                  "accountingRulesVersion":"accounting/v1",
-                                  "candidateConflictPolicy":{"policy":"FIRST_WINS"}
+                                  "budgetCapBps":10000
                                 }
                                 """))
                 .andExpect(status().isCreated())

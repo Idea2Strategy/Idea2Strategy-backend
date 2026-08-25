@@ -76,7 +76,7 @@ public final class ImmutableStrategyReleaseCommandService {
                 policy.precisionRulesVersion(),
                 policy.feePolicyId(),
                 policy.buyingPowerBufferPolicyId(),
-                command.candidateConflictPolicy());
+                BasicLaunchPolicy.CANDIDATE_CONFLICT_POLICY);
         var release = prepare(validationRunId, catalog, preparation, releasedAt);
         var selectedInputs = OfficialBacktestInputSelector.select(
                 release.contractPlan().planDocument(), inputCatalog);

@@ -98,6 +98,19 @@ class ImmutableStrategyReleaseCommandServiceTest {
         assertThat(releases.backtestRequest.metadata().idempotencyKey()).startsWith("sha256:").hasSize(71);
     }
 
+    @Test
+    void appliesTheServerOwnedBasicConflictPolicyInsteadOfCallerInput() {
+        var callerControlled = new ImmutableStrategyReleaseCommand(
+                RELEASE_ID, new BigDecimal("100000.00"), 10_000,
+                "{\"policy\":\"CALLER_CONTROLLED\"}");
+
+        var release = releaseService().release(RUN_ID, catalog(), callerControlled);
+
+        assertThat(release.launchConfiguration().candidateConflictPolicy())
+                .isEqualTo(BasicLaunchPolicy.CANDIDATE_CONFLICT_POLICY)
+                .doesNotContain("CALLER_CONTROLLED");
+    }
+
     /**
      * Root #190: the release publishes the compiled plan the evaluation runtime loads the bot from.
      *

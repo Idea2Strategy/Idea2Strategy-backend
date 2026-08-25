@@ -258,6 +258,7 @@ public class CompetitionRoomConfiguration {
             ImmutableStrategyReleaseCommandService releaseService,
             BasicStrategyCatalogQueryService catalogService,
             StrategyValidationRunJooqQueryAdapter validationAdapter,
+            StrategyReleaseInputCatalogJooqQueryAdapter releaseInputs,
             CurrentPrincipal principal) {
         return new RoomStrategyParticipationService(
                 admissionService,
@@ -265,6 +266,7 @@ public class CompetitionRoomConfiguration {
                 releaseService,
                 catalogService,
                 validationAdapter,
+                releaseInputs,
                 principal,
                 UUID::randomUUID);
     }

@@ -1,14 +1,12 @@
 package com.idea2strategy.backend.api.strategy;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
+import com.idea2strategy.backend.application.strategy.BasicLaunchPolicy;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommand;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandService;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.ResponseEntity;
@@ -22,7 +20,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/strategies/{strategyId}/releases")
 @ConditionalOnBean({ImmutableStrategyReleaseCommandService.class, BasicStrategyCatalogQueryService.class})
 public class StrategyReleaseController {
-    private static final ObjectMapper JSON = new ObjectMapper();
     private final ImmutableStrategyReleaseCommandService releaseService;
     private final BasicStrategyCatalogQueryService catalogService;
 
@@ -55,10 +52,9 @@ public class StrategyReleaseController {
             UUID validationRunId,
             BigDecimal initialCashAmount,
             int budgetCapBps,
-            Map<String, Object> candidateConflictPolicy) {
+            Object candidateConflictPolicy) {
         ImmutableStrategyReleaseCommand toCommand(UUID releaseId) {
             require(initialCashAmount, "initialCashAmount");
-            require(candidateConflictPolicy, "candidateConflictPolicy");
             if (budgetCapBps <= 0 || budgetCapBps > 10_000) {
                 throw new IllegalArgumentException("budgetCapBps must be in 1..10000");
             }
@@ -66,20 +62,12 @@ public class StrategyReleaseController {
                     releaseId,
                     initialCashAmount,
                     budgetCapBps,
-                    json(candidateConflictPolicy));
+                    BasicLaunchPolicy.CANDIDATE_CONFLICT_POLICY);
         }
 
         private static void require(Object value, String field) {
             if (value == null || value instanceof String text && text.isBlank()) {
                 throw new IllegalArgumentException(field + " is required");
-            }
-        }
-
-        private static String json(Map<String, Object> value) {
-            try {
-                return JSON.writeValueAsString(value);
-            } catch (JsonProcessingException exception) {
-                throw new IllegalArgumentException("candidateConflictPolicy must be valid JSON", exception);
             }
         }
     }

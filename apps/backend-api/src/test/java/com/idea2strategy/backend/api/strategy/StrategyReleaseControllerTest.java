@@ -52,8 +52,7 @@ class StrategyReleaseControllerTest {
                                 {
                                   "validationRunId":"30000000-0000-4000-8000-000000000001",
                                   "initialCashAmount":100000.00,
-                                  "budgetCapBps":10000,
-                                  "candidateConflictPolicy":{"policy":"FIRST_WINS"}
+                                  "budgetCapBps":10000
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -68,7 +67,6 @@ class StrategyReleaseControllerTest {
         assertThat(command.getValue().releaseId())
                 .isEqualTo(StrategyReleaseController.releaseId(VALIDATION_ID));
         assertThat(command.getValue().initialCashAmount()).isEqualByComparingTo("100000.00");
-        assertThat(command.getValue().candidateConflictPolicy()).isEqualTo("{\"policy\":\"FIRST_WINS\"}");
     }
 
     @Test
@@ -113,8 +111,7 @@ class StrategyReleaseControllerTest {
                 {
                   "validationRunId":"30000000-0000-4000-8000-000000000001",
                   "initialCashAmount":100000.00,
-                  "budgetCapBps":10000,
-                  "candidateConflictPolicy":{"policy":"FIRST_WINS"}
+                  "budgetCapBps":10000
                 }
                 """;
     }
