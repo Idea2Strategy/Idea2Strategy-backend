@@ -94,8 +94,8 @@ class StrategyReleaseInputCatalogPersistenceIntegrationTest {
     private void insertPolicy(String version, String schema, String hash) {
         String document = """
                 {"marketRulesVersion":"market-v1","accountingRulesVersion":"accounting-v1",
-                 "precisionRulesVersion":"precision-v1","periodStart":"2024-01-01T00:00:00Z",
-                 "periodEnd":"2024-02-01T00:00:00Z","marketDataSchemaVersion":"%s","timezone":"UTC",
+                 "precisionRulesVersion":"precision-v1","periodStart":"2024-01-01T05:00:00Z",
+                 "periodEnd":"2024-02-01T05:00:00Z","marketDataSchemaVersion":"%s","timezone":"America/New_York",
                  "feePolicyId":"%s","buyingPowerBufferPolicyId":"%s"}
                 """.formatted(schema, FEE_POLICY, BUFFER_POLICY);
         jdbc.update("insert into backtest.execution_policy_versions "

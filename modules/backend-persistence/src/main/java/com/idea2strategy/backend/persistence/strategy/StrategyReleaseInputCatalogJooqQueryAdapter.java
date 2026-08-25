@@ -62,8 +62,12 @@ public class StrategyReleaseInputCatalogJooqQueryAdapter implements StrategyRele
                           and candidate.available_at is not null
                           and candidate.available_at <= ?::timestamptz
                           and candidate.schema_version = p.policy_document ->> 'marketDataSchemaVersion'
-                          and candidate.period_start >= (p.policy_document ->> 'periodStart')::timestamptz
-                          and candidate.period_end <= (p.policy_document ->> 'periodEnd')::timestamptz
+                          and (candidate.period_start at time zone 'UTC')::date >=
+                              ((p.policy_document ->> 'periodStart')::timestamptz
+                                  at time zone (p.policy_document ->> 'timezone'))::date
+                          and (candidate.period_end at time zone 'UTC')::date <=
+                              ((p.policy_document ->> 'periodEnd')::timestamptz
+                                  at time zone (p.policy_document ->> 'timezone'))::date
                    )
                  order by p.locked_at desc, p.version
                 """, at, at, at, at, at, at, at).map(row -> new ExecutionPolicy(
