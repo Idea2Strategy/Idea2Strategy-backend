@@ -62,6 +62,8 @@ public final class OperatorCaseQueryService {
                 state.caseView().status(),
                 state.caseView().version(),
                 state.assigneeOperatorId(),
+                state.subject(),
+                state.description(),
                 redactor.redact(state.evidence()),
                 state.caseView().updatedAt());
     }

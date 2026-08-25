@@ -44,6 +44,8 @@ class OperatorCaseServiceTest {
         OperatorCaseDetail detail = queryService.detail(trusted(), PERMISSION, CASE_ID);
 
         assertThat(page.items()).hasSize(1);
+        assertThat(detail.subject()).isEqualTo("의심스러운 거래 신고");
+        assertThat(detail.description()).isEqualTo("체결 내역과 결과를 확인해 주세요.");
         assertThat(fixture.authorization.calls).extracting(AuthorizationCall::type)
                 .contains(UserCaseType.REPORT, UserCaseType.APPEAL);
         assertThat(detail.evidence()).singleElement().satisfies(evidence -> {
@@ -267,7 +269,15 @@ class OperatorCaseServiceTest {
                         "privateStrategySource", "secret",
                         "positionQuantity", 100,
                         "orderPayload", Map.of("side", "BUY")));
-        return new OperatorCaseState(view, assignee, List.of(evidence));
+        return new OperatorCaseState(
+                view,
+                assignee,
+                List.of(evidence),
+                "의심스러운 거래 신고",
+                "체결 내역과 결과를 확인해 주세요.",
+                NOW,
+                null,
+                null);
     }
 
     private static OperatorCaseCommand command(
