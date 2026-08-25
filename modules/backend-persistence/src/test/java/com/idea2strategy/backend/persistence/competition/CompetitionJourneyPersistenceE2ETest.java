@@ -106,6 +106,8 @@ class CompetitionJourneyPersistenceE2ETest {
                 .extracting(item -> item.id())
                 .containsExactly(PUBLIC_ROOM_ID);
 
+        grantSecretAdmission(OWNER_ONE_ID, id(90));
+        grantSecretAdmission(OWNER_TWO_ID, id(91));
         assertInvalidProvisioningRollsBack();
         admit(OWNER_ONE_ID, PARTICIPATION_ONE_ID, EVENT_ONE_ID, BOT_ONE_ID, "orchid-01");
         admit(OWNER_TWO_ID, PARTICIPATION_TWO_ID, EVENT_TWO_ID, BOT_TWO_ID, "orchid-02");
@@ -262,6 +264,22 @@ class CompetitionJourneyPersistenceE2ETest {
                     return botId;
                 });
         assertThat(admitted.botId()).isEqualTo(botId);
+    }
+
+    private void grantSecretAdmission(UUID accountId, UUID invitationId) {
+        jdbc.update(
+                "insert into competition.room_invitations "
+                        + "(id, room_id, issued_by_account_id, credential_type, credential_digest, "
+                        + "issued_at, expires_at, claimed_by_account_id, claimed_at) "
+                        + "values (?, ?, ?, 'CODE', ?, ?, ?, ?, ?)",
+                invitationId,
+                SECRET_ROOM_ID,
+                CREATOR_ID,
+                "journey-" + invitationId,
+                utc(CREATED_AT),
+                utc(CUTOFF_AT),
+                accountId,
+                utc(ADMISSION_AT.minusSeconds(1)));
     }
 
     private RoomParticipationAdmissionService admissionService(

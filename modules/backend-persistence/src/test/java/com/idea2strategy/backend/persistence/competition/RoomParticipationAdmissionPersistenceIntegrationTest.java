@@ -76,6 +76,7 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     @BeforeEach
     void prepareReferences() {
         jdbc.update("delete from competition.participation_events");
+        jdbc.update("delete from competition.room_invitations");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from competition.room_schedules");
@@ -146,6 +147,51 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                         String.class,
                         id(1)))
                 .isEqualTo("PARTICIPATION_REGISTERED");
+    }
+
+    @Test
+    void rejectsSecretRoomAdmissionWhenTheAccountHasNoConsumedInvitation() {
+        insertRoom(ROOM_A, 4, 2);
+        jdbc.update("update competition.rooms set access_type = 'SECRET' where id = ?", ROOM_A);
+        var provisionCalls = new AtomicInteger();
+
+        var outcome = adapter.admit(request(41, ROOM_A, OWNER_A, "uninvited"), context -> {
+            provisionCalls.incrementAndGet();
+            return id(141);
+        });
+
+        assertThat(outcome.failure()).isEqualTo(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+        assertThat(provisionCalls).hasValue(0);
+    }
+
+    @Test
+    void admitsOnlyTheAccountBoundToAConsumedSecretRoomInvitation() {
+        insertRoom(ROOM_A, 4, 2);
+        jdbc.update("update competition.rooms set access_type = 'SECRET' where id = ?", ROOM_A);
+        UUID invitationId = id(742);
+        jdbc.update(
+                "insert into competition.room_invitations "
+                        + "(id, room_id, issued_by_account_id, credential_type, credential_digest, issued_at, "
+                        + "expires_at, claimed_by_account_id, claimed_at) "
+                        + "values (?, ?, ?, 'CODE', 'bound-secret-digest', ?, ?, ?, ?)",
+                invitationId,
+                ROOM_A,
+                CREATOR_ID,
+                NOW.minusSeconds(60).atOffset(ZoneOffset.UTC),
+                NOW.plusSeconds(3600).atOffset(ZoneOffset.UTC),
+                OWNER_A,
+                NOW.minusSeconds(30).atOffset(ZoneOffset.UTC));
+
+        var outsider = adapter.admit(request(42, ROOM_A, OWNER_B, "outsider"), provision(id(142), OWNER_B));
+        var invited = adapter.admit(request(43, ROOM_A, OWNER_A, "invited"), provision(id(143), OWNER_A));
+
+        assertThat(outsider.failure()).isEqualTo(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+        assertThat(invited.accepted()).isTrue();
+        assertThat(jdbc.queryForObject(
+                        "select admitted_participation_id from competition.room_invitations where id = ?",
+                        UUID.class,
+                        invitationId))
+                .isEqualTo(id(43));
     }
 
     @Test

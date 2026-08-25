@@ -47,6 +47,7 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
 
         Record room = dsl.fetchOne(
                 "select r.competition_type::text as competition_type, r.status::text as room_status, "
+                        + "r.access_type::text as access_type, "
                         + "rules.bot_participation_limit, rules.per_account_bot_limit, "
                         + "rules.initial_cash_amount, rules.fee_policy_id, "
                         + "rules.buying_power_buffer_policy_id, rules.precision_rules_version, "
@@ -60,6 +61,22 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
         var submissionTiming = submissionTiming(room, request.admittedAt());
         if (submissionTiming == null) {
             return rejected(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+        }
+        UUID invitationGrantId = null;
+        if ("SECRET".equals(room.get("access_type", String.class))) {
+            Record grant = dsl.fetchOne(
+                    "select id from competition.room_invitations "
+                            + "where room_id = ? and claimed_by_account_id = ? "
+                            + "and admitted_participation_id is null and revoked_at is null "
+                            + "and expires_at > ?::timestamptz "
+                            + "order by claimed_at, id limit 1 for update",
+                    request.roomId(),
+                    request.ownerAccountId(),
+                    request.admittedAt().atOffset(ZoneOffset.UTC));
+            if (grant == null) {
+                return rejected(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+            }
+            invitationGrantId = grant.get("id", UUID.class);
         }
 
         int roomCount = countOccupied(request.roomId(), null);
@@ -121,6 +138,21 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
                 request.eventId(),
                 request.participationId(),
                 admittedAt);
+        if (invitationGrantId != null) {
+            int grantsSpent = dsl.execute(
+                    "update competition.room_invitations "
+                            + "set admitted_participation_id = ?, revoked_at = ?::timestamptz, "
+                            + "revocation_reason_code = 'ADMITTED' "
+                            + "where id = ? and claimed_by_account_id = ? "
+                            + "and admitted_participation_id is null and revoked_at is null",
+                    request.participationId(),
+                    admittedAt,
+                    invitationGrantId,
+                    request.ownerAccountId());
+            if (grantsSpent != 1) {
+                throw new IllegalStateException("Account-bound room invitation was not spent atomically");
+            }
+        }
         return RoomParticipationAdmissionOutcome.accepted(new RoomParticipationAdmission(
                 request.participationId(),
                 request.roomId(),

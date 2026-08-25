@@ -112,6 +112,8 @@ class RoomBotRealProvisioningAcceptanceE2ETest {
         seedReferences();
         createRoom();
         new RoomScheduleTransitionService(scheduleTransitions, fixed(RECRUITMENT_AT)).run(10);
+        grantSecretAdmission(OWNER_ID, id(90));
+        grantSecretAdmission(PEER_OWNER_ID, id(91));
 
         // A validation that no longer matches aborts the admission and the participation with it.
         assertThatThrownBy(() -> admissionService(OWNER_ID, STALE_PARTICIPATION_ID, STALE_EVENT_ID)
@@ -229,6 +231,22 @@ class RoomBotRealProvisioningAcceptanceE2ETest {
     private RoomParticipationAdmissionService admissionService(UUID ownerId, UUID participationId, UUID eventId) {
         return new RoomParticipationAdmissionService(
                 admissions, () -> ownerId, fixed(ADMISSION_AT), () -> participationId, () -> eventId);
+    }
+
+    private void grantSecretAdmission(UUID accountId, UUID invitationId) {
+        jdbc.update(
+                "insert into competition.room_invitations "
+                        + "(id, room_id, issued_by_account_id, credential_type, credential_digest, "
+                        + "issued_at, expires_at, claimed_by_account_id, claimed_at) "
+                        + "values (?, ?, ?, 'CODE', ?, ?, ?, ?, ?)",
+                invitationId,
+                ROOM_ID,
+                CREATOR_ID,
+                "acceptance-" + invitationId,
+                CREATED_AT.atOffset(ZoneOffset.UTC),
+                CUTOFF_AT.atOffset(ZoneOffset.UTC),
+                accountId,
+                ADMISSION_AT.minusSeconds(1).atOffset(ZoneOffset.UTC));
     }
 
     private void createRoom() {

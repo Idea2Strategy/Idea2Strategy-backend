@@ -69,7 +69,8 @@ public final class RoomInvitationService {
         if (rawCredential == null || rawCredential.isBlank() || rawCredential.length() > 200) {
             throw new RoomInvitationUnavailableException();
         }
-        return port.consume(RoomInvitationSecrets.digest(rawCredential), clock.instant())
+        return port.consume(
+                        RoomInvitationSecrets.digest(rawCredential), principal.accountId(), clock.instant())
                 .orElseThrow(RoomInvitationUnavailableException::new);
     }
 }
