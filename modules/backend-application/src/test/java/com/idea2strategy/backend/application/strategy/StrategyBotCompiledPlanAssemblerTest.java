@@ -80,6 +80,41 @@ class StrategyBotCompiledPlanAssemblerTest {
                 .isEqualTo("PRICE_COMPARE");
     }
 
+    @Test
+    void publishesEveryValidatedTerminalArgumentIncludingTheInstrumentCap() {
+        JsonNode flow = objectMapper.createObjectNode()
+                .put("key", "buy")
+                .put("container", "BUY")
+                .<com.fasterxml.jackson.databind.node.ObjectNode>set(
+                        "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
+                .set("steps", objectMapper.createArrayNode()
+                        .add(step(1, "TEST_CONDITION", "{}"))
+                        .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER",
+                                "{\"orderPercent\":\"25\",\"maxPositionPercent\":\"40\","
+                                        + "\"executionMode\":\"1회만\",\"waitMode\":\"조건 재충족\","
+                                        + "\"waitInterval\":\"1\",\"maxExecutions\":\"1\"}")));
+        BasicStrategyCatalog selected = new BasicStrategyCatalog(
+                catalog().version(),
+                List.of(
+                        element("TEST_CONDITION", "TEST", "{}", "[]"),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", "EMIT_ORDER_CANDIDATE",
+                                "{\"side\":\"$container\",\"orderPercent\":\"$orderPercent\","
+                                        + "\"maxPositionPercent\":\"$maxPositionPercent\","
+                                        + "\"executionMode\":\"$executionMode\",\"waitMode\":\"$waitMode\","
+                                        + "\"waitInterval\":\"$waitInterval\",\"maxExecutions\":\"$maxExecutions\"}",
+                                "[]")),
+                List.of(), catalog().instruments());
+
+        JsonNode arguments = stepsOf(assembleWithCatalog(planWith(flow), selected), 0).get(1).path("arguments");
+
+        assertThat(arguments.path("orderPercent").asText()).isEqualTo("25");
+        assertThat(arguments.path("maxPositionPercent").asText()).isEqualTo("40");
+        assertThat(arguments.path("executionMode").asText()).isEqualTo("1회만");
+        assertThat(arguments.path("waitMode").asText()).isEqualTo("조건 재충족");
+        assertThat(arguments.path("waitInterval").asText()).isEqualTo("1");
+        assertThat(arguments.path("maxExecutions").asText()).isEqualTo("1");
+    }
+
     /**
      * Two flows over different instruments requiring the same feature become one requirement, because
      * the contract forbids a duplicate feature-and-instruments key and the consumer warms one window

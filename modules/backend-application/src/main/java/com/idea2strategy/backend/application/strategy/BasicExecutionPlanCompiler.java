@@ -174,9 +174,16 @@ final class BasicExecutionPlanCompiler {
         root.set("requiredFeatures", parseJson(featureDocument(features)));
 
         ArrayNode flows = root.putArray("flows");
-        for (var group : assembly.groups()) {
+        List<BasicBlockGroup> orderedGroups = assembly.groups().stream()
+                .sorted(Comparator
+                        .comparing((BasicBlockGroup group) -> group.instrumentIds().stream()
+                                .map(UUID::toString).min(String::compareTo).orElse(""))
+                        .thenComparing(BasicBlockGroup::id))
+                .toList();
+        for (var group : orderedGroups) {
             ObjectNode flow = flows.addObject();
             flow.put("key", group.id());
+            flow.put("allocationGroupId", group.allocationGroupId());
             flow.put("container", group.container().name());
             flow.put("evaluationMode", group.evaluationMode().name());
             flow.put("allocationMode", group.allocationMode().name());
