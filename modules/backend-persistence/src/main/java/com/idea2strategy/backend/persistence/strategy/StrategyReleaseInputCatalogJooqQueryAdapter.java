@@ -54,8 +54,19 @@ public class StrategyReleaseInputCatalogJooqQueryAdapter implements StrategyRele
                    and p.policy_document ->> 'periodEnd' is not null
                    and p.policy_document ->> 'marketDataSchemaVersion' is not null
                    and p.policy_document ->> 'timezone' is not null
+                   and exists (
+                       select 1
+                         from market_data.dataset_manifests candidate
+                        where candidate.status = 'AVAILABLE'
+                          and candidate.data_layer = 'ADJUSTED'
+                          and candidate.available_at is not null
+                          and candidate.available_at <= ?::timestamptz
+                          and candidate.schema_version = p.policy_document ->> 'marketDataSchemaVersion'
+                          and candidate.period_start >= (p.policy_document ->> 'periodStart')::timestamptz
+                          and candidate.period_end <= (p.policy_document ->> 'periodEnd')::timestamptz
+                   )
                  order by p.locked_at desc, p.version
-                """, at, at, at, at, at, at).map(row -> new ExecutionPolicy(
+                """, at, at, at, at, at, at, at).map(row -> new ExecutionPolicy(
                 row.get("version", String.class),
                 row.get("broker_rules_version", String.class),
                 row.get("accounting_rules_version", String.class),
@@ -73,9 +84,10 @@ public class StrategyReleaseInputCatalogJooqQueryAdapter implements StrategyRele
                 select d.id, f.code as feed_code, d.data_layer, d.resolution,
                        d.period_start::date as period_start,
                        d.period_end::date as period_end, d.schema_version, d.available_at
-                  from market_data.dataset_manifests d
+                 from market_data.dataset_manifests d
                   join market_data.feeds f on f.id = d.feed_id
                  where d.status = 'AVAILABLE'
+                   and d.data_layer = 'ADJUSTED'
                    and d.available_at is not null
                    and d.available_at <= ?::timestamptz
                    and btrim(d.dataset_hash) <> ''
