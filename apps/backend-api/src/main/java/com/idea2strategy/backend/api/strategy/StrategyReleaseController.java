@@ -40,7 +40,7 @@ public class StrategyReleaseController {
         var command = request.toCommand(releaseId(request.validationRunId()));
         var release = releaseService.release(strategyId, request.validationRunId(), catalogService, command);
         return ResponseEntity.created(URI.create("/api/v1/bots/" + release.botId()))
-                .body(new ReleaseResponse(release.botId(), "BASIC"));
+                .body(new ReleaseResponse(command.releaseId(), release.botId(), "BASIC"));
     }
 
     static UUID releaseId(UUID validationRunId) {
@@ -84,5 +84,5 @@ public class StrategyReleaseController {
         }
     }
 
-    public record ReleaseResponse(UUID botId, String backtestLane) {}
+    public record ReleaseResponse(UUID releaseId, UUID botId, String backtestLane) {}
 }
