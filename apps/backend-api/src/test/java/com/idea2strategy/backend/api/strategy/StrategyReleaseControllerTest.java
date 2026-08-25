@@ -58,6 +58,8 @@ class StrategyReleaseControllerTest {
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/v1/bots/" + BOT_ID))
+                .andExpect(jsonPath("$.releaseId").value(
+                        StrategyReleaseController.releaseId(VALIDATION_ID).toString()))
                 .andExpect(jsonPath("$.botId").value(BOT_ID.toString()))
                 .andExpect(jsonPath("$.backtestLane").value("BASIC"));
 
