@@ -11,6 +11,7 @@ import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryS
 import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -50,12 +51,74 @@ class MarketBarServiceTest {
                 .isInstanceOf(UnsupportedMarketInstrumentException.class);
     }
 
+    @Test
+    void anchorsThreeMonthWindowToLatestStoredBarInsteadOfToday() {
+        MarketBarPort port = mock(MarketBarPort.class);
+        BasicStrategyCatalogQueryService catalog = mock(BasicStrategyCatalogQueryService.class);
+        when(catalog.getSupportedInstruments()).thenReturn(List.of(
+                new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
+        Instant requestedStart = Instant.parse("2026-04-30T20:00:00Z");
+        Instant latest = Instant.parse("2026-07-30T20:00:00Z");
+        when(port.findRecent(AAPL_ID, MarketBarTimeframe.THIRTY_MINUTES, 1000)).thenReturn(List.of(
+                barAt(requestedStart.minus(30, ChronoUnit.MINUTES), "190"),
+                barAt(requestedStart, "191"),
+                barAt(latest, "210.12")));
+        var service = new MarketBarService(port, catalog, () -> ACCOUNT_ID);
+
+        MarketBarWindowSnapshot result = service.findWindowSnapshot(
+                AAPL_ID, MarketBarTimeframe.THIRTY_MINUTES, MarketBarWindow.THREE_MONTHS);
+
+        assertThat(result.requestedFrom()).isEqualTo(requestedStart);
+        assertThat(result.requestedTo()).isEqualTo(latest);
+        assertThat(result.availableFrom()).isEqualTo(requestedStart);
+        assertThat(result.availableTo()).isEqualTo(latest);
+        assertThat(result.coverageStatus()).isEqualTo(MarketBarCoverageStatus.COMPLETE);
+        assertThat(result.reasonCode()).isNull();
+        assertThat(result.bars()).extracting(MarketBarView::occurredAt)
+                .containsExactly(requestedStart, latest);
+    }
+
+    @Test
+    void reportsPartialAndEmptyWindowsWithLiteralCoverageReasons() {
+        MarketBarPort port = mock(MarketBarPort.class);
+        BasicStrategyCatalogQueryService catalog = mock(BasicStrategyCatalogQueryService.class);
+        when(catalog.getSupportedInstruments()).thenReturn(List.of(
+                new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
+        Instant latest = Instant.parse("2026-07-30T20:00:00Z");
+        when(port.findRecent(AAPL_ID, MarketBarTimeframe.ONE_HOUR, 1000)).thenReturn(List.of(
+                barAt(Instant.parse("2026-07-15T14:30:00Z"), "205"),
+                barAt(latest, "210")));
+        when(port.findRecent(AAPL_ID, MarketBarTimeframe.FOUR_HOURS, 1000)).thenReturn(List.of());
+        var service = new MarketBarService(port, catalog, () -> ACCOUNT_ID);
+
+        MarketBarWindowSnapshot partial = service.findWindowSnapshot(
+                AAPL_ID, MarketBarTimeframe.ONE_HOUR, MarketBarWindow.ONE_MONTH);
+        MarketBarWindowSnapshot empty = service.findWindowSnapshot(
+                AAPL_ID, MarketBarTimeframe.FOUR_HOURS, MarketBarWindow.ONE_MONTH);
+
+        assertThat(partial.requestedFrom()).isEqualTo("2026-06-30T20:00:00Z");
+        assertThat(partial.coverageStatus()).isEqualTo(MarketBarCoverageStatus.PARTIAL);
+        assertThat(partial.reasonCode()).isEqualTo("HISTORY_STARTS_AFTER_REQUESTED_WINDOW");
+        assertThat(empty.coverageStatus()).isEqualTo(MarketBarCoverageStatus.EMPTY);
+        assertThat(empty.reasonCode()).isEqualTo("NO_DATA_FOR_INSTRUMENT_TIMEFRAME");
+        assertThat(empty.requestedFrom()).isNull();
+        assertThat(empty.bars()).isEmpty();
+    }
+
     private static MarketBar bar() {
         return new MarketBar(
                 "event-1", AAPL_ID, "ALPACA", "SIP",
                 Instant.parse("2026-08-06T14:30:00Z"), 1, 0,
                 new BigDecimal("210.00"), new BigDecimal("210.20"),
                 new BigDecimal("209.90"), new BigDecimal("210.12"),
+                new BigDecimal("2500"));
+    }
+
+    private static MarketBar barAt(Instant at, String close) {
+        BigDecimal value = new BigDecimal(close);
+        return new MarketBar(
+                "event-" + at, AAPL_ID, "ALPACA", "SIP", at, at.getEpochSecond(), 0,
+                value, value.add(BigDecimal.ONE), value.subtract(BigDecimal.ONE), value,
                 new BigDecimal("2500"));
     }
 }

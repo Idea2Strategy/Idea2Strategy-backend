@@ -42,6 +42,36 @@ public final class MarketBarService {
         return new MarketBarSnapshot(instrumentId, instrument.symbol(), bars);
     }
 
+    public MarketBarWindowSnapshot findWindowSnapshot(
+            UUID instrumentId, MarketBarTimeframe timeframe, MarketBarWindow window) {
+        SupportedInstrument instrument = authorizeAndRequireSupported(instrumentId);
+        Objects.requireNonNull(timeframe, "timeframe");
+        Objects.requireNonNull(window, "window");
+        List<MarketBar> stored = port.findRecent(instrumentId, timeframe, 1000);
+        if (stored.isEmpty()) {
+            return new MarketBarWindowSnapshot(
+                    instrumentId, instrument.symbol(), window,
+                    null, null, null, null,
+                    MarketBarCoverageStatus.EMPTY,
+                    "NO_DATA_FOR_INSTRUMENT_TIMEFRAME",
+                    List.of());
+        }
+        MarketBar first = stored.get(0);
+        MarketBar latest = stored.get(stored.size() - 1);
+        var requestedFrom = window.startAt(latest.occurredAt());
+        List<MarketBarView> bars = stored.stream()
+                .filter(bar -> !bar.occurredAt().isBefore(requestedFrom))
+                .map(bar -> view(instrument.symbol(), bar))
+                .toList();
+        boolean complete = !first.occurredAt().isAfter(requestedFrom);
+        return new MarketBarWindowSnapshot(
+                instrumentId, instrument.symbol(), window,
+                requestedFrom, latest.occurredAt(), bars.get(0).occurredAt(), latest.occurredAt(),
+                complete ? MarketBarCoverageStatus.COMPLETE : MarketBarCoverageStatus.PARTIAL,
+                complete ? null : "HISTORY_STARTS_AFTER_REQUESTED_WINDOW",
+                bars);
+    }
+
     private SupportedInstrument authorizeAndRequireSupported(UUID instrumentId) {
         Objects.requireNonNull(instrumentId, "instrumentId");
         principal.accountId();

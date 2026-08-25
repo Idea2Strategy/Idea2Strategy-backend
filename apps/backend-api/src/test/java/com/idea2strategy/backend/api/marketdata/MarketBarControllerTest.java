@@ -8,6 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.idea2strategy.backend.application.marketdata.MarketBarPort;
 import com.idea2strategy.backend.application.marketdata.MarketBarService;
 import com.idea2strategy.backend.application.marketdata.MarketBarTimeframe;
+import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
+import com.idea2strategy.backend.api.identity.IdentityAuthExceptionHandler;
 import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryService;
 import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
 import java.math.BigDecimal;
@@ -67,5 +69,47 @@ class MarketBarControllerTest {
         mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
                         .queryParam("limit", "1001"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void returnsServerAnchoredPreviewWindowMetadata() throws Exception {
+        mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
+                        .queryParam("timeframe", "4h")
+                        .queryParam("window", "1m"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.window").value("1m"))
+                .andExpect(jsonPath("$.requestedTo").value("2026-08-06T14:30:00Z"))
+                .andExpect(jsonPath("$.requestedFrom").value("2026-07-06T14:30:00Z"))
+                .andExpect(jsonPath("$.availableFrom").value("2026-08-06T14:30:00Z"))
+                .andExpect(jsonPath("$.availableTo").value("2026-08-06T14:30:00Z"))
+                .andExpect(jsonPath("$.coverageStatus").value("PARTIAL"))
+                .andExpect(jsonPath("$.reasonCode").value("HISTORY_STARTS_AFTER_REQUESTED_WINDOW"));
+        assertEquals(1000, requestedLimit.get());
+    }
+
+    @Test
+    void rejectsUnsupportedPreviewWindow() throws Exception {
+        mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
+                        .queryParam("window", "6m"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("window must be one of 1m, 3m"));
+    }
+
+    @Test
+    void rejectsPreviewWithoutAnAuthenticatedCustomerPrincipalBeforeReadingBars() throws Exception {
+        MarketBarPort port = org.mockito.Mockito.mock(MarketBarPort.class);
+        BasicStrategyCatalogQueryService catalog = org.mockito.Mockito.mock(BasicStrategyCatalogQueryService.class);
+        var service = new MarketBarService(port, catalog, () -> {
+            throw new AuthenticationRejectedException("A bearer access JWT is required");
+        });
+        var anonymousMvc = MockMvcBuilders.standaloneSetup(new MarketBarController(service))
+                .setControllerAdvice(new MarketBarExceptionHandler(), new IdentityAuthExceptionHandler())
+                .build();
+
+        anonymousMvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
+                        .queryParam("window", "1m"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REJECTED"));
+        org.mockito.Mockito.verifyNoInteractions(port);
     }
 }

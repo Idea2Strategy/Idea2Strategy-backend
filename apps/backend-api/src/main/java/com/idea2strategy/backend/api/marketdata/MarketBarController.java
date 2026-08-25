@@ -4,6 +4,9 @@ import com.idea2strategy.backend.application.marketdata.MarketBarService;
 import com.idea2strategy.backend.application.marketdata.MarketBarSnapshot;
 import com.idea2strategy.backend.application.marketdata.MarketBarView;
 import com.idea2strategy.backend.application.marketdata.MarketBarTimeframe;
+import com.idea2strategy.backend.application.marketdata.MarketBarWindow;
+import com.idea2strategy.backend.application.marketdata.MarketBarWindowSnapshot;
+import com.idea2strategy.backend.application.marketdata.MarketBarCoverageStatus;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -29,16 +32,42 @@ public class MarketBarController {
     public SnapshotResponse recent(
             @PathVariable UUID instrumentId,
             @RequestParam(defaultValue = "30m") String timeframe,
-            @RequestParam(defaultValue = "400") int limit) {
+            @RequestParam(defaultValue = "400") int limit,
+            @RequestParam(required = false) String window) {
         MarketBarTimeframe parsedTimeframe = MarketBarTimeframe.parse(timeframe);
+        if (window != null) {
+            MarketBarWindowSnapshot snapshot = service.findWindowSnapshot(
+                    instrumentId, parsedTimeframe, MarketBarWindow.parse(window));
+            return SnapshotResponse.window(snapshot, parsedTimeframe);
+        }
         MarketBarSnapshot snapshot = service.findRecentSnapshot(instrumentId, parsedTimeframe, limit);
         return new SnapshotResponse(
                 snapshot.instrumentId(), snapshot.symbol(), parsedTimeframe.value(),
+                null, null, null, null, null, null, null,
                 snapshot.bars().stream().map(BarResponse::from).toList());
     }
 
     public record SnapshotResponse(
-            UUID instrumentId, String symbol, String timeframe, List<BarResponse> bars) {}
+            UUID instrumentId,
+            String symbol,
+            String timeframe,
+            String window,
+            Instant requestedFrom,
+            Instant requestedTo,
+            Instant availableFrom,
+            Instant availableTo,
+            MarketBarCoverageStatus coverageStatus,
+            String reasonCode,
+            List<BarResponse> bars) {
+        static SnapshotResponse window(
+                MarketBarWindowSnapshot snapshot, MarketBarTimeframe timeframe) {
+            return new SnapshotResponse(
+                    snapshot.instrumentId(), snapshot.symbol(), timeframe.value(),
+                    snapshot.window().value(), snapshot.requestedFrom(), snapshot.requestedTo(),
+                    snapshot.availableFrom(), snapshot.availableTo(), snapshot.coverageStatus(),
+                    snapshot.reasonCode(), snapshot.bars().stream().map(BarResponse::from).toList());
+        }
+    }
 
     public record BarResponse(
             String eventId,
