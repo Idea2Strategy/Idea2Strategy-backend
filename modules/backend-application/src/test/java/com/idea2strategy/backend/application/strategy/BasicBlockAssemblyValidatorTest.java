@@ -151,6 +151,37 @@ class BasicBlockAssemblyValidatorTest {
     }
 
     @Test
+    void appliesPublishedNumericStringBoundsInsteadOfOnlyCheckingStringType() {
+        BasicStrategyCatalog boundedCatalog = new BasicStrategyCatalog(
+                catalog().version(),
+                List.of(
+                        element("TEST_LIMIT", "CONDITION",
+                                "{\"type\":\"object\",\"required\":[\"amount\"],\"properties\":{"
+                                        + "\"amount\":{\"type\":\"string\",\"x-numericExclusiveMinimum\":\"0\","
+                                        + "\"x-numericMaximum\":\"100\"}}}",
+                                "{}", "{\"passed\":{\"type\":\"boolean\"}}",
+                                "{\"containers\":[\"BUY\",\"SELL\"]}"),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", "ACTION", "{}",
+                                "{\"passed\":{\"type\":\"boolean\"}}", "{}",
+                                "{\"terminal\":true,\"containers\":[\"BUY\",\"SELL\"]}")),
+                List.of(), catalog().instruments());
+        var group = new BasicBlockGroup(
+                "buy", TradeContainer.BUY, EvaluationMode.INDEPENDENT, AllocationMode.EQUAL,
+                List.of(AAPL_ID),
+                List.of(
+                        new BasicBlock("limit", "TEST_LIMIT", Map.of("amount", "0")),
+                        new BasicBlock("order", "BASIC_EQUAL_ALLOCATION_ORDER", Map.of())),
+                List.of(new BasicBlockConnection("limit", "passed", "order", "passed")));
+
+        var result = new BasicBlockAssemblyValidator().validate(
+                new BasicBlockAssembly(CATALOG_ID, List.of(group)), boundedCatalog);
+
+        assertThat(result.issues()).extracting(BasicBlockAssemblyIssue::code, BasicBlockAssemblyIssue::location)
+                .contains(org.assertj.core.groups.Tuple.tuple(
+                        "INVALID_PARAMETER_VALUE", "groups[0].blocks[0].parameters.amount"));
+    }
+
+    @Test
     void enforcesPublishedBasicCompositionLimits() {
         List<UUID> sixInstruments = java.util.stream.IntStream.range(0, 6)
                 .mapToObj(index -> index == 0 ? AAPL_ID : UUID.randomUUID())
@@ -182,6 +213,34 @@ class BasicBlockAssemblyValidatorTest {
                         org.assertj.core.groups.Tuple.tuple("TOO_MANY_BUY_CONTAINERS", "groups"),
                         org.assertj.core.groups.Tuple.tuple("TOO_MANY_INSTRUMENTS", "groups[0].instrumentIds"),
                         org.assertj.core.groups.Tuple.tuple("TOO_MANY_CONDITIONS", "groups[0].blocks"));
+    }
+
+    @Test
+    void countsExpandedInstrumentFlowsByAllocationGroupInsteadOfRawGroupCount() {
+        List<BasicBlockGroup> fiveInstrumentsInOnePartition = java.util.stream.IntStream.range(0, 5)
+                .mapToObj(index -> group("buy:" + index, "partition-buy", TradeContainer.BUY, "BUY_ORDER"))
+                .toList();
+        List<BasicBlockGroup> fivePartitions = java.util.stream.IntStream.range(0, 5)
+                .mapToObj(index -> group("buy:" + index, "partition-" + index, TradeContainer.BUY, "BUY_ORDER"))
+                .toList();
+
+        var onePartition = new BasicBlockAssemblyValidator().validate(
+                new BasicBlockAssembly(CATALOG_ID, fiveInstrumentsInOnePartition), catalog());
+        var tooManyPartitions = new BasicBlockAssemblyValidator().validate(
+                new BasicBlockAssembly(CATALOG_ID, fivePartitions), catalog());
+
+        assertThat(onePartition.issues()).extracting(BasicBlockAssemblyIssue::code)
+                .doesNotContain("TOO_MANY_BUY_CONTAINERS");
+        assertThat(tooManyPartitions.issues()).extracting(BasicBlockAssemblyIssue::code)
+                .contains("TOO_MANY_BUY_CONTAINERS");
+    }
+
+    private static BasicBlockGroup group(
+            String id, String allocationGroupId, TradeContainer container, String orderElement) {
+        BasicBlockGroup legacy = group(id, container, orderElement);
+        return new BasicBlockGroup(
+                legacy.id(), allocationGroupId, legacy.container(), legacy.evaluationMode(), legacy.allocationMode(),
+                legacy.instrumentIds(), legacy.blocks(), legacy.connections());
     }
 
     private static BasicBlockGroup group(String id, TradeContainer container, String orderElement) {

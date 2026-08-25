@@ -81,6 +81,23 @@ class BasicStrategyValidationServiceTest {
     }
 
     @Test
+    void persistsWarningsWithoutInvalidatingAnOtherwiseExecutableDocument() {
+        String duplicate = semanticDocumentWithDuplicateCondition();
+        var documents = new StubDocumentPort(document(duplicate, 8));
+        var runs = new InMemoryValidationRunPort();
+
+        StrategyValidationRun run = service(documents, runs, OWNER_ID).validate(STRATEGY_ID, catalog());
+
+        assertThat(run.status()).isEqualTo(StrategyValidationStatus.VALID);
+        assertThat(run.findings()).anySatisfy(finding -> {
+            assertThat(finding.severity()).isEqualTo(StrategyValidationFinding.Severity.WARNING);
+            assertThat(finding.code()).isEqualTo("DUPLICATE_CONDITION");
+            assertThat(finding.location()).isEqualTo("groups[0].blocks[2]");
+        });
+        assertThat(runs.saved).isEqualTo(run);
+    }
+
+    @Test
     void previewsTheCurrentClientRevisionWithoutPersistingOrReadingTheSavedDocument() {
         var documents = new StubDocumentPort(document(semanticDocument("RSI"), 2));
         var runs = new InMemoryValidationRunPort();
@@ -185,6 +202,21 @@ class BasicStrategyValidationServiceTest {
                 + "\"toBlockId\":\"condition\",\"inputPort\":\"input\"},"
                 + "{\"fromBlockId\":\"condition\",\"outputPort\":\"result\","
                 + "\"toBlockId\":\"order\",\"inputPort\":\"input\"}]}]}";
+    }
+
+    private static String semanticDocumentWithDuplicateCondition() {
+        return "{\"catalogId\":\"" + CATALOG_ID + "\",\"groups\":[{"
+                + "\"id\":\"buy\",\"allocationGroupId\":\"partition-buy\",\"container\":\"BUY\","
+                + "\"evaluationMode\":\"INDEPENDENT\",\"allocationMode\":\"EQUAL\","
+                + "\"instrumentIds\":[\"" + AAPL_ID + "\"],\"blocks\":["
+                + "{\"id\":\"trigger\",\"elementCode\":\"MARKET_OPEN\",\"parameters\":{}},"
+                + "{\"id\":\"condition-a\",\"elementCode\":\"RSI\",\"parameters\":{}},"
+                + "{\"id\":\"condition-b\",\"elementCode\":\"RSI\",\"parameters\":{}},"
+                + "{\"id\":\"order\",\"elementCode\":\"BUY_ORDER\",\"parameters\":{}}],"
+                + "\"connections\":["
+                + "{\"fromBlockId\":\"trigger\",\"outputPort\":\"signal\",\"toBlockId\":\"condition-a\",\"inputPort\":\"input\"},"
+                + "{\"fromBlockId\":\"condition-a\",\"outputPort\":\"result\",\"toBlockId\":\"condition-b\",\"inputPort\":\"input\"},"
+                + "{\"fromBlockId\":\"condition-b\",\"outputPort\":\"result\",\"toBlockId\":\"order\",\"inputPort\":\"input\"}]}]}";
     }
 
     private static BasicStrategyCatalog catalog() {

@@ -13,6 +13,7 @@ public record BasicBlockAssembly(UUID catalogId, List<BasicBlockGroup> groups) {
 
     public record BasicBlockGroup(
             String id,
+            String allocationGroupId,
             TradeContainer container,
             EvaluationMode evaluationMode,
             AllocationMode allocationMode,
@@ -21,12 +22,25 @@ public record BasicBlockAssembly(UUID catalogId, List<BasicBlockGroup> groups) {
             List<BasicBlockConnection> connections) {
         public BasicBlockGroup {
             id = requireText(id, "id");
+            allocationGroupId = allocationGroupId == null || allocationGroupId.isBlank()
+                    ? id : allocationGroupId;
             Objects.requireNonNull(container, "container");
             Objects.requireNonNull(evaluationMode, "evaluationMode");
             Objects.requireNonNull(allocationMode, "allocationMode");
             instrumentIds = List.copyOf(instrumentIds);
             blocks = List.copyOf(blocks);
             connections = List.copyOf(connections);
+        }
+
+        public BasicBlockGroup(
+                String id,
+                TradeContainer container,
+                EvaluationMode evaluationMode,
+                AllocationMode allocationMode,
+                List<UUID> instrumentIds,
+                List<BasicBlock> blocks,
+                List<BasicBlockConnection> connections) {
+            this(id, id, container, evaluationMode, allocationMode, instrumentIds, blocks, connections);
         }
     }
 
