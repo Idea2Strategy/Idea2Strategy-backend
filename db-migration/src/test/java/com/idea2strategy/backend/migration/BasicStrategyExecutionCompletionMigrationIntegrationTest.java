@@ -24,7 +24,7 @@ class BasicStrategyExecutionCompletionMigrationIntegrationTest {
     Path temporaryDirectory;
 
     @Test
-    void publishesFourteenV2ElementsAndCapsWithoutChangingV1() throws Exception {
+    void publishesFourteenV2ElementsAndCapsWithoutChangingV1Definitions() throws Exception {
         var centralDirectory = Path.of(getClass().getClassLoader().getResource("db/migration").toURI());
         var bundle = CanonicalMigrationBundleAssembler.assemble(
                 centralDirectory, java.util.List.of(), temporaryDirectory.resolve("bundle"));
@@ -36,11 +36,21 @@ class BasicStrategyExecutionCompletionMigrationIntegrationTest {
 
         try (var connection = POSTGRES.createConnection(""); var statement = connection.createStatement()) {
             try (var catalogs = statement.executeQuery("""
-                    SELECT catalog_version FROM strategy.element_catalog_versions
+                    SELECT catalog_version, retired_at FROM strategy.element_catalog_versions
                     WHERE id = '%s'
                     """.formatted(V2))) {
                 assertTrue(catalogs.next());
                 assertEquals("basic-elements:2026-08-25", catalogs.getString(1));
+                assertEquals(null, catalogs.getTimestamp(2));
+            }
+            try (var legacyCatalog = statement.executeQuery("""
+                    SELECT retired_at FROM strategy.element_catalog_versions
+                    WHERE id = '%s'
+                    """.formatted(V1))) {
+                assertTrue(legacyCatalog.next());
+                assertEquals(
+                        java.time.Instant.parse("2026-08-25T00:00:00Z"),
+                        legacyCatalog.getTimestamp(1).toInstant());
             }
             try (var count = statement.executeQuery("""
                     SELECT count(*) FROM strategy.element_definitions
