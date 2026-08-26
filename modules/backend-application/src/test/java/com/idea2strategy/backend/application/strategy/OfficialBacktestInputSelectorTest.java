@@ -154,7 +154,7 @@ class OfficialBacktestInputSelectorTest {
                 NOW);
         String plan = """
                 {"executionSnapshot":{"partitions":[{"flows":[{
-                  "instrumentIds":["%s"],
+                  "officialInstrumentIds":["%s"],
                   "steps":[{"arguments":{"resolution":"30m"}}]
                 }]}]}}
                 """.formatted(aapl);

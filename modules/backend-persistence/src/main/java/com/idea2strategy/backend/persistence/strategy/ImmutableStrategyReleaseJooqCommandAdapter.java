@@ -478,7 +478,8 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
 
         java.time.LocalDate manifestFirstDay = dataset.get("period_start", java.time.LocalDate.class);
         java.time.LocalDate manifestLastDay = dataset.get("period_end", java.time.LocalDate.class);
-        if (manifestFirstDay.isBefore(policy.periodStart()) || manifestLastDay.isAfter(policy.periodEnd())) {
+        if (manifestFirstDay.isBefore(policy.periodStart())
+                || manifestLastDay.isAfter(policy.periodEnd().plusDays(1))) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset period " + manifestFirstDay + ".." + manifestLastDay
                             + " is not inside the execution policy period "
