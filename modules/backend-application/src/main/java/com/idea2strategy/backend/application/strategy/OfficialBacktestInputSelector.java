@@ -28,7 +28,7 @@ public final class OfficialBacktestInputSelector {
         Requirements requirements = requirements(compiledPlanDocument);
 
         return selectDatasets(
-                policy, requirements, policy.periodStart(), policy.periodEnd(), catalog);
+                policy, requirements, policy.periodStart(), policy.periodEnd().minusDays(1), catalog);
     }
 
     public static Selection select(
@@ -71,9 +71,7 @@ public final class OfficialBacktestInputSelector {
                 .filter(dataset -> "ADJUSTED".equals(dataset.dataLayer()))
                 .filter(dataset -> policy.marketDataSchemaVersion().equals(dataset.schemaVersion()))
                 .filter(dataset -> !dataset.periodStart().isBefore(policy.periodStart()))
-                .filter(dataset -> !dataset.periodEnd().isAfter(policy.periodEnd()))
-                .filter(dataset -> dataset.periodStart().isBefore(requestedEnd))
-                .filter(dataset -> dataset.periodEnd().isAfter(requestedStart))
+                .filter(dataset -> !dataset.periodEnd().isAfter(policy.periodEnd().plusDays(1)))
                 .filter(dataset -> !dataset.availableAt().isAfter(catalog.observedAt()))
                 .filter(dataset -> requirements.resolutions().contains(normalizeResolution(dataset.resolution())))
                 .toList();
@@ -85,6 +83,7 @@ public final class OfficialBacktestInputSelector {
             long warmupDays = requirements.warmupDays().getOrDefault(resolution, 1L);
             LocalDate coverageStart = requestedStart.minusDays(warmupDays);
             if (coverageStart.isBefore(policy.periodStart())) coverageStart = policy.periodStart();
+            LocalDate coverageEnd = requestedEnd.plusDays(1);
             Set<UUID> instruments = requirements.instruments().getOrDefault(resolution, Set.of());
             List<UUID> scopes = instruments.isEmpty() ? java.util.Arrays.asList((UUID) null) : instruments.stream().sorted().toList();
             for (UUID instrument : scopes) {
@@ -92,7 +91,7 @@ public final class OfficialBacktestInputSelector {
                 selected.addAll(minimumCover(
                         resolution,
                         coverageStart,
-                        requestedEnd,
+                        coverageEnd,
                         candidates.stream()
                                 .filter(dataset -> resolution.equals(normalizeResolution(dataset.resolution())))
                                 .filter(dataset -> dataset.instrumentId() == null
@@ -201,7 +200,9 @@ public final class OfficialBacktestInputSelector {
     private static void addFlowRequirements(
             JsonNode flow, Set<String> resolutions, Map<String, Set<UUID>> instruments, Map<String, Long> warmupDays) {
         Set<UUID> flowInstruments = new LinkedHashSet<>();
-        flow.path("instrumentIds").forEach(value -> {
+        JsonNode instrumentValues = flow.has("officialInstrumentIds")
+                ? flow.path("officialInstrumentIds") : flow.path("instrumentIds");
+        instrumentValues.forEach(value -> {
             if (value.isTextual()) flowInstruments.add(UUID.fromString(value.textValue()));
         });
         flow.path("steps").forEach(step -> {
