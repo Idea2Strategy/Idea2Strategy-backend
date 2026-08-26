@@ -1,5 +1,6 @@
 package com.idea2strategy.backend.api.botcontrol;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -16,6 +17,8 @@ import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -24,6 +27,12 @@ class BotContinuationControllerTest {
     private static final UUID BOT_ID = UUID.fromString("20000000-0000-4000-8000-000000000001");
     private static final Instant NOW = Instant.parse("2026-08-02T09:00:00Z");
     private static final Instant DUE_AT = Instant.parse("2026-08-08T09:00:00Z");
+
+    @Test
+    void registrationUsesDeployPropertiesInsteadOfBeanDiscoveryOrder() {
+        assertThat(BotContinuationController.class.getAnnotation(ConditionalOnBean.class)).isNull();
+        assertThat(BotContinuationController.class.getAnnotation(ConditionalOnProperty.class)).isNotNull();
+    }
 
     @Test
     void exposesTheCurrentWindowAndAcceptsExplicitRenewal() throws Exception {

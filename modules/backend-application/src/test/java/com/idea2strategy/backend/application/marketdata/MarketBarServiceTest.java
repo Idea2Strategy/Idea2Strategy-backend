@@ -52,6 +52,22 @@ class MarketBarServiceTest {
     }
 
     @Test
+    void allowsFiveThousandDailyBarsForLongRangeBenchmarkComparison() {
+        MarketBarPort port = mock(MarketBarPort.class);
+        BasicStrategyCatalogQueryService catalog = mock(BasicStrategyCatalogQueryService.class);
+        when(catalog.getSupportedInstruments()).thenReturn(List.of(
+                new SupportedInstrument(AAPL_ID, "STOCK", "XNAS", "USD", "AAPL")));
+        when(port.findRecent(AAPL_ID, MarketBarTimeframe.ONE_DAY, 5000)).thenReturn(List.of(bar()));
+        var service = new MarketBarService(port, catalog, () -> ACCOUNT_ID);
+
+        MarketBarSnapshot result = service.findRecentSnapshot(
+                AAPL_ID, MarketBarTimeframe.ONE_DAY, 5000);
+
+        assertThat(result.bars()).hasSize(1);
+        verify(port).findRecent(AAPL_ID, MarketBarTimeframe.ONE_DAY, 5000);
+    }
+
+    @Test
     void anchorsThreeMonthWindowToLatestStoredBarInsteadOfToday() {
         MarketBarPort port = mock(MarketBarPort.class);
         BasicStrategyCatalogQueryService catalog = mock(BasicStrategyCatalogQueryService.class);

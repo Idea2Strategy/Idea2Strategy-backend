@@ -44,8 +44,8 @@ public final class RedisMarketBarAdapter implements MarketBarPort, AutoCloseable
     @Override
     public List<MarketBar> findRecent(UUID instrumentId, MarketBarTimeframe timeframe, int limit) {
         Objects.requireNonNull(instrumentId, "instrumentId");
-        if (limit < 1 || limit > 1000) {
-            throw new IllegalArgumentException("limit must be between 1 and 1000");
+        if (limit < 1 || limit > 5000) {
+            throw new IllegalArgumentException("limit must be between 1 and 5000");
         }
         if (timeframe.displayOnly()) {
             return findRecentDisplayBars(instrumentId, timeframe, limit);

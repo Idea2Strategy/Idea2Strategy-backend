@@ -67,8 +67,17 @@ class MarketBarControllerTest {
     @Test
     void rejectsUnsafeSnapshotLimits() throws Exception {
         mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
-                        .queryParam("limit", "1001"))
+                        .queryParam("limit", "5001"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void allowsLongDailyBenchmarkHistory() throws Exception {
+        mvc.perform(get("/api/v1/market-data/instruments/{instrumentId}/bars", AAPL_ID)
+                        .queryParam("timeframe", "1d")
+                        .queryParam("limit", "5000"))
+                .andExpect(status().isOk());
+        assertEquals(5000, requestedLimit.get());
     }
 
     @Test

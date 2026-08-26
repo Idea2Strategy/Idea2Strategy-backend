@@ -33,8 +33,8 @@ public final class MarketBarService {
             UUID instrumentId, MarketBarTimeframe timeframe, int limit) {
         SupportedInstrument instrument = authorizeAndRequireSupported(instrumentId);
         Objects.requireNonNull(timeframe, "timeframe");
-        if (limit < 1 || limit > 1000) {
-            throw new IllegalArgumentException("limit must be between 1 and 1000");
+        if (limit < 1 || limit > 5000) {
+            throw new IllegalArgumentException("limit must be between 1 and 5000");
         }
         List<MarketBarView> bars = port.findRecent(instrumentId, timeframe, limit).stream()
                 .map(bar -> view(instrument.symbol(), bar))
