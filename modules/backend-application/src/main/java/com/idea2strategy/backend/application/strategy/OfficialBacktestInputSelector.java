@@ -25,7 +25,21 @@ public final class OfficialBacktestInputSelector {
         ExecutionPolicy policy = selectPolicy(catalog);
         Set<String> requiredResolutions = requiredResolutions(compiledPlanDocument);
 
-        return selectDatasets(policy, requiredResolutions, catalog);
+        return selectDatasets(policy, requiredResolutions, null, null, catalog);
+    }
+
+    public static Selection select(
+            String compiledPlanDocument,
+            LocalDate requestedStart,
+            LocalDate requestedEnd,
+            StrategyReleaseInputCatalog catalog) {
+        if (requestedStart == null || requestedEnd == null || requestedStart.isAfter(requestedEnd)) {
+            throw new IllegalArgumentException("A valid requested backtest period is required");
+        }
+        ExecutionPolicy policy = selectPolicy(catalog);
+        Set<String> requiredResolutions = requiredResolutions(compiledPlanDocument);
+
+        return selectDatasets(policy, requiredResolutions, requestedStart, requestedEnd, catalog);
     }
 
     public static ExecutionPolicy selectPolicy(StrategyReleaseInputCatalog catalog) {
@@ -43,6 +57,8 @@ public final class OfficialBacktestInputSelector {
     private static Selection selectDatasets(
             ExecutionPolicy policy,
             Set<String> requiredResolutions,
+            LocalDate requestedStart,
+            LocalDate requestedEnd,
             StrategyReleaseInputCatalog catalog) {
         Map<Period, List<Dataset>> byPeriod = new HashMap<>();
         catalog.datasets().stream()
@@ -50,40 +66,66 @@ public final class OfficialBacktestInputSelector {
                 .filter(dataset -> policy.marketDataSchemaVersion().equals(dataset.schemaVersion()))
                 .filter(dataset -> !dataset.periodStart().isBefore(policy.periodStart()))
                 .filter(dataset -> !dataset.periodEnd().isAfter(policy.periodEnd()))
+                .filter(dataset -> requestedStart == null || !dataset.periodStart().isAfter(requestedStart))
+                .filter(dataset -> requestedEnd == null || !dataset.periodEnd().isBefore(requestedEnd))
                 .filter(dataset -> !dataset.availableAt().isAfter(catalog.observedAt()))
                 .filter(dataset -> requiredResolutions.contains(normalizeResolution(dataset.resolution())))
                 .forEach(dataset -> byPeriod
                         .computeIfAbsent(new Period(dataset.periodStart(), dataset.periodEnd()), ignored -> new ArrayList<>())
                         .add(dataset));
 
-        Period selectedPeriod = byPeriod.entrySet().stream()
+        Candidate selectedCandidate = byPeriod.entrySet().stream()
                 .filter(entry -> entry.getValue().stream()
                         .map(dataset -> normalizeResolution(dataset.resolution()))
                         .collect(java.util.stream.Collectors.toSet())
                         .containsAll(requiredResolutions))
-                .map(Map.Entry::getKey)
-                .sorted(Comparator
-                        .comparingInt((Period period) -> period.start().equals(policy.periodStart())
-                                && period.end().equals(policy.periodEnd()) ? 0 : 1)
-                        .thenComparing(Period::end, Comparator.reverseOrder())
-                        .thenComparing(Period::start))
+                .map(entry -> candidate(entry.getKey(), entry.getValue(), requiredResolutions))
+                .sorted((left, right) -> {
+                    int revisionComparison = compareRevisionVectors(right.revisionVector(), left.revisionVector());
+                    if (revisionComparison != 0) return revisionComparison;
+                    int exactComparison = Integer.compare(periodRank(left.period(), policy), periodRank(right.period(), policy));
+                    if (exactComparison != 0) return exactComparison;
+                    int endComparison = right.period().end().compareTo(left.period().end());
+                    if (endComparison != 0) return endComparison;
+                    return left.period().start().compareTo(right.period().start());
+                })
                 .findFirst()
                 .orElseThrow(() -> new ImmutableStrategyReleaseRejectedException(
-                        "No coherent official backtest dataset set covers required resolutions "
+                        "No coherent official backtest dataset set covers the requested period and required resolutions "
                                 + String.join(", ", requiredResolutions.stream()
                                         .sorted(Comparator.comparing(OfficialBacktestInputSelector::duration))
                                         .toList())));
 
-        List<Dataset> periodDatasets = byPeriod.get(selectedPeriod);
+        return new Selection(policy, selectedCandidate.datasets());
+    }
+
+    private static Candidate candidate(Period period, List<Dataset> periodDatasets, Set<String> requiredResolutions) {
         List<Dataset> selected = requiredResolutions.stream()
                 .sorted(Comparator.comparing(OfficialBacktestInputSelector::duration))
                 .map(resolution -> periodDatasets.stream()
                         .filter(dataset -> resolution.equals(normalizeResolution(dataset.resolution())))
-                        .max(Comparator.comparing(Dataset::availableAt)
+                        .max(Comparator.comparingInt(Dataset::revisionNumber)
+                                .thenComparing(Dataset::availableAt)
                                 .thenComparing(dataset -> dataset.id().toString()))
                         .orElseThrow())
                 .toList();
-        return new Selection(policy, selected);
+        List<Integer> revisionVector = selected.stream()
+                .map(Dataset::revisionNumber)
+                .sorted()
+                .toList();
+        return new Candidate(period, selected, revisionVector);
+    }
+
+    private static int compareRevisionVectors(List<Integer> left, List<Integer> right) {
+        for (int index = 0; index < Math.min(left.size(), right.size()); index++) {
+            int comparison = Integer.compare(left.get(index), right.get(index));
+            if (comparison != 0) return comparison;
+        }
+        return Integer.compare(left.size(), right.size());
+    }
+
+    private static int periodRank(Period period, ExecutionPolicy policy) {
+        return period.start().equals(policy.periodStart()) && period.end().equals(policy.periodEnd()) ? 0 : 1;
     }
 
     private static Set<String> requiredResolutions(String compiledPlanDocument) {
@@ -148,4 +190,6 @@ public final class OfficialBacktestInputSelector {
     }
 
     private record Period(LocalDate start, LocalDate end) {}
+
+    private record Candidate(Period period, List<Dataset> datasets, List<Integer> revisionVector) {}
 }

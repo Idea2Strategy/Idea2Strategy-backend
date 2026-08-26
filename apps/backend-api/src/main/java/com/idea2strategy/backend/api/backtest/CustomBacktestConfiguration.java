@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.persistence.backtest.BacktestRequestOutboxStore;
 import com.idea2strategy.backend.persistence.backtest.CustomBacktestJooqAdapter;
 import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
+import com.idea2strategy.backend.persistence.strategy.StrategyReleaseInputCatalogJooqQueryAdapter;
 import java.time.Clock;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -15,7 +16,7 @@ import org.springframework.context.annotation.Import;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.customer-jwt-signing-key"})
 @Import({BacktestRequestOutboxStore.class, FeatureMaterializationPinResolver.class,
-        CustomBacktestJooqAdapter.class})
+        StrategyReleaseInputCatalogJooqQueryAdapter.class, CustomBacktestJooqAdapter.class})
 public class CustomBacktestConfiguration {
     @Bean
     CustomBacktestService customBacktestService(

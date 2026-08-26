@@ -35,6 +35,7 @@ public record StrategyReleaseInputCatalog(
             String feedCode,
             String dataLayer,
             String resolution,
+            int revisionNumber,
             LocalDate periodStart,
             LocalDate periodEnd,
             String schemaVersion,

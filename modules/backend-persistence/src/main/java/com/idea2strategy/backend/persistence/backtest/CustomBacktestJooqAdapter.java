@@ -1,9 +1,12 @@
 package com.idea2strategy.backend.persistence.backtest;
 
 import com.idea2strategy.backend.application.backtest.BacktestRequestEnvelope;
+import com.idea2strategy.backend.application.backtest.BacktestRequestEnvelope.CompetitionDataset;
 import com.idea2strategy.backend.application.backtest.BacktestRequestReceipt;
 import com.idea2strategy.backend.application.backtest.CustomBacktestCommand;
 import com.idea2strategy.backend.application.backtest.CustomBacktestCommandPort;
+import com.idea2strategy.backend.application.strategy.OfficialBacktestInputSelector;
+import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalogQueryPort;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.DatasetPin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.FeaturePin;
 import com.idea2strategy.backend.persistence.backtest.BacktestRunInputPinWriter.RunInputPin;
@@ -22,14 +25,17 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
     private final DSLContext dsl;
     private final BacktestRequestOutboxStore outbox;
     private final FeatureMaterializationPinResolver featurePins;
+    private final StrategyReleaseInputCatalogQueryPort releaseInputs;
 
     public CustomBacktestJooqAdapter(
             DSLContext dsl,
             BacktestRequestOutboxStore outbox,
-            FeatureMaterializationPinResolver featurePins) {
+            FeatureMaterializationPinResolver featurePins,
+            StrategyReleaseInputCatalogQueryPort releaseInputs) {
         this.dsl = dsl;
         this.outbox = outbox;
         this.featurePins = featurePins;
+        this.releaseInputs = releaseInputs;
     }
 
     @Override
@@ -38,9 +44,7 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
         var context = dsl.fetchOne(
                 "select s.snapshot_hash, p.plan_checksum, p.plan_document::text as plan_document, "
                         + "p.plan_document ->> 'instrumentCatalogVersion' as instrument_catalog_version, "
-                        + "c.initial_cash_amount, c.broker_rules_version, c.accounting_rules_version, "
-                        + "c.precision_rules_version, c.fee_policy_id, c.slippage_rate_bps, "
-                        + "c.buying_power_buffer_policy_id, c.configuration_hash "
+                        + "c.initial_cash_amount, c.slippage_rate_bps, c.configuration_hash "
                         + "from bot.bots b join bot.launch_snapshots s on s.bot_id = b.id "
                         + "join bot.launch_contract_plans p on p.bot_id = b.id "
                         + "join bot.launch_configurations c on c.bot_id = b.id "
@@ -49,28 +53,27 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
         if (context == null) {
             throw new NoSuchElementException("Bot not found");
         }
-        var dataset = dsl.fetchOne(
-                "select dataset_hash from market_data.dataset_manifests where id = ? and status = 'AVAILABLE' "
-                        + "and available_at is not null and period_start::date <= ? and period_end::date >= ?",
-                command.datasetManifestId(), command.periodStart(), command.periodEnd());
-        if (dataset == null) {
-            throw new IllegalStateException("Requested period is not covered by an available dataset");
-        }
-        var policy = dsl.fetchOne(
-                "select policy_artifact_hash from backtest.execution_policy_versions "
-                        + "where version = ? and locked_at <= current_timestamp",
-                command.executionPolicyVersion());
-        if (policy == null || policy.get("policy_artifact_hash", String.class) == null) {
-            throw new IllegalStateException("Locked backtest execution policy was not found");
-        }
+        var selection = OfficialBacktestInputSelector.select(
+                context.get("plan_document", String.class), command.periodStart(), command.periodEnd(),
+                releaseInputs.findSelectableAt(occurredAt));
+        List<CompetitionDataset> selectedDatasets = selection.datasets().stream().map(dataset -> {
+            var hash = dsl.fetchOne(
+                    "select dataset_hash from market_data.dataset_manifests "
+                            + "where id = ? and status = 'AVAILABLE' and available_at <= ?::timestamptz",
+                    dataset.id(), occurredAt.atOffset(ZoneOffset.UTC));
+            if (hash == null || hash.get("dataset_hash", String.class) == null) {
+                throw new IllegalStateException("Selected official dataset is no longer available");
+            }
+            return new CompetitionDataset(
+                    dataset.id(), "MARKET_BARS", prefixed(hash.get("dataset_hash", String.class)));
+        }).toList();
         List<FeaturePin> resolvedFeatures = featurePins.resolve(
                 context.get("plan_document", String.class), command.periodStart(), command.periodEnd(),
                 occurredAt.atOffset(ZoneOffset.UTC));
         var request = BacktestRequestEnvelope.custom(
                 accountId,
                 command.botId(),
-                command.datasetManifestId(),
-                prefixed(dataset.get("dataset_hash", String.class)),
+                selectedDatasets,
                 command.periodStart(),
                 command.periodEnd(),
                 prefixed(context.get("snapshot_hash", String.class)),
@@ -81,8 +84,8 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
                                 feature.featureMaterializationId(), feature.lockedResultHash()))
                         .toList(),
                 context.get("initial_cash_amount", BigDecimal.class),
-                context.get("accounting_rules_version", String.class),
-                command.executionPolicyVersion(),
+                selection.policy().accountingRulesVersion(),
+                selection.policy().version(),
                 command.idempotencyKey(),
                 occurredAt);
         dsl.execute("""
@@ -100,20 +103,19 @@ public class CustomBacktestJooqAdapter implements CustomBacktestCommandPort {
                 request.aggregateId(), request.messageId(), command.botId(), accountId,
                 context.get("configuration_hash", String.class), request.payloadDocument(),
                 command.periodStart(), command.periodEnd(), context.get("initial_cash_amount", BigDecimal.class),
-                context.get("broker_rules_version", String.class),
-                context.get("accounting_rules_version", String.class), command.executionPolicyVersion(),
-                context.get("precision_rules_version", String.class), context.get("fee_policy_id", UUID.class),
+                selection.policy().brokerRulesVersion(),
+                selection.policy().accountingRulesVersion(), selection.policy().version(),
+                selection.policy().precisionRulesVersion(), selection.policy().feePolicyId(),
                 context.get("slippage_rate_bps", Integer.class),
-                context.get("buying_power_buffer_policy_id", UUID.class), accountId.toString(),
+                selection.policy().buyingPowerBufferPolicyId(), accountId.toString(),
                 command.idempotencyKey(), occurredAt.atOffset(java.time.ZoneOffset.UTC));
         BacktestRunInputPinWriter.pin(dsl, new RunInputPin(
                 request.aggregateId(), request.requestHash(), request.eventSchemaVersion(),
                 prefixed(context.get("plan_checksum", String.class)),
-                prefixed(context.get("snapshot_hash", String.class)), command.executionPolicyVersion(),
+                prefixed(context.get("snapshot_hash", String.class)), selection.policy().version(),
                 occurredAt.atOffset(ZoneOffset.UTC),
-                List.of(new DatasetPin(
-                        command.datasetManifestId(), "MARKET_BARS",
-                        prefixed(dataset.get("dataset_hash", String.class)))),
+                selectedDatasets.stream().map(dataset -> new DatasetPin(
+                        dataset.datasetManifestId(), dataset.purposeCode(), dataset.expectedDatasetHash())).toList(),
                 resolvedFeatures));
         return outbox.enqueue(request, occurredAt);
     }

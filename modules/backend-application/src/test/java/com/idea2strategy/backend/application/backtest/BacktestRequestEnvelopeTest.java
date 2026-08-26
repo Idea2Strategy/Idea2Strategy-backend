@@ -57,6 +57,8 @@ class BacktestRequestEnvelopeTest {
                 "\"requestReason\":\"USER_PERIOD\"",
                 "\"requestingAccountId\":\"" + ACCOUNT + "\"",
                 "\"expectedDatasetHash\":\"sha256:" + "3".repeat(64) + "\"",
+                "\"datasets\":[",
+                "\"purposeCode\":\"MARKET_BARS\"",
                 "\"instrumentCatalogVersion\":\"us-supported-universe:2026-08-04\"",
                 "\"initialCashAmount\":\"100000.00000000\"",
                 "\"featureMaterializationId\":\"" + id(10) + "\"",

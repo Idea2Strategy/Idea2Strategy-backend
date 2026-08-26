@@ -31,6 +31,8 @@ class StrategyReleaseInputCatalogPersistenceIntegrationTest {
     private static final UUID FEATURE_DATASET = UUID.fromString("71000000-0000-4000-8000-000000000004");
     private static final UUID FEE_POLICY = UUID.fromString("71000000-0000-4000-8000-000000000005");
     private static final UUID BUFFER_POLICY = UUID.fromString("71000000-0000-4000-8000-000000000006");
+    private static final UUID STORAGE_OBJECT = UUID.fromString("71000000-0000-4000-8000-000000000007");
+    private static final UUID DATASET_OBJECT = UUID.fromString("71000000-0000-4000-8000-000000000008");
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -61,6 +63,7 @@ class StrategyReleaseInputCatalogPersistenceIntegrationTest {
                 MARKET_FEED, PROVIDER, NOW.atOffset(ZoneOffset.UTC));
         insertDataset(MARKET_DATASET, MARKET_FEED, "ADJUSTED", "a".repeat(64));
         insertDataset(FEATURE_DATASET, FEATURE_FEED, "DERIVED", "b".repeat(64));
+        insertMarketObject();
         seedPolicies();
     }
 
@@ -113,6 +116,28 @@ class StrategyReleaseInputCatalogPersistenceIntegrationTest {
                 id, feedId, layer,
                 OffsetDateTime.parse("2024-01-01T00:00:00Z"), OffsetDateTime.parse("2024-02-01T00:00:00Z"),
                 hash, NOW.atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC));
+    }
+
+    private void insertMarketObject() {
+        jdbc.update("""
+                insert into storage.objects
+                    (id, status, storage_provider, bucket_name, object_key, provider_version_id, content_hash, byte_size,
+                     file_format, compression_codec, media_type, schema_version, row_count, period_start, period_end, retention_policy_version,
+                     created_at, verified_at)
+                values (?, 'AVAILABLE', 'S3', 'test', 'market/catalog.parquet', 'v1', ?, 100, 'PARQUET', 'SNAPPY',
+                        'application/vnd.apache.parquet', 'market-bars/1', 100, ?, ?, 'v1', ?, ?)
+                """,
+                STORAGE_OBJECT, "9".repeat(64), OffsetDateTime.parse("2024-01-01T00:00:00Z"),
+                OffsetDateTime.parse("2024-02-01T00:00:00Z"), NOW.atOffset(ZoneOffset.UTC),
+                NOW.atOffset(ZoneOffset.UTC));
+        jdbc.update("""
+                insert into market_data.dataset_objects
+                    (id, dataset_manifest_id, object_id, object_kind, partition_granularity, partition_start,
+                     partition_end, period_start, period_end, shard_key, part_number, row_count)
+                values (?, ?, ?, 'MARKET_BARS', 'MONTH', '2024-01-01', '2024-02-01', ?, ?, 'all', 1, 100)
+                """,
+                DATASET_OBJECT, MARKET_DATASET, STORAGE_OBJECT, OffsetDateTime.parse("2024-01-01T00:00:00Z"),
+                OffsetDateTime.parse("2024-02-01T00:00:00Z"));
     }
 
     @SpringBootConfiguration

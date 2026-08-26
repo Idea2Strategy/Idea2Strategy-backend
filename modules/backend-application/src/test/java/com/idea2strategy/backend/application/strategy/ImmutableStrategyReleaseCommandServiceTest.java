@@ -239,7 +239,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
                         java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
                         "market-bars/1", NOW.minusSeconds(60))),
                 List.of(new StrategyReleaseInputCatalog.Dataset(
-                        DATASET_ID, "ALPACA_SIP_ALL_30M", "ADJUSTED", "30m",
+                        DATASET_ID, "ALPACA_SIP_ALL_30M", "ADJUSTED", "30m", 1,
                         java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
                         "market-bars/1", NOW.minusSeconds(30))),
                 observedAt);
