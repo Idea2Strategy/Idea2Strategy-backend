@@ -66,10 +66,10 @@ public class StrategyReleaseInputCatalogJooqQueryAdapter implements StrategyRele
                           and candidate.schema_version = p.policy_document ->> 'marketDataSchemaVersion'
                           and candidate.object_count > 0
                           and btrim(candidate.dataset_hash) <> ''
-                          and (candidate.period_start at time zone candidate_feed.timezone_name)::date >=
+                          and (candidate.period_start at time zone 'UTC')::date >=
                               ((p.policy_document ->> 'periodStart')::timestamptz
                                   at time zone (p.policy_document ->> 'timezone'))::date
-                          and (candidate.period_end at time zone candidate_feed.timezone_name)::date <=
+                          and (candidate.period_end at time zone 'UTC')::date <=
                               ((p.policy_document ->> 'periodEnd')::timestamptz
                                   at time zone (p.policy_document ->> 'timezone'))::date
                           and exists (
@@ -113,9 +113,9 @@ public class StrategyReleaseInputCatalogJooqQueryAdapter implements StrategyRele
                 row.get("locked_at", OffsetDateTime.class).toInstant()));
 
         var datasets = dsl.fetch("""
-                select d.id, f.code as feed_code, d.data_layer, d.resolution, d.revision_number,
-                       (d.period_start at time zone f.timezone_name)::date as period_start,
-                       (d.period_end at time zone f.timezone_name)::date as period_end, d.schema_version, d.available_at
+                select d.id, d.instrument_id, f.code as feed_code, d.data_layer, d.resolution, d.revision_number,
+                       (d.period_start at time zone 'UTC')::date as period_start,
+                       (d.period_end at time zone 'UTC')::date as period_end, d.schema_version, d.available_at
                  from market_data.dataset_manifests d
                   join market_data.feeds f on f.id = d.feed_id
                  where d.status = 'AVAILABLE'
@@ -151,6 +151,7 @@ public class StrategyReleaseInputCatalogJooqQueryAdapter implements StrategyRele
                  order by d.period_end desc, d.period_start, d.id
                 """, at, at, at).map(row -> new Dataset(
                 row.get("id", UUID.class),
+                row.get("instrument_id", UUID.class),
                 row.get("feed_code", String.class),
                 row.get("data_layer", String.class),
                 row.get("resolution", String.class),

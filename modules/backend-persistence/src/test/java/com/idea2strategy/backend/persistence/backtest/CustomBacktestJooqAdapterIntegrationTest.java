@@ -387,7 +387,7 @@ class CustomBacktestJooqAdapterIntegrationTest {
     private static String policyDocument() {
         return "{\"marketRulesVersion\":\"v1\",\"accountingRulesVersion\":\"v1\","
                 + "\"precisionRulesVersion\":\"v1\",\"periodStart\":\"2024-01-01T05:00:00Z\","
-                + "\"periodEnd\":\"2025-01-01T04:59:59Z\",\"marketDataSchemaVersion\":\"v1\","
+                + "\"periodEnd\":\"2025-01-01T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
                 + "\"timezone\":\"America/New_York\",\"feePolicyId\":\"" + FEE + "\","
                 + "\"buyingPowerBufferPolicyId\":\"" + BUFFER + "\"}";
     }

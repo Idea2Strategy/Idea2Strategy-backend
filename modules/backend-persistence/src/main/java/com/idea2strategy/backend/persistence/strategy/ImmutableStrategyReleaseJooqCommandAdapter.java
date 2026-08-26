@@ -245,18 +245,11 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest execution policy must be locked and not retired at the release instant");
         }
-        datasets.forEach(dataset -> requireCompatibleOfficialInput(
-                policy.get("policy_document", String.class), dataset));
+        OfficialPolicy officialPolicy = officialPolicy(policy.get("policy_document", String.class));
+        datasets.forEach(dataset -> requireCompatibleOfficialInput(officialPolicy, dataset));
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
-        var primaryDataset = datasets.getFirst();
-        java.time.LocalDate periodStart = primaryDataset.get("period_start", java.time.LocalDate.class);
-        java.time.LocalDate periodEnd = primaryDataset.get("period_end", java.time.LocalDate.class);
-        if (datasets.stream().anyMatch(dataset ->
-                !periodStart.equals(dataset.get("period_start", java.time.LocalDate.class))
-                        || !periodEnd.equals(dataset.get("period_end", java.time.LocalDate.class)))) {
-            throw new ImmutableStrategyReleaseRejectedException(
-                    "Official backtest datasets must share one evaluation period");
-        }
+        java.time.LocalDate periodStart = officialPolicy.periodStart();
+        java.time.LocalDate periodEnd = officialPolicy.periodEnd();
         List<DatasetPin> datasetPins = datasets.stream().map(dataset -> new DatasetPin(
                 dataset.get("id", UUID.class),
                 "MARKET_BARS",
@@ -433,7 +426,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
      * consumer resolves it the same way (backtest-engine #87). Both ends are inclusive of the
      * manifest and must lie inside the policy window.
      */
-    private void requireCompatibleOfficialInput(String policyDocument, org.jooq.Record dataset) {
+    private OfficialPolicy officialPolicy(String policyDocument) {
         final com.fasterxml.jackson.databind.JsonNode document;
         try {
             document = objectMapper.readTree(policyDocument);
@@ -450,11 +443,29 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                     "Official backtest execution policy does not state its period and market data schema");
         }
 
+        try {
+            java.time.ZoneId zone = java.time.ZoneId.of(policyTimezone);
+            java.time.LocalDate policyFirstDay =
+                    OffsetDateTime.parse(policyStart).atZoneSameInstant(zone).toLocalDate();
+            java.time.LocalDate policyLastDay =
+                    OffsetDateTime.parse(policyEnd).atZoneSameInstant(zone).toLocalDate();
+            if (policyLastDay.isBefore(policyFirstDay)) {
+                throw new ImmutableStrategyReleaseRejectedException(
+                        "Official backtest execution policy period is reversed");
+            }
+            return new OfficialPolicy(policySchema, policyFirstDay, policyLastDay);
+        } catch (java.time.DateTimeException exception) {
+            throw new ImmutableStrategyReleaseRejectedException(
+                    "Official backtest execution policy period or timezone is invalid");
+        }
+    }
+
+    private void requireCompatibleOfficialInput(OfficialPolicy policy, org.jooq.Record dataset) {
         String manifestSchema = dataset.get("schema_version", String.class);
-        if (!policySchema.equals(manifestSchema)) {
+        if (!policy.marketDataSchemaVersion().equals(manifestSchema)) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset schema " + manifestSchema
-                            + " does not match the execution policy schema " + policySchema);
+                            + " does not match the execution policy schema " + policy.marketDataSchemaVersion());
         }
 
         // Official Basic runs replay adjusted prices. A RAW manifest would silently measure a strategy
@@ -465,26 +476,20 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                     "Official backtest dataset must be ADJUSTED, not " + dataLayer);
         }
 
-        java.time.ZoneId zone;
-        try {
-            zone = java.time.ZoneId.of(policyTimezone);
-        } catch (java.time.DateTimeException exception) {
-            throw new ImmutableStrategyReleaseRejectedException(
-                    "Official backtest execution policy timezone is invalid: " + policyTimezone);
-        }
-        java.time.LocalDate policyFirstDay =
-                OffsetDateTime.parse(policyStart).atZoneSameInstant(zone).toLocalDate();
-        java.time.LocalDate policyLastDay =
-                OffsetDateTime.parse(policyEnd).atZoneSameInstant(zone).toLocalDate();
         java.time.LocalDate manifestFirstDay = dataset.get("period_start", java.time.LocalDate.class);
         java.time.LocalDate manifestLastDay = dataset.get("period_end", java.time.LocalDate.class);
-        if (manifestFirstDay.isBefore(policyFirstDay) || manifestLastDay.isAfter(policyLastDay)) {
+        if (manifestFirstDay.isBefore(policy.periodStart()) || manifestLastDay.isAfter(policy.periodEnd())) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset period " + manifestFirstDay + ".." + manifestLastDay
                             + " is not inside the execution policy period "
-                            + policyFirstDay + ".." + policyLastDay);
+                            + policy.periodStart() + ".." + policy.periodEnd());
         }
     }
+
+    private record OfficialPolicy(
+            String marketDataSchemaVersion,
+            java.time.LocalDate periodStart,
+            java.time.LocalDate periodEnd) {}
 
     private static String prefixed(String value) {
         return value.startsWith("sha256:") ? value : "sha256:" + value;

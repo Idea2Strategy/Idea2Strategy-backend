@@ -59,7 +59,7 @@ class StrategyReleaseInputCatalogPersistenceIntegrationTest {
                 PROVIDER, NOW.atOffset(ZoneOffset.UTC));
         jdbc.update("insert into market_data.feeds "
                 + "(id,provider_id,code,data_kind,resolution,timezone_name,feed_version,created_at) "
-                + "values (?, ?, 'LOCAL_MARKET_30M', 'BARS', '30m', 'UTC', 'v1', ?)",
+                + "values (?, ?, 'LOCAL_MARKET_30M', 'BARS', '30m', 'America/New_York', 'v1', ?)",
                 MARKET_FEED, PROVIDER, NOW.atOffset(ZoneOffset.UTC));
         insertDataset(MARKET_DATASET, MARKET_FEED, "ADJUSTED", "a".repeat(64));
         insertDataset(FEATURE_DATASET, FEATURE_FEED, "DERIVED", "b".repeat(64));

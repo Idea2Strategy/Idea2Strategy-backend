@@ -32,6 +32,7 @@ public record StrategyReleaseInputCatalog(
 
     public record Dataset(
             UUID id,
+            UUID instrumentId,
             String feedCode,
             String dataLayer,
             String resolution,
@@ -39,5 +40,18 @@ public record StrategyReleaseInputCatalog(
             LocalDate periodStart,
             LocalDate periodEnd,
             String schemaVersion,
-            Instant availableAt) {}
+            Instant availableAt) {
+        public Dataset(
+                UUID id,
+                String feedCode,
+                String dataLayer,
+                String resolution,
+                int revisionNumber,
+                LocalDate periodStart,
+                LocalDate periodEnd,
+                String schemaVersion,
+                Instant availableAt) {
+            this(id, null, feedCode, dataLayer, resolution, revisionNumber, periodStart, periodEnd, schemaVersion, availableAt);
+        }
+    }
 }
