@@ -44,7 +44,7 @@ class OfficialBacktestInputSelectorTest {
 
         assertThatThrownBy(() -> OfficialBacktestInputSelector.select(plan("30m", "PT1H"), catalog))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
-                .hasMessageContaining("30m, 1h");
+                .hasMessageContaining("1h");
     }
 
     @Test
@@ -93,7 +93,101 @@ class OfficialBacktestInputSelectorTest {
         assertThat(selected.datasets()).extracting(Dataset::id).containsExactly(revised30m, revised1h);
     }
 
+    @Test
+    void selectsTheMinimumOrderedManifestCoverForEveryRequiredResolution() {
+        UUID bars30mFull = UUID.fromString("50000000-0000-4000-8000-000000000001");
+        UUID bars30m2024 = UUID.fromString("50000000-0000-4000-8000-000000000002");
+        UUID bars30m2025 = UUID.fromString("50000000-0000-4000-8000-000000000003");
+        UUID bars1h2024 = UUID.fromString("50000000-0000-4000-8000-000000000004");
+        UUID bars1h2025 = UUID.fromString("50000000-0000-4000-8000-000000000005");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", "2024-01-01", "2026-01-01", NOW.minusSeconds(60))),
+                List.of(
+                        dataset(bars30mFull, "ADJUSTED", "30m", "2024-01-01", "2026-01-01", NOW.minusSeconds(10)),
+                        dataset(bars30m2024, "ADJUSTED", "30m", "2024-01-01", "2025-01-01", NOW.minusSeconds(20)),
+                        dataset(bars30m2025, "ADJUSTED", "30m", "2025-01-01", "2026-01-01", NOW.minusSeconds(20)),
+                        dataset(bars1h2024, "ADJUSTED", "1h", "2024-01-01", "2025-01-01", NOW.minusSeconds(20)),
+                        dataset(bars1h2025, "ADJUSTED", "1h", "2025-01-01", "2026-01-01", NOW.minusSeconds(20))),
+                NOW);
+
+        var selected = OfficialBacktestInputSelector.select(
+                plan("30m", "1h"), LocalDate.parse("2024-02-01"), LocalDate.parse("2025-12-01"), catalog);
+
+        assertThat(selected.datasets()).extracting(Dataset::id)
+                .containsExactly(bars30mFull, bars1h2024, bars1h2025);
+    }
+
+    @Test
+    void failsClosedAndNamesTheResolutionWhenSegmentedCoverageHasAGap() {
+        UUID first = UUID.fromString("60000000-0000-4000-8000-000000000001");
+        UUID second = UUID.fromString("60000000-0000-4000-8000-000000000002");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", "2024-01-01", "2026-01-01", NOW.minusSeconds(60))),
+                List.of(
+                        dataset(BARS_30M, "ADJUSTED", "30m", "2024-01-01", "2026-01-01", NOW.minusSeconds(20)),
+                        dataset(first, "ADJUSTED", "1h", "2024-01-01", "2025-01-01", NOW.minusSeconds(20)),
+                        dataset(second, "ADJUSTED", "1h", "2025-02-01", "2026-01-01", NOW.minusSeconds(20))),
+                NOW);
+
+        assertThatThrownBy(() -> OfficialBacktestInputSelector.select(
+                plan("30m", "1h"), LocalDate.parse("2024-02-01"), LocalDate.parse("2025-12-01"), catalog))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("1h")
+                .hasMessageContaining("2025-01-01");
+    }
+
+    @Test
+    void neverUsesAnInstrumentScopedManifestForAnotherInstrument() {
+        UUID aapl = UUID.fromString("70000000-0000-4000-8000-000000000001");
+        UUID msft = UUID.fromString("70000000-0000-4000-8000-000000000002");
+        UUID aaplBars = UUID.fromString("70000000-0000-4000-8000-000000000003");
+        UUID msftBars = UUID.fromString("70000000-0000-4000-8000-000000000004");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", NOW.minusSeconds(60))),
+                List.of(
+                        new Dataset(aaplBars, aapl, "AAPL", "ADJUSTED", "30m", 1,
+                                LocalDate.parse("2024-01-01"), LocalDate.parse("2024-02-01"),
+                                "market-bars/1", NOW.minusSeconds(20)),
+                        new Dataset(msftBars, msft, "MSFT", "ADJUSTED", "30m", 2,
+                                LocalDate.parse("2024-01-01"), LocalDate.parse("2024-02-01"),
+                                "market-bars/1", NOW.minusSeconds(10))),
+                NOW);
+        String plan = """
+                {"executionSnapshot":{"partitions":[{"flows":[{
+                  "instrumentIds":["%s"],
+                  "steps":[{"arguments":{"resolution":"30m"}}]
+                }]}]}}
+                """.formatted(aapl);
+
+        var selected = OfficialBacktestInputSelector.select(
+                plan, LocalDate.parse("2024-01-05"), LocalDate.parse("2024-01-25"), catalog);
+
+        assertThat(selected.datasets()).extracting(Dataset::id).containsExactly(aaplBars);
+    }
+
+    @Test
+    void rejectsOverlappingSegmentsThatTheWorkerCannotBind() {
+        UUID first = UUID.fromString("71000000-0000-4000-8000-000000000001");
+        UUID overlap = UUID.fromString("71000000-0000-4000-8000-000000000002");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", "2024-01-01", "2024-04-01", NOW.minusSeconds(60))),
+                List.of(
+                        dataset(first, "ADJUSTED", "30m", "2024-01-01", "2024-03-01", NOW.minusSeconds(20)),
+                        dataset(overlap, "ADJUSTED", "30m", "2024-02-01", "2024-04-01", NOW.minusSeconds(10))),
+                NOW);
+
+        assertThatThrownBy(() -> OfficialBacktestInputSelector.select(
+                plan("30m", "30m"), LocalDate.parse("2024-01-05"), LocalDate.parse("2024-03-15"), catalog))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("30m");
+    }
+
     private static ExecutionPolicy policy(String version, Instant lockedAt) {
+        return policy(version, "2024-01-01", "2024-02-01", lockedAt);
+    }
+
+    private static ExecutionPolicy policy(
+            String version, String periodStart, String periodEnd, Instant lockedAt) {
         return new ExecutionPolicy(
                 version,
                 "market:1.0.0",
@@ -103,8 +197,8 @@ class OfficialBacktestInputSelectorTest {
                 20,
                 BUFFER_ID,
                 1,
-                LocalDate.parse("2024-01-01"),
-                LocalDate.parse("2024-02-01"),
+                LocalDate.parse(periodStart),
+                LocalDate.parse(periodEnd),
                 "market-bars/1",
                 lockedAt);
     }

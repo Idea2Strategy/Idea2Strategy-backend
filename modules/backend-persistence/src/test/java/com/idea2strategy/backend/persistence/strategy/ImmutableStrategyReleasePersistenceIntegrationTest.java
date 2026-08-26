@@ -49,6 +49,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
     private static final UUID SECOND_DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000012");
+    private static final UUID THIRD_DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000013");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
     private static final UUID SECOND_FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000012");
     private static final UUID FEATURE_FEED_ID = UUID.fromString("39e0e076-89e0-5159-b113-a8f6778b7c9e");
@@ -107,7 +108,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "values ('backtest-policy-v1', ?, ?::jsonb, ?)",
                 HASH_A,
                 "{\"version\":\"backtest-policy-v1\",\"periodStart\":\"2025-01-01T05:00:00Z\","
-                        + "\"periodEnd\":\"2026-01-01T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
+                        + "\"periodEnd\":\"2025-12-31T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
                         + "\"timezone\":\"America/New_York\"}",
                 at);
         jdbc.update(
@@ -151,8 +152,15 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
                         + "schema_version, dataset_hash, created_at, available_at) "
                         + "values (?, ?, 'ADJUSTED', '4h', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
-                        + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
+                        + "'2025-06-30T00:00:00Z', 'v1', ?, ?, ?)",
                 SECOND_DATASET_ID, SECOND_FEED_ID, HASH_C, at, at);
+        jdbc.update(
+                "insert into market_data.dataset_manifests "
+                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "schema_version, dataset_hash, created_at, available_at) "
+                        + "values (?, ?, 'ADJUSTED', '4h', 1, 'AVAILABLE', '2025-07-01T00:00:00Z', "
+                        + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
+                THIRD_DATASET_ID, SECOND_FEED_ID, HASH_B, at, at);
         jdbc.update(
                 "insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -229,7 +237,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() throws Exception {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
-                release, List.of(DATASET_ID, SECOND_DATASET_ID), "backtest-policy-v1");
+                release, List.of(DATASET_ID, SECOND_DATASET_ID, THIRD_DATASET_ID), "backtest-policy-v1");
 
         jdbc.update("update strategy.element_catalog_versions set retired_at = ? where id = ?",
                 NOW.atOffset(ZoneOffset.UTC), CATALOG_ID);
@@ -273,7 +281,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.runs")).isEqualTo(1);
         assertThat(count("backtest.run_input_pins")).isEqualTo(1);
         assertThat(count("backtest.input_bundles")).isEqualTo(1);
-        assertThat(count("backtest.input_datasets")).isEqualTo(2);
+        assertThat(count("backtest.input_datasets")).isEqualTo(3);
         assertThat(count("backtest.input_feature_materializations")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         // The transport aggregate for a BASIC official backtest is the bot, not the run. The BASIC
@@ -294,7 +302,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         "select jsonb_array_length(payload_document -> 'datasets') "
                                 + "from operations.outbox_messages where aggregate_id = ?",
                         Integer.class, BOT_ID))
-                .isEqualTo(2);
+                .isEqualTo(3);
         var transported = OBJECT_MAPPER.readValue(
                 jdbc.queryForObject(
                         "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
@@ -426,7 +434,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertNothingDurable();
 
         // 3. A RAW manifest would measure the strategy against unadjusted splits and dividends.
-        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+        setPolicyDocument("2025-01-01T05:00:00Z", "2025-12-31T05:00:00Z", "v1");
         jdbc.update("update market_data.dataset_manifests set data_layer = 'RAW' where id = ?", DATASET_ID);
         assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
@@ -453,7 +461,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertNothingDurable();
 
         // Restore the compatible pair so the caller can go on to prove the success path.
-        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+        setPolicyDocument("2025-01-01T05:00:00Z", "2025-12-31T05:00:00Z", "v1");
     }
 
     private void setPolicyDocument(String periodStart, String periodEnd, String schemaVersion) {
