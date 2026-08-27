@@ -5,11 +5,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.idea2strategy.backend.application.competition.OwnedRoomManagementQueryService;
+import com.idea2strategy.backend.application.competition.OwnedRoomManagementQueryPort;
 import com.idea2strategy.backend.application.competition.OwnedRoomManagementView;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -28,9 +30,14 @@ class OwnedRoomManagementControllerTest {
                 NOW.plusSeconds(1200), NOW.plusSeconds(1800), "Asia/Seoul",
                 List.of(new OwnedRoomManagementView.Invitation(id(6), "LINK", NOW, NOW.plusSeconds(600), null, null)),
                 List.of(new OwnedRoomManagementView.Participation(id(7), id(8), "Bot A", "ACTIVE", NOW)));
-        var service = new OwnedRoomManagementQueryService((owner, limit) -> {
-            if (!owner.equals(ACCOUNT_ID) || limit != 25) throw new AssertionError("principal or limit lost");
-            return List.of(view);
+        var service = new OwnedRoomManagementQueryService(new OwnedRoomManagementQueryPort() {
+            @Override public List<OwnedRoomManagementView> findOwnedBy(UUID owner, int limit) {
+                if (!owner.equals(ACCOUNT_ID) || limit != 25) throw new AssertionError("principal or limit lost");
+                return List.of(view);
+            }
+            @Override public Optional<OwnedRoomManagementView> findOwnedById(UUID owner, UUID roomId) {
+                return owner.equals(ACCOUNT_ID) && roomId.equals(ROOM_ID) ? Optional.of(view) : Optional.empty();
+            }
         }, () -> ACCOUNT_ID);
         var mvc = MockMvcBuilders.standaloneSetup(new OwnedRoomManagementController(service)).build();
 
@@ -40,6 +47,11 @@ class OwnedRoomManagementControllerTest {
                 .andExpect(jsonPath("$.items[0].accessType").value("SECRET"))
                 .andExpect(jsonPath("$.items[0].invitations[0].credentialType").value("LINK"))
                 .andExpect(jsonPath("$.items[0].participations[0].anonymousAlias").value("Bot A"));
+        mvc.perform(get("/api/v1/competition/rooms/mine/{roomId}", ROOM_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.roomId").value(ROOM_ID.toString()));
+        mvc.perform(get("/api/v1/competition/rooms/mine/{roomId}", id(99)))
+                .andExpect(status().isNotFound());
     }
 
     private static UUID id(int suffix) {

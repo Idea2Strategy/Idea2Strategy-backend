@@ -334,6 +334,9 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                     });
                     assertThat(view.participations()).isEmpty();
                 });
+        assertThat(ownedRoomManagementAdapter.findOwnedById(OWNER_ID, ROOM_ID))
+                .get().satisfies(view -> assertThat(view.name()).isEqualTo("Managed secret room"));
+        assertThat(ownedRoomManagementAdapter.findOwnedById(UUID.randomUUID(), ROOM_ID)).isEmpty();
         assertThat(ownedRoomManagementAdapter.findOwnedBy(UUID.randomUUID(), 50)).isEmpty();
     }
 

@@ -335,6 +335,8 @@ class Idea2StrategyCliTest {
         assertThat(requestBody.get()).contains("CLI Room");
         assertRoute("competition", "list", "--scope", "mine", "--limit", "20", "GET",
                 "/api/v1/competition/rooms/mine?limit=20");
+        assertRoute("competition", "get", "--room-id", "room-1", "GET",
+                "/api/v1/competition/rooms/mine/room-1");
         assertRoute("competition", "delete", "--room-id", "room-1", "--reason-code", "CREATOR_REQUEST",
                 "--yes", "POST", "/api/v1/competition/rooms/room-1/cancellation");
 
