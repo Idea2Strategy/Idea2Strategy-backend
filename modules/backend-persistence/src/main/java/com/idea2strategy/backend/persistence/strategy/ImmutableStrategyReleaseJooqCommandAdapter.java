@@ -249,7 +249,10 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         datasets.forEach(dataset -> requireCompatibleOfficialInput(officialPolicy, dataset));
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
         java.time.LocalDate periodStart = officialPolicy.periodStart();
-        java.time.LocalDate periodEnd = officialPolicy.periodEnd();
+        // The policy end is an exclusive local-day boundary, while a backtest request's
+        // periodEnd is inclusive. Sending the boundary itself asks the worker to evaluate
+        // one day beyond the selected manifest cover.
+        java.time.LocalDate periodEnd = officialPolicy.periodEnd().minusDays(1);
         List<DatasetPin> datasetPins = datasets.stream().map(dataset -> new DatasetPin(
                 dataset.get("id", UUID.class),
                 "MARKET_BARS",

@@ -102,16 +102,26 @@ class BasicBacktestCapabilityValidatorTest {
     }
 
     @Test
-    void rejectsUnsupportedOrMixedProductionResolutions() {
-        var mixed = validator.validate(
+    void rejectsUnsupportedOrMixedProductionResolutionsInsideOneFlow() {
+        var mixedFlow = validator.validate(
                 assembly("30m", "1h"), catalog(featureOnlyContract(), featureFreeContract()));
         var legacy = validator.validate(
                 assembly("1m", "1m"), catalog(featureOnlyContract(), featureFreeContract()));
 
-        assertThat(mixed.issues()).extracting(BasicBacktestCapabilityIssue::code)
+        assertThat(mixedFlow.issues()).extracting(BasicBacktestCapabilityIssue::code)
                 .contains("BACKTEST_MULTIPLE_RESOLUTIONS");
         assertThat(legacy.issues()).extracting(BasicBacktestCapabilityIssue::code)
                 .contains("BASIC_INVALID_RESOLUTION");
+    }
+
+    @Test
+    void acceptsIndependentFlowsAtThirtyMinutesFourHoursAndOneDay() {
+        var result = validator.validate(
+                multiResolutionAssembly(), catalog(featureOnlyContract(), featureFreeContract()));
+
+        assertThat(result.backtestable()).isTrue();
+        assertThat(result.issues()).isEmpty();
+        assertThat(result.requiredFeatures()).containsExactly("RSI_14");
     }
 
     private static BasicBlockAssembly assembly() {
@@ -119,8 +129,20 @@ class BasicBacktestCapabilityValidatorTest {
     }
 
     private static BasicBlockAssembly assembly(String triggerResolution, String conditionResolution) {
-        return new BasicBlockAssembly(CATALOG_ID, List.of(new BasicBlockGroup(
-                "buy",
+        return new BasicBlockAssembly(CATALOG_ID, List.of(group("buy", triggerResolution, conditionResolution)));
+    }
+
+    private static BasicBlockAssembly multiResolutionAssembly() {
+        return new BasicBlockAssembly(CATALOG_ID, List.of(
+                group("thirty-minute", "30m", "30m"),
+                group("four-hour", "4h", "4h"),
+                group("daily", "1d", "1d")));
+    }
+
+    private static BasicBlockGroup group(
+            String id, String triggerResolution, String conditionResolution) {
+        return new BasicBlockGroup(
+                id,
                 TradeContainer.BUY,
                 EvaluationMode.INDEPENDENT,
                 AllocationMode.EQUAL,
@@ -131,7 +153,7 @@ class BasicBacktestCapabilityValidatorTest {
                         new BasicBlock("order", "BUY_ORDER", Map.of())),
                 List.of(
                         new BasicBlockConnection("trigger", "signal", "condition", "input"),
-                        new BasicBlockConnection("condition", "result", "order", "input")))));
+                        new BasicBlockConnection("condition", "result", "order", "input")));
     }
 
     private static Map<String, Object> parameters(String resolution) {

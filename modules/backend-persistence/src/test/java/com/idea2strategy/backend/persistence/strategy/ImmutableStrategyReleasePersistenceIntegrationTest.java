@@ -331,7 +331,12 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 new StrategyBotContractFixtures.PinnedFeatureMaterialization(
                         FEATURE_MATERIALIZATION_ID.toString(), "sha256:" + HASH_B));
         assertThat(transported.periodStart()).isEqualTo("2025-01-01");
-        assertThat(transported.periodEnd()).isEqualTo("2025-12-31");
+        assertThat(transported.periodEnd()).isEqualTo("2025-12-30");
+        assertThat(jdbc.queryForObject(
+                        "select evaluation_end from backtest.runs where id = ?",
+                        java.time.LocalDate.class,
+                        request.runId()))
+                .isEqualTo(java.time.LocalDate.parse("2025-12-30"));
         assertThat(transported.requestHash()).matches("sha256:[0-9a-f]{64}");
         assertThat(jdbc.queryForMap(
                         "select p.input_bundle_fingerprint, p.input_contract_version, "
