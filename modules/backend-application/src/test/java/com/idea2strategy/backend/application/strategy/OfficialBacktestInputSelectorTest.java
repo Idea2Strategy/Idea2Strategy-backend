@@ -94,6 +94,23 @@ class OfficialBacktestInputSelectorTest {
     }
 
     @Test
+    void treatsThePolicyEndAsExclusiveForCustomBacktests() {
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", "2024-01-01", "2024-02-01", NOW.minusSeconds(60))),
+                List.of(dataset(BARS_30M, "ADJUSTED", "30m", "2024-01-01", "2024-02-02", NOW.minusSeconds(30))),
+                NOW);
+
+        var selected = OfficialBacktestInputSelector.select(
+                plan("30m", "30m"), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-01-31"), catalog);
+
+        assertThat(selected.datasets()).extracting(Dataset::id).containsExactly(BARS_30M);
+        assertThatThrownBy(() -> OfficialBacktestInputSelector.select(
+                plan("30m", "30m"), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-02-01"), catalog))
+                .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
+                .hasMessageContaining("outside the locked execution policy");
+    }
+
+    @Test
     void selectsTheMinimumOrderedManifestCoverForEveryRequiredResolution() {
         UUID bars30mFull = UUID.fromString("50000000-0000-4000-8000-000000000001");
         UUID bars30m2024 = UUID.fromString("50000000-0000-4000-8000-000000000002");
@@ -163,6 +180,38 @@ class OfficialBacktestInputSelectorTest {
                 plan, LocalDate.parse("2024-01-05"), LocalDate.parse("2024-01-25"), catalog);
 
         assertThat(selected.datasets()).extracting(Dataset::id).containsExactly(aaplBars);
+    }
+
+    @Test
+    void selectsOnlyTheManifestsRequiredByIndependentThirtyMinuteFourHourAndDailyFlows() {
+        UUID aapl = UUID.fromString("72000000-0000-4000-8000-000000000001");
+        UUID msft = UUID.fromString("72000000-0000-4000-8000-000000000002");
+        UUID meta = UUID.fromString("72000000-0000-4000-8000-000000000003");
+        UUID bars30m = UUID.fromString("72000000-0000-4000-8000-000000000004");
+        UUID bars4h = UUID.fromString("72000000-0000-4000-8000-000000000005");
+        UUID bars1d = UUID.fromString("72000000-0000-4000-8000-000000000006");
+        UUID unused1h = UUID.fromString("72000000-0000-4000-8000-000000000007");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", NOW.minusSeconds(60))),
+                List.of(
+                        dataset(bars30m, "ADJUSTED", "30m", NOW.minusSeconds(20)),
+                        dataset(unused1h, "ADJUSTED", "1h", NOW.minusSeconds(20)),
+                        dataset(bars4h, "ADJUSTED", "4h", NOW.minusSeconds(20)),
+                        dataset(bars1d, "ADJUSTED", "1d", NOW.minusSeconds(20))),
+                NOW);
+        String plan = """
+                {"executionSnapshot":{"partitions":[{"flows":[
+                  {"officialInstrumentIds":["%s"],"steps":[{"arguments":{"resolution":"30m"}}]},
+                  {"officialInstrumentIds":["%s"],"steps":[{"arguments":{"resolution":"4h"}}]},
+                  {"officialInstrumentIds":["%s"],"steps":[{"arguments":{"resolution":"1d"}}]}
+                ]}]}}
+                """.formatted(aapl, msft, meta);
+
+        var selected = OfficialBacktestInputSelector.select(
+                plan, LocalDate.parse("2024-01-05"), LocalDate.parse("2024-01-25"), catalog);
+
+        assertThat(selected.datasets()).extracting(Dataset::id)
+                .containsExactly(bars30m, bars4h, bars1d);
     }
 
     @Test

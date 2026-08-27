@@ -63,7 +63,8 @@ public final class OfficialBacktestInputSelector {
             LocalDate requestedStart,
             LocalDate requestedEnd,
             StrategyReleaseInputCatalog catalog) {
-        if (requestedStart.isBefore(policy.periodStart()) || requestedEnd.isAfter(policy.periodEnd())) {
+        if (requestedStart.isBefore(policy.periodStart())
+                || requestedEnd.isAfter(policy.periodEnd().minusDays(1))) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Requested official backtest period is outside the locked execution policy");
         }
