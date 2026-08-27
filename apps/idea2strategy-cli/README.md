@@ -40,8 +40,10 @@ delegation create --name NAME --scopes STRATEGY_EDIT,STRATEGY_VALIDATE --strateg
   [--expires-at ISO_8601_INSTANT]
 delegation revoke --authorization-id ID
 strategy list [--limit 1..100] [--cursor CURSOR]
+strategy get --strategy-id ID
 strategy create --name NAME [--description TEXT]
 strategy copy --strategy-id ID --name NAME
+strategy delete --strategy-id ID --yes
 strategy edit preview --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE
 strategy edit apply --strategy-id ID --authorization-id ID --credential-id ID --operations-file FILE --preview-hash HASH
   --expected-edit-sequence SEQUENCE
@@ -50,12 +52,32 @@ strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount A
   --broker-rules-version VERSION --accounting-rules-version VERSION --precision-rules-version VERSION
   --fee-policy-id ID --buying-power-buffer-policy-id ID --dataset-manifest-id ID
   --execution-policy-version VERSION --candidate-conflict-policy JSON_OBJECT
+bot list
+bot get --bot-id ID
+bot stop --bot-id ID [--reason-code USER_REQUEST] --yes
+backtest create --bot-id ID --period-start YYYY-MM-DD --period-end YYYY-MM-DD
+backtest list [--limit 1..200] [--offset 0..]
+backtest get --run-id ID
+backtest cancel --run-id ID [--reason-code USER_CANCELLED] --yes
+backtest delete --run-id ID --yes
+competition create --input-file FILE
+competition list [--scope mine|public] [--limit 1..100]
+competition get --room-id ID
+competition delete --room-id ID [--reason-code USER_CANCELLED] --yes
 operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
 
 A delegated tool can build a strategy from nothing: `ADD_GROUP` creates a trade container, naming
 its side, how its blocks combine, how capital is split, and which instruments it trades. A strategy
 holds one container per side, so a second container on a side already in use is refused.
+`SET_GROUP_INSTRUMENTS` replaces one container's complete official-instrument set, which keeps CLI,
+backend validation, and the visual editor on the same persisted document format.
+
+Bots are immutable after creation. The CLI intentionally exposes only read and safe stop operations;
+there is no bot update command. Backtest deletion is evidence-preserving soft deletion: queued work is
+cancelled, running work is asked to stop cooperatively, and retained execution evidence is hidden from
+the owner's normal reads only after it is terminal. Competition rooms expose create/read/cancel only;
+`competition delete` maps to the domain cancellation workflow and never physically erases audit history.
 
 A delegation must name the strategies it may edit; one that names none would be granted and then
 authorize nothing. `--expires-at` is optional and defaults to 24 hours from the grant. The raw

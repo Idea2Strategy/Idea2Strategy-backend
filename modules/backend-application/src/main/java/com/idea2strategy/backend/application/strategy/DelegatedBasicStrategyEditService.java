@@ -10,8 +10,10 @@ import com.idea2strategy.backend.application.strategy.BasicBlockAssembly.BasicBl
 import com.idea2strategy.backend.domain.strategy.StrategyDocument;
 import com.idea2strategy.backend.domain.strategy.StrategyElementDefinition;
 import com.idea2strategy.backend.domain.strategy.StrategyMode;
+import com.idea2strategy.backend.domain.strategy.SupportedInstrument;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -26,6 +28,7 @@ public final class DelegatedBasicStrategyEditService {
     private static final String REMOVE_BLOCK = "REMOVE_BLOCK";
     private static final String CONNECT_BLOCKS = "CONNECT_BLOCKS";
     private static final String SET_VALUE = "SET_VALUE";
+    private static final String SET_GROUP_INSTRUMENTS = "SET_GROUP_INSTRUMENTS";
 
     private final StrategyQueryPort strategyPort;
     private final StrategyDocumentQueryPort documentPort;
@@ -132,9 +135,11 @@ public final class DelegatedBasicStrategyEditService {
         }
         Map<String, StrategyElementDefinition> definitions = catalog.elements().stream()
                 .collect(Collectors.toMap(StrategyElementDefinition::elementCode, Function.identity()));
+        Map<UUID, SupportedInstrument> instruments = catalog.instruments().stream()
+                .collect(Collectors.toMap(SupportedInstrument::id, Function.identity()));
         var changes = new ArrayList<String>();
         for (DelegatedBasicEditOperation operation : operations) {
-            applyOperation(root, definitions, operation, changes);
+            applyOperation(root, definitions, instruments, operation, changes);
         }
         String proposed = canonical(root);
         BasicBlockAssembly assembly = parseAssembly(proposed);
@@ -163,14 +168,16 @@ public final class DelegatedBasicStrategyEditService {
     private void applyOperation(
             ObjectNode root,
             Map<String, StrategyElementDefinition> definitions,
+            Map<UUID, SupportedInstrument> instruments,
             DelegatedBasicEditOperation operation,
             List<String> changes) {
         switch (operation.action()) {
-            case ADD_GROUP -> addGroup(root, operation.arguments(), changes);
+            case ADD_GROUP -> addGroup(root, instruments, operation.arguments(), changes);
             case ADD_BLOCK -> addBlock(root, definitions, operation.arguments(), changes);
             case REMOVE_BLOCK -> removeBlock(root, operation.arguments(), changes);
             case CONNECT_BLOCKS -> connectBlocks(root, operation.arguments(), changes);
             case SET_VALUE -> setValue(root, definitions, operation.arguments(), changes);
+            case SET_GROUP_INSTRUMENTS -> setGroupInstruments(root, instruments, operation.arguments(), changes);
             default -> throw new DelegatedBasicEditRejectedException(
                     "Delegated operation is not allowed: " + operation.action());
         }
@@ -186,7 +193,11 @@ public final class DelegatedBasicStrategyEditService {
      * container has no defined meaning, and refusing it at the operation says so where the tool can
      * still react.
      */
-    private void addGroup(ObjectNode root, Map<String, Object> arguments, List<String> changes) {
+    private void addGroup(
+            ObjectNode root,
+            Map<UUID, SupportedInstrument> instruments,
+            Map<String, Object> arguments,
+            List<String> changes) {
         String groupId = text(arguments, "groupId");
         ArrayNode groups = array(root, "groups");
         if (find(groups, "id", groupId) != null) {
@@ -209,26 +220,51 @@ public final class DelegatedBasicStrategyEditService {
         group.put(
                 "allocationMode",
                 enumeration(arguments, "allocationMode", BasicBlockAssembly.AllocationMode.class));
-        group.set("instrumentIds", instrumentIds(arguments));
+        group.set("instrumentIds", instrumentIds(arguments, instruments));
         group.set("blocks", objectMapper.createArrayNode());
         group.set("connections", objectMapper.createArrayNode());
         groups.add(group);
         changes.add("ADD_GROUP " + groupId + " " + container);
     }
 
-    private ArrayNode instrumentIds(Map<String, Object> arguments) {
+    private void setGroupInstruments(
+            ObjectNode root,
+            Map<UUID, SupportedInstrument> instruments,
+            Map<String, Object> arguments,
+            List<String> changes) {
+        String groupId = text(arguments, "groupId");
+        ArrayNode replacement = instrumentIds(arguments, instruments);
+        group(root, groupId).set("instrumentIds", replacement);
+        var names = new ArrayList<String>();
+        for (JsonNode value : replacement) {
+            names.add(instruments.get(UUID.fromString(value.asText())).symbol());
+        }
+        changes.add("SET_GROUP_INSTRUMENTS " + groupId + " " + String.join(",", names));
+    }
+
+    private ArrayNode instrumentIds(
+            Map<String, Object> arguments, Map<UUID, SupportedInstrument> allowedInstruments) {
         Object value = arguments.get("instrumentIds");
         if (!(value instanceof List<?> values) || values.isEmpty()) {
             throw new DelegatedBasicEditRejectedException(
                     "A container must name the instruments it trades: instrumentIds");
         }
         ArrayNode instruments = objectMapper.createArrayNode();
+        var seen = new LinkedHashSet<UUID>();
         for (Object instrument : values) {
             if (!(instrument instanceof String text)) {
                 throw new DelegatedBasicEditRejectedException("instrumentIds must be identifiers");
             }
             try {
-                instruments.add(UUID.fromString(text).toString());
+                UUID id = UUID.fromString(text);
+                if (!seen.add(id)) {
+                    throw new DelegatedBasicEditRejectedException("instrumentIds must not contain duplicate ids");
+                }
+                if (!allowedInstruments.containsKey(id)) {
+                    throw new DelegatedBasicEditRejectedException(
+                            "Instrument is not present in the official catalog: " + id);
+                }
+                instruments.add(id.toString());
             } catch (IllegalArgumentException exception) {
                 throw new DelegatedBasicEditRejectedException("Instrument id is not a UUID: " + text);
             }

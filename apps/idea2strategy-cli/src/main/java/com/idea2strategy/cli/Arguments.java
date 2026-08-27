@@ -13,7 +13,7 @@ final class Arguments {
      * turn a forgotten value — `--email` with nothing after it — into the string "true" and let a
      * typo log in as nobody.
      */
-    private static final List<String> VALUELESS = List.of("--browser", "--no-open");
+    private static final List<String> VALUELESS = List.of("--browser", "--no-open", "--yes");
 
     private final List<String> positionals;
     private final Map<String, String> options;

@@ -58,9 +58,11 @@ class ExternalAiToolE2eTest {
         assertThat(contract.path("reviewGate").path("applyRequiresPreviewHash").asBoolean()).isTrue();
         assertThat(contract.path("allowedEditOperations")).extracting(JsonNode::asText)
                 .containsExactlyInAnyOrder(
-                        "ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE");
+                        "ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE",
+                        "SET_GROUP_INSTRUMENTS");
         assertThat(contract.path("forbiddenCapabilities")).extracting(JsonNode::asText)
-                .containsExactlyInAnyOrder("ARBITRARY_CODE", "DIRECT_ORDER", "EXTERNAL_DATA");
+                .containsExactlyInAnyOrder(
+                        "ARBITRARY_CODE", "DIRECT_ORDER", "EXTERNAL_DATA", "BOT_UPDATE", "COMPETITION_UPDATE");
         assertThat(requestCount).hasValue(0);
     }
 
