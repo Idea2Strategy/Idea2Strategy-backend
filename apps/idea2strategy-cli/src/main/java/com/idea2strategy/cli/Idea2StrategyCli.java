@@ -557,14 +557,7 @@ public final class Idea2StrategyCli {
 
     private static JsonNode competitionGet(Arguments args, ApiClient api, String token) {
         args.rejectUnknown("--room-id");
-        String roomId = args.required("--room-id");
-        JsonNode response = api.get("/api/v1/competition/rooms/mine?limit=100", token);
-        for (JsonNode room : response.path("items")) {
-            if (roomId.equals(room.path("roomId").asText())) {
-                return room;
-            }
-        }
-        throw new CliFailure(5, "ROOM_NOT_FOUND", "Owned competition room was not found");
+        return api.get("/api/v1/competition/rooms/mine/" + segment(args.required("--room-id")), token);
     }
 
     private static JsonNode competitionDelete(Arguments args, ApiClient api, String token) {

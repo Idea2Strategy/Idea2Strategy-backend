@@ -3,6 +3,8 @@ package com.idea2strategy.backend.application.competition;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 public final class OwnedRoomManagementQueryService {
     private final OwnedRoomManagementQueryPort port;
@@ -18,5 +20,9 @@ public final class OwnedRoomManagementQueryService {
             throw new IllegalArgumentException("limit must be in 1..100");
         }
         return port.findOwnedBy(principal.accountId(), limit);
+    }
+
+    public Optional<OwnedRoomManagementView> get(UUID roomId) {
+        return port.findOwnedById(principal.accountId(), Objects.requireNonNull(roomId, "roomId"));
     }
 }
