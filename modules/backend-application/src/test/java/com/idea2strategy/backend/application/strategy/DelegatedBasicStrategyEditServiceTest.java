@@ -49,6 +49,11 @@ class DelegatedBasicStrategyEditServiceTest {
 
         assertThat(applied.editSequence()).isEqualTo(8);
         assertThat(applied.semanticHash()).isEqualTo(preview.previewHash());
+        String emptyPresentation = "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}";
+        assertThat(applied.presentationDocument()).isEqualTo(StrategyDocumentJson.canonicalize(emptyPresentation));
+        assertThat(applied.presentationSchemaVersion())
+                .isEqualTo(BasicStrategyDraftCommandService.PRESENTATION_SCHEMA_VERSION);
+        assertThat(applied.presentationHash()).isEqualTo(StrategyDocumentJson.sha256(emptyPresentation));
         assertThat(commandPort.saved).isEqualTo(applied);
         assertThat(commandPort.editor).isEqualTo(editor);
     }

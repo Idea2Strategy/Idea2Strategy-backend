@@ -90,13 +90,15 @@ public final class DelegatedBasicStrategyEditService {
                     "Only a valid official Basic strategy preview can be applied");
         }
         StrategyDocument current = requireDocument(editor, strategyId);
+        String resetPresentation = StrategyDocumentJson.canonicalize(
+                BasicStrategyDraftCommandService.EMPTY_PRESENTATION_DOCUMENT);
         var replacement = current.replace(
                 preview.proposedSemanticDocument(),
-                current.presentationDocument(),
+                resetPresentation,
                 BasicStrategyDraftCommandService.SEMANTIC_SCHEMA_VERSION,
-                current.presentationSchemaVersion(),
+                BasicStrategyDraftCommandService.PRESENTATION_SCHEMA_VERSION,
                 preview.previewHash(),
-                current.presentationHash(),
+                StrategyDocumentJson.sha256(resetPresentation),
                 clock.instant());
         return switch (commandPort.replace(replacement, expectedEditSequence, editor, clock.instant())) {
             case UPDATED -> replacement;
