@@ -8,6 +8,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Map;
 
 final class ApiClient {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -32,14 +33,22 @@ final class ApiClient {
     }
 
     JsonNode post(String path, JsonNode body, String token) {
-        return send("POST", path, body, token);
+        return send("POST", path, body, token, Map.of());
+    }
+
+    JsonNode post(String path, JsonNode body, String token, Map<String, String> headers) {
+        return send("POST", path, body, token, headers);
     }
 
     JsonNode delete(String path, String token) {
-        return send("DELETE", path, null, token);
+        return send("DELETE", path, null, token, Map.of());
     }
 
     private JsonNode send(String method, String path, JsonNode body, String token) {
+        return send(method, path, body, token, Map.of());
+    }
+
+    private JsonNode send(String method, String path, JsonNode body, String token, Map<String, String> headers) {
         HttpRequest.Builder request = HttpRequest.newBuilder(baseUri.resolve(path))
                 .timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/json")
@@ -50,6 +59,7 @@ final class ApiClient {
         if (body != null) {
             request.header("Content-Type", "application/json");
         }
+        headers.forEach(request::header);
         String encoded = body == null ? "" : body.toString();
         switch (method) {
             case "GET" -> request.GET();
@@ -99,7 +109,12 @@ final class ApiClient {
             default -> status >= 500 ? "SERVICE_ERROR" : "REQUEST_REJECTED";
         };
         String code = body.path("code").asText(fallbackCode);
-        String message = body.path("message").asText("Idea2Strategy API rejected the request");
+        String message = body.path("message").asText();
+        if (message.isBlank()) {
+            message = body.path("detail").isTextual()
+                    ? body.path("detail").asText()
+                    : body.path("title").asText("Idea2Strategy API rejected the request");
+        }
         return new CliFailure(exitCode, code, message, status);
     }
 }

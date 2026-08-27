@@ -13,6 +13,7 @@ import java.io.PrintWriter;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,19 +26,34 @@ import java.util.Set;
 public final class Idea2StrategyCli {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> ALLOWED_EDIT_OPERATIONS =
-            Set.of("ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE");
+            Set.of("ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE",
+                    "SET_GROUP_INSTRUMENTS");
     private static final Set<String> AUTHENTICATED_COMMANDS = Set.of(
             "catalog.elements",
             "catalog.instruments",
             "delegation.create",
             "delegation.revoke",
             "strategy.list",
+            "strategy.get",
             "strategy.create",
             "strategy.copy",
+            "strategy.delete",
             "strategy.edit.preview",
             "strategy.edit.apply",
             "strategy.validate",
-            "strategy.release");
+            "strategy.release",
+            "bot.list",
+            "bot.get",
+            "bot.stop",
+            "backtest.create",
+            "backtest.list",
+            "backtest.get",
+            "backtest.cancel",
+            "backtest.delete",
+            "competition.create",
+            "competition.list",
+            "competition.get",
+            "competition.delete");
 
     private Idea2StrategyCli() {}
 
@@ -80,6 +96,7 @@ public final class Idea2StrategyCli {
             return OperatorCredentialResetCommand.execute(arguments, environment, stdin);
         }
         ApiClient api = new ApiClient(invocation.baseUrl());
+        ApiClient backtestApi = new ApiClient(invocation.backtestBaseUrl());
         CredentialStore credentials = new CredentialStore(invocation.configDirectory());
         List<String> command = arguments.positionals();
         if (command.equals(List.of("tool-contract"))) {
@@ -102,12 +119,26 @@ public final class Idea2StrategyCli {
             case "delegation.create" -> delegationCreate(arguments, api, token);
             case "delegation.revoke" -> delegationRevoke(arguments, api, token);
             case "strategy.list" -> strategyList(arguments, api, token);
+            case "strategy.get" -> strategyGet(arguments, api, token);
             case "strategy.create" -> strategyCreate(arguments, api, token);
             case "strategy.copy" -> strategyCopy(arguments, api, token);
+            case "strategy.delete" -> strategyDelete(arguments, api, token);
             case "strategy.edit.preview" -> basicEdit(arguments, api, token, false);
             case "strategy.edit.apply" -> basicEdit(arguments, api, token, true);
             case "strategy.validate" -> strategyValidate(arguments, api, token);
             case "strategy.release" -> strategyRelease(arguments, api, token);
+            case "bot.list" -> botList(arguments, api, token);
+            case "bot.get" -> botGet(arguments, api, token);
+            case "bot.stop" -> botStop(arguments, api, token);
+            case "backtest.create" -> backtestCreate(arguments, api, token);
+            case "backtest.list" -> backtestList(arguments, backtestApi, token);
+            case "backtest.get" -> backtestGet(arguments, backtestApi, token);
+            case "backtest.cancel" -> backtestCancel(arguments, backtestApi, token);
+            case "backtest.delete" -> backtestDelete(arguments, backtestApi, token);
+            case "competition.create" -> competitionCreate(arguments, api, token);
+            case "competition.list" -> competitionList(arguments, api, token);
+            case "competition.get" -> competitionGet(arguments, api, token);
+            case "competition.delete" -> competitionDelete(arguments, api, token);
             default -> throw new IllegalStateException("Unmapped authenticated command");
         };
     }
@@ -329,6 +360,17 @@ public final class Idea2StrategyCli {
         return api.post("/api/v1/strategies", body, token);
     }
 
+    private static JsonNode strategyGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--strategy-id");
+        return api.get("/api/v1/strategies/" + segment(args.required("--strategy-id")) + "/document", token);
+    }
+
+    private static JsonNode strategyDelete(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--strategy-id", "--yes");
+        requireConfirmation(args, "Strategy deletion");
+        return api.delete("/api/v1/strategies/" + segment(args.required("--strategy-id")), token);
+    }
+
     private static JsonNode strategyCopy(Arguments args, ApiClient api, String token) {
         args.rejectUnknown("--strategy-id", "--name");
         ObjectNode body = JSON.createObjectNode().put("name", args.required("--name"));
@@ -423,6 +465,156 @@ public final class Idea2StrategyCli {
                 + "/releases", body, token);
     }
 
+    private static JsonNode botList(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown();
+        return api.get("/api/v1/bots/operations", token);
+    }
+
+    private static JsonNode botGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--bot-id");
+        String botId = args.required("--bot-id");
+        JsonNode bots = api.get("/api/v1/bots/operations", token);
+        if (!bots.isArray()) {
+            throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Bot operations response was not a list");
+        }
+        for (JsonNode bot : bots) {
+            if (botId.equals(bot.path("botId").asText())) {
+                return bot;
+            }
+        }
+        throw new CliFailure(5, "BOT_NOT_FOUND", "Owned bot was not found");
+    }
+
+    private static JsonNode botStop(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--bot-id", "--reason-code", "--yes");
+        requireConfirmation(args, "Bot stop");
+        ObjectNode body = JSON.createObjectNode().put("reasonCode", args.optional("--reason-code", "USER_REQUEST"));
+        return api.post("/api/v1/bots/" + segment(args.required("--bot-id")) + "/stop", body, token);
+    }
+
+    private static JsonNode backtestCreate(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--bot-id", "--period-start", "--period-end", "--idempotency-key");
+        String start = validDate(args.required("--period-start"), "--period-start");
+        String end = validDate(args.required("--period-end"), "--period-end");
+        if (LocalDate.parse(start).isAfter(LocalDate.parse(end))) {
+            throw Arguments.usage("--period-start must not be after --period-end");
+        }
+        ObjectNode body = JSON.createObjectNode().put("periodStart", start).put("periodEnd", end);
+        return api.post(
+                "/api/v1/bots/" + segment(args.required("--bot-id")) + "/backtests",
+                body,
+                token,
+                Map.of("Idempotency-Key", args.required("--idempotency-key")));
+    }
+
+    private static JsonNode backtestList(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--limit", "--offset");
+        int limit = boundedInteger(args.optional("--limit", "50"), "--limit", 1, 200);
+        int offset = boundedInteger(args.optional("--offset", "0"), "--offset", 0, Integer.MAX_VALUE);
+        return api.get("/api/v1/backtests?limit=" + limit + "&offset=" + offset, token);
+    }
+
+    private static JsonNode backtestGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--run-id");
+        return api.get("/api/v1/backtests/" + segment(args.required("--run-id")), token);
+    }
+
+    private static JsonNode backtestCancel(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--run-id", "--reason-code", "--yes");
+        requireConfirmation(args, "Backtest cancellation");
+        ObjectNode body = JSON.createObjectNode().put("reasonCode", args.optional("--reason-code", "USER_CANCELLED"));
+        return api.post("/api/v1/backtests/" + segment(args.required("--run-id")) + "/cancellation", body, token);
+    }
+
+    private static JsonNode backtestDelete(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--run-id", "--yes");
+        requireConfirmation(args, "Backtest deletion");
+        return api.delete("/api/v1/backtests/" + segment(args.required("--run-id")), token);
+    }
+
+    private static JsonNode competitionCreate(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--input-file");
+        JsonNode body = readJsonObject(args.required("--input-file"), "competition input");
+        return api.post("/api/v1/competition/rooms", body, token);
+    }
+
+    private static JsonNode competitionList(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--scope", "--limit", "--query");
+        int limit = boundedInteger(args.optional("--limit", "50"), "--limit", 1, 100);
+        String scope = args.optional("--scope", "mine");
+        if ("mine".equals(scope)) {
+            return api.get("/api/v1/competition/rooms/mine?limit=" + limit, token);
+        }
+        if ("public".equals(scope)) {
+            String path = "/api/v1/competition/rooms/public?limit=" + limit;
+            if (args.optional("--query") != null) {
+                path += "&q=" + segment(args.optional("--query"));
+            }
+            return api.get(path, token);
+        }
+        throw Arguments.usage("--scope must be mine or public");
+    }
+
+    private static JsonNode competitionGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--room-id");
+        String roomId = args.required("--room-id");
+        JsonNode response = api.get("/api/v1/competition/rooms/mine?limit=100", token);
+        for (JsonNode room : response.path("items")) {
+            if (roomId.equals(room.path("roomId").asText())) {
+                return room;
+            }
+        }
+        throw new CliFailure(5, "ROOM_NOT_FOUND", "Owned competition room was not found");
+    }
+
+    private static JsonNode competitionDelete(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--room-id", "--reason-code", "--yes");
+        requireConfirmation(args, "Competition cancellation");
+        ObjectNode body = JSON.createObjectNode().put("reasonCode", args.optional("--reason-code", "CREATOR_REQUEST"));
+        return api.post("/api/v1/competition/rooms/" + segment(args.required("--room-id"))
+                + "/cancellation", body, token);
+    }
+
+    private static void requireConfirmation(Arguments args, String operation) {
+        if (!args.flag("--yes")) {
+            throw Arguments.usage(operation + " requires --yes");
+        }
+    }
+
+    private static int boundedInteger(String value, String option, int minimum, int maximum) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < minimum || parsed > maximum) {
+                throw Arguments.usage(option + " must be between " + minimum + " and " + maximum);
+            }
+            return parsed;
+        } catch (NumberFormatException exception) {
+            throw Arguments.usage(option + " must be an integer");
+        }
+    }
+
+    private static String validDate(String value, String option) {
+        try {
+            return LocalDate.parse(value).toString();
+        } catch (java.time.format.DateTimeParseException exception) {
+            throw Arguments.usage(option + " must use YYYY-MM-DD");
+        }
+    }
+
+    private static JsonNode readJsonObject(String fileName, String label) {
+        try {
+            JsonNode value = JSON.readTree(Files.readString(Path.of(fileName)));
+            if (!value.isObject()) {
+                throw new CliFailure(5, "INVALID_INPUT", label + " file must contain a JSON object");
+            }
+            return value;
+        } catch (CliFailure failure) {
+            throw failure;
+        } catch (Exception exception) {
+            throw new CliFailure(5, "INVALID_INPUT", label + " file is not valid JSON");
+        }
+    }
+
     private static ArrayNode readOperations(String fileName) {
         try {
             JsonNode value = JSON.readTree(Files.readString(Path.of(fileName)));
@@ -469,6 +661,7 @@ public final class Idea2StrategyCli {
 
     private record Invocation(
             String baseUrl,
+            String backtestBaseUrl,
             Path configDirectory,
             String environmentToken,
             List<String> commandArguments,
@@ -478,6 +671,8 @@ public final class Idea2StrategyCli {
             List<String> values = new ArrayList<>(Arrays.asList(raw));
             String baseUrl = takeGlobal(values, "--base-url", environment.getOrDefault(
                     "I2S_BASE_URL", "http://localhost:8080"));
+            String backtestBaseUrl = takeGlobal(values, "--backtest-base-url", environment.getOrDefault(
+                    "I2S_BACKTEST_BASE_URL", baseUrl));
             String defaultConfig = environment.get("I2S_CONFIG_DIR");
             if (defaultConfig == null || defaultConfig.isBlank()) {
                 defaultConfig = Path.of(System.getProperty("user.home"), ".idea2strategy").toString();
@@ -492,6 +687,7 @@ public final class Idea2StrategyCli {
                 case "catalog" -> 2;
                 case "delegation" -> 2;
                 case "strategy" -> words.size() >= 2 && "edit".equals(words.get(1)) ? 3 : 2;
+                case "bot", "backtest", "competition" -> 2;
                 case "operator" -> 2;
                 default -> 1;
             };
@@ -499,7 +695,7 @@ public final class Idea2StrategyCli {
                 throw Arguments.usage("Incomplete command");
             }
             String commandName = String.join(".", words.subList(0, commandWordCount));
-            return new Invocation(baseUrl, Path.of(config), blankToNull(environment.get("I2S_TOKEN")),
+            return new Invocation(baseUrl, backtestBaseUrl, Path.of(config), blankToNull(environment.get("I2S_TOKEN")),
                     List.copyOf(values), commandName);
         }
 

@@ -15,6 +15,12 @@
       "purpose": "Read the official element codes and their declared parameters. Never guess a code; an unpublished code is refused.",
       "command": ["catalog", "elements"],
       "requiredOutputFields": ["data.elements"]
+    },
+    {
+      "name": "read-strategy",
+      "purpose": "Read the complete persisted Basic strategy document before planning an edit.",
+      "command": ["strategy", "get", "--strategy-id", "<id>"],
+      "requiredOutputFields": ["data"]
     }
   ],
   "workflow": [
@@ -70,8 +76,15 @@
     "ADD_BLOCK",
     "REMOVE_BLOCK",
     "CONNECT_BLOCKS",
-    "SET_VALUE"
+    "SET_VALUE",
+    "SET_GROUP_INSTRUMENTS"
   ],
+  "resourceLifecycle": {
+    "strategies": ["create", "read", "update-through-reviewed-edit", "delete"],
+    "bots": ["read", "stop"],
+    "backtests": ["create", "read", "cancel", "evidence-preserving-delete"],
+    "competitions": ["create", "read", "cancel-as-delete"]
+  },
   "allowedDelegationScopes": [
     "STRATEGY_EDIT",
     "STRATEGY_VALIDATE"
@@ -79,7 +92,9 @@
   "forbiddenCapabilities": [
     "ARBITRARY_CODE",
     "DIRECT_ORDER",
-    "EXTERNAL_DATA"
+    "EXTERNAL_DATA",
+    "BOT_UPDATE",
+    "COMPETITION_UPDATE"
   ],
   "exitCodes": {
     "0": "success",

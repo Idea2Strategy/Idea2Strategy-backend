@@ -24,6 +24,7 @@ class DelegatedBasicStrategyEditServiceTest {
     private static final UUID STRATEGY_ID = UUID.fromString("40000000-0000-4000-8000-000000000001");
     private static final UUID CATALOG_ID = UUID.fromString("50000000-0000-4000-8000-000000000001");
     private static final UUID INSTRUMENT_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
+    private static final UUID META_INSTRUMENT_ID = UUID.fromString("60000000-0000-4000-8000-000000000002");
     private static final Instant NOW = Instant.parse("2026-08-01T12:00:00Z");
 
     @Test
@@ -180,6 +181,46 @@ class DelegatedBasicStrategyEditServiceTest {
         assertThat(preview.proposedSemanticDocument()).contains("\"container\":\"SELL\"");
     }
 
+    @Test
+    void replacesAContainersCompleteInstrumentSetWithReviewedCatalogInstruments() {
+        var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
+        var operations = List.of(new DelegatedBasicEditOperation(
+                "SET_GROUP_INSTRUMENTS",
+                Map.of(
+                        "groupId", "buy",
+                        "instrumentIds", List.of(INSTRUMENT_ID.toString(), META_INSTRUMENT_ID.toString()))));
+
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.valid()).isTrue();
+        assertThat(preview.changes()).containsExactly("SET_GROUP_INSTRUMENTS buy AAPL,META");
+        assertThat(preview.proposedSemanticDocument())
+                .contains("\"instrumentIds\":[\"" + INSTRUMENT_ID + "\",\"" + META_INSTRUMENT_ID + "\"]");
+    }
+
+    @Test
+    void refusesEmptyDuplicateOrUnpublishedContainerInstrumentSets() {
+        var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
+
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), List.of(
+                        new DelegatedBasicEditOperation("SET_GROUP_INSTRUMENTS", Map.of(
+                                "groupId", "buy", "instrumentIds", List.of())))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("instrumentIds");
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), List.of(
+                        new DelegatedBasicEditOperation("SET_GROUP_INSTRUMENTS", Map.of(
+                                "groupId", "buy", "instrumentIds",
+                                List.of(INSTRUMENT_ID.toString(), INSTRUMENT_ID.toString()))))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("duplicate");
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), List.of(
+                        new DelegatedBasicEditOperation("SET_GROUP_INSTRUMENTS", Map.of(
+                                "groupId", "buy", "instrumentIds",
+                                List.of("60000000-0000-4000-8000-000000000099"))))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("official catalog");
+    }
+
     /**
      * Rule 9.9: a strategy holds one container per side. A second BUY container has no defined
      * meaning, so it is refused at the operation where the tool can still react, rather than
@@ -300,7 +341,9 @@ class DelegatedBasicStrategyEditServiceTest {
                                 "{\"input\":{\"type\":\"BOOLEAN\"}}", "{\"result\":{\"type\":\"BOOLEAN\"}}"),
                         element("BUY_ORDER", "ORDER", "{}", "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}")),
                 List.of(),
-                List.of(new SupportedInstrument(INSTRUMENT_ID, "STOCK", "XNAS", "USD", "AAPL")));
+                List.of(
+                        new SupportedInstrument(INSTRUMENT_ID, "STOCK", "XNAS", "USD", "AAPL"),
+                        new SupportedInstrument(META_INSTRUMENT_ID, "STOCK", "XNAS", "USD", "META")));
     }
 
     private static StrategyElementDefinition element(

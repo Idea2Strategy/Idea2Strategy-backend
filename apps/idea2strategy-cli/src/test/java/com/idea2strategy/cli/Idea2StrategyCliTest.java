@@ -31,6 +31,7 @@ class Idea2StrategyCliTest {
     private final AtomicReference<String> requestPath = new AtomicReference<>();
     private final AtomicReference<String> requestBody = new AtomicReference<>();
     private final AtomicReference<String> authorization = new AtomicReference<>();
+    private final AtomicReference<String> idempotencyKey = new AtomicReference<>();
 
     @BeforeEach
     void startServer() throws IOException {
@@ -259,6 +260,90 @@ class Idea2StrategyCliTest {
         assertThat(body.path("candidateConflictPolicy").path("policy").asText()).isEqualTo("FIRST_WINS");
     }
 
+    @Test
+    void strategyAndBotLifecycleCommandsUseOnlyTheSupportedServerActions() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+
+        assertRoute("strategy", "get", "--strategy-id", "strategy 1", "GET",
+                "/api/v1/strategies/strategy%201/document");
+        assertRoute("strategy", "delete", "--strategy-id", "s1", "--yes", "DELETE",
+                "/api/v1/strategies/s1");
+        assertRoute("bot", "list", "GET", "/api/v1/bots/operations");
+        assertRoute("bot", "stop", "--bot-id", "b1", "--reason-code", "USER_REQUEST", "--yes",
+                "POST", "/api/v1/bots/b1/stop");
+        assertThat(requestBody.get()).isEqualTo("{\"reasonCode\":\"USER_REQUEST\"}");
+    }
+
+    @Test
+    void destructiveCommandsRequireExplicitConfirmationBeforeNetworkAccess() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "bot", "stop", "--bot-id", "b1", "--reason-code", "USER_REQUEST");
+
+        assertThat(result.exitCode()).isEqualTo(2);
+        assertThat(requestPath.get()).isNull();
+        assertThat(result.stderr()).contains("--yes");
+    }
+
+    @Test
+    void backtestCommandsUseBackendForCreationAndTheBacktestOriginForRunLifecycle() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+        HttpServer backtestServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicReference<String> backtestPath = new AtomicReference<>();
+        AtomicReference<String> backtestMethod = new AtomicReference<>();
+        backtestServer.createContext("/", exchange -> {
+            backtestPath.set(exchange.getRequestURI().toString());
+            backtestMethod.set(exchange.getRequestMethod());
+            respondWithoutRecording(exchange, 200, "{\"items\":[],\"limit\":25,\"offset\":0}");
+        });
+        backtestServer.start();
+        String backtestUrl = "http://127.0.0.1:" + backtestServer.getAddress().getPort();
+        try {
+            Result created = run("", "--base-url", baseUrl, "--backtest-base-url", backtestUrl,
+                    "--config-dir", tempDir.toString(), "backtest", "create", "--bot-id", "b1",
+                    "--period-start", "2024-01-01", "--period-end", "2024-03-31",
+                    "--idempotency-key", "cli-backtest-1");
+            assertThat(created.exitCode()).isZero();
+            assertThat(requestPath.get()).isEqualTo("/api/v1/bots/b1/backtests");
+            assertThat(idempotencyKey.get()).isEqualTo("cli-backtest-1");
+
+            Result listed = run("", "--base-url", baseUrl, "--backtest-base-url", backtestUrl,
+                    "--config-dir", tempDir.toString(), "backtest", "list", "--limit", "25", "--offset", "0");
+            assertThat(listed.exitCode()).isZero();
+            assertThat(backtestMethod.get()).isEqualTo("GET");
+            assertThat(backtestPath.get()).isEqualTo("/api/v1/backtests?limit=25&offset=0");
+
+            Result deleted = run("", "--base-url", baseUrl, "--backtest-base-url", backtestUrl,
+                    "--config-dir", tempDir.toString(), "backtest", "delete", "--run-id", "r1", "--yes");
+            assertThat(deleted.exitCode()).isZero();
+            assertThat(backtestMethod.get()).isEqualTo("DELETE");
+            assertThat(backtestPath.get()).isEqualTo("/api/v1/backtests/r1");
+        } finally {
+            backtestServer.stop(0);
+        }
+    }
+
+    @Test
+    void competitionCommandsCreateReadAndCancelWithoutExposingAnUpdateCommand() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+        Path input = tempDir.resolve("room.json");
+        Files.writeString(input, "{\"name\":\"CLI Room\",\"accessType\":\"PUBLIC\"}");
+
+        assertRoute("competition", "create", "--input-file", input.toString(), "POST",
+                "/api/v1/competition/rooms");
+        assertThat(requestBody.get()).contains("CLI Room");
+        assertRoute("competition", "list", "--scope", "mine", "--limit", "20", "GET",
+                "/api/v1/competition/rooms/mine?limit=20");
+        assertRoute("competition", "delete", "--room-id", "room-1", "--reason-code", "CREATOR_REQUEST",
+                "--yes", "POST", "/api/v1/competition/rooms/room-1/cancellation");
+
+        Result update = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "competition", "update", "--room-id", "room-1");
+        assertThat(update.exitCode()).isEqualTo(2);
+        assertThat(JSON.readTree(update.stderr()).path("error").path("code").asText()).isEqualTo("USAGE_ERROR");
+    }
+
     private void assertRoute(String... commandAndExpectation) throws Exception {
         int length = commandAndExpectation.length;
         String expectedMethod = commandAndExpectation[length - 2];
@@ -292,6 +377,15 @@ class Idea2StrategyCliTest {
         requestPath.set(exchange.getRequestURI().toString());
         requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
         authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+        idempotencyKey.set(exchange.getRequestHeaders().getFirst("Idempotency-Key"));
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
+    }
+
+    private void respondWithoutRecording(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, bytes.length);
