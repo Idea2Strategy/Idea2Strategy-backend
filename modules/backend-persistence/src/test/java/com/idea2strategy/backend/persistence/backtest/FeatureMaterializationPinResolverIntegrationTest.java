@@ -98,6 +98,16 @@ class FeatureMaterializationPinResolverIntegrationTest {
                 MATERIALIZATION, "sha256:" + HASH));
     }
 
+    @Test
+    void currentBasicRsiDefinitionReusesTheAuthoritySeededSemanticFeed() {
+        assertThat(FeatureMaterializationPinResolver.expectedFeatureOutputFeedId(
+                        UUID.fromString("647a5fd6-98ed-0617-d4b2-844748d54fac"),
+                        "sha256:64dbbcda7352d0add9a4a6a6ed94a780603880891684dc32cf39e0a3d1167422",
+                        "rsi:1.0.0",
+                        "1d"))
+                .isEqualTo(UUID.fromString("6d2647f8-5caf-55ee-8821-869dc693f68a"));
+    }
+
     /* basic-compiled-plan-v2 declares requiredFeatures with minItems 0, and thirteen of the
        fourteen published Basic elements need no official feature, so a plan without any is the
        ordinary case rather than a malformed one. */
@@ -221,6 +231,18 @@ class FeatureMaterializationPinResolverIntegrationTest {
         jdbc.update("update market_data.dataset_objects set period_start = '2024-01-05T00:00:00Z' where id = ?",
                 DATASET_OBJECT);
         jdbc.update("update storage.objects set period_start = '2024-01-05T00:00:00Z' where id = ?", OBJECT);
+
+        assertThat(resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .containsExactly(new BacktestRunInputPinWriter.FeaturePin(MATERIALIZATION, "sha256:" + HASH));
+    }
+
+    @Test
+    void acceptsAFeatureMaterializationThatWarmsUpInsideTheEvaluationPeriod() {
+        jdbc.update("update market_data.feature_materializations set period_start = '2024-01-01T00:00:00Z' where id = ?",
+                MATERIALIZATION);
+        jdbc.update("update market_data.dataset_manifests set period_start = '2024-01-01T00:00:00Z' where id = ?",
+                MANIFEST);
 
         assertThat(resolver.resolve(
                         plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
