@@ -201,7 +201,7 @@ class BasicBlockAssemblyValidatorTest {
                 sixInstruments, blocks, connections);
         List<BasicBlockGroup> groups = new java.util.ArrayList<>();
         groups.add(oversized);
-        for (int index = 0; index < 4; index++) {
+        for (int index = 0; index < 16; index++) {
             groups.add(group("extra-buy-" + index, TradeContainer.BUY, "BUY_ORDER"));
         }
 
@@ -220,18 +220,25 @@ class BasicBlockAssemblyValidatorTest {
         List<BasicBlockGroup> fiveInstrumentsInOnePartition = java.util.stream.IntStream.range(0, 5)
                 .mapToObj(index -> group("buy:" + index, "partition-buy", TradeContainer.BUY, "BUY_ORDER"))
                 .toList();
-        List<BasicBlockGroup> fivePartitions = java.util.stream.IntStream.range(0, 5)
+        List<BasicBlockGroup> sixteenStrategies = java.util.stream.IntStream.range(0, 16)
+                .mapToObj(index -> group("buy:" + index, "partition-" + index, TradeContainer.BUY, "BUY_ORDER"))
+                .toList();
+        List<BasicBlockGroup> seventeenStrategies = java.util.stream.IntStream.range(0, 17)
                 .mapToObj(index -> group("buy:" + index, "partition-" + index, TradeContainer.BUY, "BUY_ORDER"))
                 .toList();
 
         var onePartition = new BasicBlockAssemblyValidator().validate(
                 new BasicBlockAssembly(CATALOG_ID, fiveInstrumentsInOnePartition), catalog());
-        var tooManyPartitions = new BasicBlockAssemblyValidator().validate(
-                new BasicBlockAssembly(CATALOG_ID, fivePartitions), catalog());
+        var maximumStrategies = new BasicBlockAssemblyValidator().validate(
+                new BasicBlockAssembly(CATALOG_ID, sixteenStrategies), catalog());
+        var tooManyStrategies = new BasicBlockAssemblyValidator().validate(
+                new BasicBlockAssembly(CATALOG_ID, seventeenStrategies), catalog());
 
         assertThat(onePartition.issues()).extracting(BasicBlockAssemblyIssue::code)
                 .doesNotContain("TOO_MANY_BUY_CONTAINERS");
-        assertThat(tooManyPartitions.issues()).extracting(BasicBlockAssemblyIssue::code)
+        assertThat(maximumStrategies.issues()).extracting(BasicBlockAssemblyIssue::code)
+                .doesNotContain("TOO_MANY_BUY_CONTAINERS");
+        assertThat(tooManyStrategies.issues()).extracting(BasicBlockAssemblyIssue::code)
                 .contains("TOO_MANY_BUY_CONTAINERS");
     }
 

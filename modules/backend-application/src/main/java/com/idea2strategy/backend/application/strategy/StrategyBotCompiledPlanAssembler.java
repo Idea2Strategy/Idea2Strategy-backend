@@ -57,8 +57,8 @@ import java.util.regex.Pattern;
  *       delay every bot's first decision by a bar and would disagree with the pinned contract sample.
  * </ul>
  *
- * <p><strong>One container per trade side.</strong> A Basic strategy is a buy container and a sell
- * container, and the blocks inside a container are an AND chain, so each flow carries its own
+ * <p><strong>Independent containers per trade side.</strong> A Basic strategy may have several buy
+ * and sell containers, and the blocks inside each container are an AND chain, so every flow carries its own
  * {@code side}, {@code allocation} and {@code steps}. Version 1 of the contract put them on the plan
  * and could therefore describe only one container, which is why that ordinary strategy used to be
  * refused at release (root #202).
@@ -69,8 +69,8 @@ public final class StrategyBotCompiledPlanAssembler {
     /**
      * The shape this assembler publishes.
      *
-     * <p>Version 2, always. A Basic strategy is one container per trade side and each container is
-     * its own AND chain of blocks, so {@code side}, {@code allocation} and {@code steps} belong to
+     * <p>Version 2, always. Every Basic trade container is its own AND chain of blocks, so
+     * {@code side}, {@code allocation} and {@code steps} belong to
      * the flow. Version 1 put them on the plan and could therefore describe only one container,
      * which is why a strategy with a buy rule and a sell rule was refused at release (root #202).
      *

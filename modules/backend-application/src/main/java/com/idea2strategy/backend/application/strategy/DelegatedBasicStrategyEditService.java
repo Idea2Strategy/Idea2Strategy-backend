@@ -190,10 +190,9 @@ public final class DelegatedBasicStrategyEditService {
      *
      * <p>A container is more than a bag of blocks: it carries the side, how its blocks combine, how
      * capital is split, and which instruments it trades. Those are the parts of a strategy a
-     * customer is most likely to have an opinion about, so the arguments are all explicit and the
-     * one-container-per-side rule is enforced here rather than left to validation — a second BUY
-     * container has no defined meaning, and refusing it at the operation says so where the tool can
-     * still react.
+     * customer is most likely to have an opinion about, so the arguments are all explicit. Multiple
+     * containers on the same side are independent strategies; their ids remain unique and the
+     * complete document is still checked against the Basic composition limits before it is applied.
      */
     private void addGroup(
             ObjectNode root,
@@ -206,12 +205,6 @@ public final class DelegatedBasicStrategyEditService {
             throw new DelegatedBasicEditRejectedException("Block group id already exists: " + groupId);
         }
         String container = enumeration(arguments, "container", BasicBlockAssembly.TradeContainer.class);
-        for (JsonNode existing : groups) {
-            if (container.equals(existing.path("container").asText())) {
-                throw new DelegatedBasicEditRejectedException(
-                        "A strategy holds one container per side; " + container + " already exists");
-            }
-        }
 
         ObjectNode group = objectMapper.createObjectNode();
         group.put("id", groupId);
