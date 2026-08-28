@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.api.journey;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -8,10 +9,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -30,17 +33,18 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * runs the line end to end over HTTP: sign up, log in, create a strategy, delegate editing of it,
  * reach the edit service under that delegation, and lose access the moment it is revoked.
  *
- * <p>It stops short of applying blocks. A new strategy has no groups and the delegated operations
- * cannot create one, so a real apply needs a valid Basic skeleton with a catalog and instruments;
- * that belongs in a strategy-authoring fixture rather than here. What this test does establish is
- * the part that was actually broken — that the routes exist and that a granted delegation carries
- * a request through authorization, which no stub could show.
+ * <p>It stops short of applying blocks. The delegated operation creates a group, but a real apply
+ * also needs a complete valid chain; that belongs in a strategy-authoring fixture rather than here.
+ * What this test establishes is the part that was actually broken — that the routes exist and that
+ * a granted delegation carries a request through authorization, which no stub could show.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
 class ExternalToolDelegatedEditJourneyIntegrationTest {
     private static final String EMAIL = "delegated-edit@example.com";
     private static final String PASSWORD = "CorrectHorse!2026";
+    private static final UUID INSTRUMENT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    private static final UUID SYMBOL_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -65,10 +69,22 @@ class ExternalToolDelegatedEditJourneyIntegrationTest {
 
     @Autowired WebApplicationContext context;
     @Autowired ObjectMapper json;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
     void anExternalToolDelegatesThenPreviewsAndAppliesABasicEdit() throws Exception {
         MockMvc mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        jdbc.update("""
+                insert into market_data.instruments
+                    (id, asset_type, primary_exchange_mic, currency_code, provider_reference, listed_at, created_at)
+                values (?::uuid, 'STOCK'::market_data.asset_type, 'XNAS', 'USD', 'delegated-edit-e2e',
+                        date '2000-01-01', now())
+                """, INSTRUMENT_ID.toString());
+        jdbc.update("""
+                insert into market_data.instrument_symbols
+                    (id, instrument_id, exchange_mic, symbol, effective_from)
+                values (?::uuid, ?::uuid, 'XNAS', 'AAPL', timestamp with time zone '2000-01-01 00:00:00+00')
+                """, SYMBOL_ID.toString(), INSTRUMENT_ID.toString());
 
         JsonNode signup = json.readTree(mvc.perform(post("/api/v1/auth/signup")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -108,13 +124,20 @@ class ExternalToolDelegatedEditJourneyIntegrationTest {
         // Returned exactly once. Nothing later in the journey can recover it.
         assertThat(grant.path("credential").asText()).isNotBlank();
 
+        JsonNode instruments = json.readTree(mvc.perform(get("/api/v1/strategy-catalogs/basic/instruments")
+                                .header("Authorization", "Bearer " + accessToken))
+                        .andExpect(status().isOk())
+                        .andReturn().getResponse().getContentAsString());
+        String instrumentId = instruments.path("instruments").path(0).path("id").asText();
+        assertThat(instrumentId).isNotBlank();
+
         String editBody = """
                 {"authorizationId":"%s","credentialId":"%s","operations":[
                   {"action":"ADD_GROUP","arguments":{"groupId":"buy","container":"BUY",
                    "evaluationMode":"INDEPENDENT","allocationMode":"EQUAL",
-                   "instrumentIds":["11111111-1111-4111-8111-111111111111"]}}]}
+                   "instrumentIds":["%s"]}}]}
                 """.formatted(
-                        grant.path("authorizationId").asText(), grant.path("credentialId").asText());
+                        grant.path("authorizationId").asText(), grant.path("credentialId").asText(), instrumentId);
 
         // The strategy is untouched — {"groups":[],"mode":"BASIC"} — and the tool builds its
         // container anyway. Before this work the same call answered 404 because the route did not

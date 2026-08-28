@@ -68,8 +68,9 @@ operator bootstrap --manifest REVIEWED.json --expected-sha256 LOWERCASE_SHA256
 ```
 
 A delegated tool can build a strategy from nothing: `ADD_GROUP` creates a trade container, naming
-its side, how its blocks combine, how capital is split, and which instruments it trades. A strategy
-holds one container per side, so a second container on a side already in use is refused.
+its side, how its blocks combine, how capital is split, and which instruments it trades. Multiple
+independent containers may use the same side, up to the Basic composition limit; each must have a
+unique group id.
 `SET_GROUP_INSTRUMENTS` replaces one container's complete official-instrument set, which keeps CLI,
 backend validation, and the visual editor on the same persisted document format.
 

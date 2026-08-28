@@ -21,7 +21,8 @@ import java.util.UUID;
 
 public final class BasicBlockAssemblyValidator {
     private static final int MAX_SECTIONS = 4;
-    private static final int MAX_CONTAINERS_PER_SIDE = MAX_SECTIONS;
+    private static final int MAX_CONTAINERS_PER_SIDE_PER_SECTION = 4;
+    private static final int MAX_CONTAINERS_PER_SIDE = MAX_SECTIONS * MAX_CONTAINERS_PER_SIDE_PER_SECTION;
     private static final int MAX_INSTRUMENTS_PER_GROUP = 5;
     private static final int MAX_CONDITIONS_PER_GROUP = 5;
     private final ObjectMapper objectMapper;
@@ -53,14 +54,14 @@ public final class BasicBlockAssemblyValidator {
                 .map(BasicBlockGroup::allocationGroupId).distinct().count()
                 > MAX_CONTAINERS_PER_SIDE) {
             add(issues, "TOO_MANY_BUY_CONTAINERS", "groups",
-                    "A Basic strategy may contain at most four buy containers");
+                    "A Basic strategy may contain at most sixteen buy containers");
         }
         if (assembly.groups().stream()
                 .filter(group -> group.container() == BasicBlockAssembly.TradeContainer.SELL)
                 .map(BasicBlockGroup::allocationGroupId).distinct().count()
                 > MAX_CONTAINERS_PER_SIDE) {
             add(issues, "TOO_MANY_SELL_CONTAINERS", "groups",
-                    "A Basic strategy may contain at most four sell containers");
+                    "A Basic strategy may contain at most sixteen sell containers");
         }
 
         for (int groupIndex = 0; groupIndex < assembly.groups().size(); groupIndex++) {

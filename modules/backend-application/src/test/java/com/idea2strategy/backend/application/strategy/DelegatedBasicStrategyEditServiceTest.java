@@ -226,27 +226,34 @@ class DelegatedBasicStrategyEditServiceTest {
                 .hasMessageContaining("official catalog");
     }
 
-    /**
-     * Rule 9.9: a strategy holds one container per side. A second BUY container has no defined
-     * meaning, so it is refused at the operation where the tool can still react, rather than
-     * surviving into a document that only fails later.
-     */
     @Test
-    void refusesASecondContainerOnASideThatAlreadyHasOne() {
+    void allowsMultipleIndependentContainersOnTheSameSideWhenTheirIdsDiffer() {
         var commandPort = new RecordingCommandPort();
         var service = service(new RecordingAuthorizer(), commandPort);
-        var operations = List.of(new DelegatedBasicEditOperation(
-                "ADD_GROUP",
-                Map.of(
-                        "groupId", "buy-2",
-                        "container", "BUY",
-                        "evaluationMode", "INDEPENDENT",
-                        "allocationMode", "EQUAL",
-                        "instrumentIds", List.of(INSTRUMENT_ID.toString()))));
+        var operations = List.of(
+                new DelegatedBasicEditOperation("ADD_GROUP", Map.of(
+                        "groupId", "buy-2", "container", "BUY",
+                        "evaluationMode", "INDEPENDENT", "allocationMode", "EQUAL",
+                        "instrumentIds", List.of(META_INSTRUMENT_ID.toString()))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy-2", "blockId", "trigger-2", "elementCode", "MARKET_OPEN")),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy-2", "blockId", "condition-2", "elementCode", "RSI",
+                        "parameters", Map.of("period", 21))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy-2", "blockId", "order-2", "elementCode", "BUY_ORDER")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy-2", "fromBlockId", "trigger-2", "outputPort", "signal",
+                        "toBlockId", "condition-2", "inputPort", "input")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy-2", "fromBlockId", "condition-2", "outputPort", "result",
+                        "toBlockId", "order-2", "inputPort", "input")));
 
-        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), operations))
-                .isInstanceOf(DelegatedBasicEditRejectedException.class)
-                .hasMessageContaining("one container per side");
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.valid()).isTrue();
+        assertThat(preview.proposedSemanticDocument()).contains(
+                "\"id\":\"buy\"", "\"id\":\"buy-2\"", "\"container\":\"BUY\"");
         assertThat(commandPort.saved).isNull();
     }
 
