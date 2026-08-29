@@ -119,6 +119,7 @@ public final class FeatureMaterializationPinResolver {
                         + "join market_data.feeds feed on feed.id = dm.feed_id "
                         + "join market_data.providers provider on provider.id = feed.provider_id "
                         + "where fm.feature_definition_id = ? and fm.instrument_id = ? and fm.status = 'SUCCEEDED' "
+                        + "and dm.status = 'AVAILABLE' "
                         + "and fm.period_start <= ?::timestamptz and fm.period_end >= ?::timestamptz "
                         + "and fm.available_at <= ?::timestamptz "
                         + "order by fm.id",

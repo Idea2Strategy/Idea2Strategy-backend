@@ -99,6 +99,16 @@ class FeatureMaterializationPinResolverIntegrationTest {
     }
 
     @Test
+    void ignoresSucceededMaterializationsWhoseOutputManifestWasSuperseded() {
+        jdbc.update("update market_data.dataset_manifests set status = 'SUPERSEDED' where id = ?", MANIFEST);
+        seedMaterialization(id(20), id(21), id(22), id(23), id(24), "c".repeat(64));
+
+        assertThat(resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .containsExactly(new BacktestRunInputPinWriter.FeaturePin(id(20), "sha256:" + HASH));
+    }
+
+    @Test
     void currentBasicRsiDefinitionReusesTheAuthoritySeededSemanticFeed() {
         assertThat(FeatureMaterializationPinResolver.expectedFeatureOutputFeedId(
                         UUID.fromString("647a5fd6-98ed-0617-d4b2-844748d54fac"),
