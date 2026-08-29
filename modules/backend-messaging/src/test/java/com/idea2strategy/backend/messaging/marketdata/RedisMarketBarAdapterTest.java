@@ -63,9 +63,7 @@ class RedisMarketBarAdapterTest {
     @Test
     void decodesCompactAdjustedHistoryProjection() {
         String payload = """
-                {"schemaVersion":1,"adjustment":"all","timeframe":"30m",
-                 "instrumentId":"70000000-0000-4000-8000-000000000001","bars":[
-                  {"t":"2026-08-06T14:30:00Z","o":100,"h":102,"l":99,"c":101,"v":1200}]}
+                {"actualFrom":"2026-08-06T14:30:00Z","actualTo":"2026-08-06T14:30:00Z","adjustment":"all","bars":[{"c":101,"h":102,"l":99,"o":100,"t":"2026-08-06T14:30:00Z","v":1200}],"datasetHashes":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"feed":"ALPACA_SIP_ALL_30M","instrumentId":"70000000-0000-4000-8000-000000000001","manifestIds":["manifest-2026"],"objectHashes":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"projectionHash":"2efbd2c826cd9877f79434c4e9584908bbeb0f8f9acbb3f0eb0aa3f0bdecbfcc","provider":"ALPACA","revision":2,"rowCount":1,"schemaVersion":2,"timeframe":"30m"}
                 """;
 
         List<MarketBar> result = new MarketBarJsonCodec().decodeHistory(
@@ -76,6 +74,18 @@ class RedisMarketBarAdapterTest {
             assertThat(bar.close()).isEqualByComparingTo("101");
             assertThat(bar.provider()).isEqualTo("ALPACA");
         });
+    }
+
+    @Test
+    void rejectsHistoryWhenProjectedOhlcvWasChangedAfterHashing() {
+        String payload = """
+                {"actualFrom":"2026-08-06T14:30:00Z","actualTo":"2026-08-06T14:30:00Z","adjustment":"all","bars":[{"c":999,"h":102,"l":99,"o":100,"t":"2026-08-06T14:30:00Z","v":1200}],"datasetHashes":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],"feed":"ALPACA_SIP_ALL_30M","instrumentId":"70000000-0000-4000-8000-000000000001","manifestIds":["manifest-2026"],"objectHashes":["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"projectionHash":"2efbd2c826cd9877f79434c4e9584908bbeb0f8f9acbb3f0eb0aa3f0bdecbfcc","provider":"ALPACA","revision":2,"rowCount":1,"schemaVersion":2,"timeframe":"30m"}
+                """;
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new MarketBarJsonCodec().decodeHistory(
+                        payload, INSTRUMENT, MarketBarTimeframe.THIRTY_MINUTES))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Invalid historical market bar payload");
     }
 
     private static MarketBar minute(Instant at, int index) {

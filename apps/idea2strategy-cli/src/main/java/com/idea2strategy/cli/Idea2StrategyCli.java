@@ -418,8 +418,15 @@ public final class Idea2StrategyCli {
 
     private static JsonNode strategyValidate(Arguments args, ApiClient api, String token) {
         args.rejectUnknown("--strategy-id");
-        return api.post("/api/v1/strategies/" + segment(args.required("--strategy-id"))
-                + "/validations", JSON.createObjectNode(), token);
+        String strategyId = args.required("--strategy-id");
+        JsonNode document = api.get("/api/v1/strategies/" + segment(strategyId) + "/document", token);
+        String catalogId = document.path("semanticDocument").path("catalogId").asText();
+        if (catalogId.isBlank()) {
+            throw new CliFailure(6, "INVALID_SERVER_RESPONSE",
+                    "Strategy document did not identify its Basic catalog");
+        }
+        ObjectNode body = JSON.createObjectNode().put("catalogId", catalogId);
+        return api.post("/api/v1/strategies/" + segment(strategyId) + "/validations", body, token);
     }
 
     private static JsonNode strategyRelease(Arguments args, ApiClient api, String token) {

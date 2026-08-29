@@ -10,15 +10,30 @@ import java.util.UUID;
 public final class MarketBarService {
     private final MarketBarPort port;
     private final BasicStrategyCatalogQueryService catalog;
+    private final MarketBenchmarkCatalogPort benchmarkCatalog;
     private final CurrentPrincipal principal;
 
     public MarketBarService(
             MarketBarPort port,
             BasicStrategyCatalogQueryService catalog,
             CurrentPrincipal principal) {
+        this(port, catalog, MarketBenchmarkCatalogPort.empty(), principal);
+    }
+
+    public MarketBarService(
+            MarketBarPort port,
+            BasicStrategyCatalogQueryService catalog,
+            MarketBenchmarkCatalogPort benchmarkCatalog,
+            CurrentPrincipal principal) {
         this.port = Objects.requireNonNull(port, "port");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.benchmarkCatalog = Objects.requireNonNull(benchmarkCatalog, "benchmarkCatalog");
         this.principal = Objects.requireNonNull(principal, "principal");
+    }
+
+    public List<SupportedInstrument> findBenchmarks() {
+        principal.accountId();
+        return benchmarkCatalog.findPublishedBenchmarks();
     }
 
     public List<MarketBarView> findRecent(UUID instrumentId, int limit) {
@@ -78,6 +93,7 @@ public final class MarketBarService {
         return catalog.getSupportedInstruments().stream()
                 .filter(instrument -> instrument.id().equals(instrumentId))
                 .findFirst()
+                .or(() -> benchmarkCatalog.findById(instrumentId))
                 .orElseThrow(() -> new UnsupportedMarketInstrumentException(instrumentId));
     }
 

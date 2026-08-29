@@ -64,7 +64,8 @@ class MigrationPolicyTest {
                         "V1__initial_schema.sql",
                         "V20260825000000__backend_basic_strategy_execution_completion.sql",
                         "V20260825000001__pipeline_basic_strategy_feature_catalog.sql",
-                        "V20260826010000__backend_bind_room_invitations_to_accounts.sql"),
+                        "V20260826010000__backend_bind_room_invitations_to_accounts.sql",
+                        "V20260829090000__pipeline_market_data_physical_ranges.sql"),
                 plan.orderedFileNames());
     }
 

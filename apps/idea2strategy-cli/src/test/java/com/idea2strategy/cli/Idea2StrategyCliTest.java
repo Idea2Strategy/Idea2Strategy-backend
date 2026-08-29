@@ -225,8 +225,6 @@ class Idea2StrategyCliTest {
         assertRoute("strategy", "create", "--name", "draft", "POST", "/api/v1/strategies");
         assertRoute("strategy", "copy", "--strategy-id", "s1", "--name", "copy", "POST",
                 "/api/v1/strategies/s1/copies");
-        assertRoute("strategy", "validate", "--strategy-id", "s1", "POST",
-                "/api/v1/strategies/s1/validations");
         assertRoute("strategy", "release", "--strategy-id", "s1", "--validation-run-id", "v1",
                 "--initial-cash-amount", "100000.00", "--budget-cap-bps", "10000",
                 "--broker-rules-version", "broker/v1", "--accounting-rules-version", "accounting/v1",
@@ -235,6 +233,24 @@ class Idea2StrategyCliTest {
                 "--execution-policy-version", "backtest-policy-v1",
                 "--candidate-conflict-policy", "{\"policy\":\"FIRST_WINS\"}", "POST",
                 "/api/v1/strategies/s1/releases");
+    }
+
+    @Test
+    void strategyValidationUsesTheCatalogPinnedByTheCurrentDocument() throws Exception {
+        Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
+        server.removeContext("/");
+        server.createContext("/api/v1/strategies/s1/document", exchange -> respond(exchange, 200,
+                "{\"semanticDocument\":{\"mode\":\"BASIC\",\"catalogId\":\"catalog-v2\"}}"));
+        server.createContext("/api/v1/strategies/s1/validations", exchange -> respond(exchange, 201,
+                "{\"validationRunId\":\"validation-1\",\"status\":\"VALID\"}"));
+
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(),
+                "strategy", "validate", "--strategy-id", "s1");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(requestMethod.get()).isEqualTo("POST");
+        assertThat(requestPath.get()).isEqualTo("/api/v1/strategies/s1/validations");
+        assertThat(JSON.readTree(requestBody.get()).path("catalogId").asText()).isEqualTo("catalog-v2");
     }
 
     @Test

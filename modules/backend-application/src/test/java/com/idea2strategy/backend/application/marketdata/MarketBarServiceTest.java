@@ -19,6 +19,27 @@ import org.junit.jupiter.api.Test;
 class MarketBarServiceTest {
     private static final UUID ACCOUNT_ID = UUID.fromString("10000000-0000-4000-8000-000000000001");
     private static final UUID AAPL_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
+    private static final UUID SPX_ID = UUID.fromString("70000000-0000-4000-8000-000000000500");
+
+    @Test
+    void exposesAndAuthorizesFixedIndexBenchmarksWithoutAddingThemToStrategyInstruments() {
+        MarketBarPort port = mock(MarketBarPort.class);
+        BasicStrategyCatalogQueryService catalog = mock(BasicStrategyCatalogQueryService.class);
+        MarketBenchmarkCatalogPort benchmarks = () -> List.of(
+                new SupportedInstrument(SPX_ID, "INDEX", "XNYS", "USD", "SPX"));
+        when(catalog.getSupportedInstruments()).thenReturn(List.of());
+        when(port.findRecent(SPX_ID, MarketBarTimeframe.ONE_DAY, 5000)).thenReturn(List.of(
+                new MarketBar("spx-1", SPX_ID, "YAHOO_INDEX", "SPX_DAILY",
+                        Instant.parse("2026-07-29T20:00:00Z"), 1, 0,
+                        new BigDecimal("7300"), new BigDecimal("7330"),
+                        new BigDecimal("7280"), new BigDecimal("7316.15"), BigDecimal.ZERO)));
+        var service = new MarketBarService(port, catalog, benchmarks, () -> ACCOUNT_ID);
+
+        assertThat(service.findBenchmarks()).extracting(SupportedInstrument::symbol)
+                .containsExactly("SPX");
+        assertThat(service.findRecentSnapshot(SPX_ID, MarketBarTimeframe.ONE_DAY, 5000).symbol())
+                .isEqualTo("SPX");
+    }
 
     @Test
     void authorizesAndReturnsOnlySupportedInstrumentBars() {
