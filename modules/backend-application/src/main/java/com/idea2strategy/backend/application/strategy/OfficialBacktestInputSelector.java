@@ -71,8 +71,8 @@ public final class OfficialBacktestInputSelector {
         List<Dataset> candidates = catalog.datasets().stream()
                 .filter(dataset -> "ADJUSTED".equals(dataset.dataLayer()))
                 .filter(dataset -> policy.marketDataSchemaVersion().equals(dataset.schemaVersion()))
-                .filter(dataset -> !dataset.periodStart().isBefore(policy.periodStart()))
-                .filter(dataset -> !dataset.periodEnd().isAfter(policy.periodEnd().plusDays(1)))
+                .filter(dataset -> dataset.periodEnd().isAfter(policy.periodStart()))
+                .filter(dataset -> dataset.periodStart().isBefore(policy.periodEnd()))
                 .filter(dataset -> !dataset.availableAt().isAfter(catalog.observedAt()))
                 .filter(dataset -> requirements.resolutions().contains(normalizeResolution(dataset.resolution())))
                 .toList();
@@ -89,15 +89,22 @@ public final class OfficialBacktestInputSelector {
             List<UUID> scopes = instruments.isEmpty() ? java.util.Arrays.asList((UUID) null) : instruments.stream().sorted().toList();
             for (UUID instrument : scopes) {
                 UUID requiredInstrument = instrument;
-                selected.addAll(minimumCover(
-                        resolution,
-                        coverageStart,
-                        coverageEnd,
-                        candidates.stream()
-                                .filter(dataset -> resolution.equals(normalizeResolution(dataset.resolution())))
-                                .filter(dataset -> dataset.instrumentId() == null
-                                        || dataset.instrumentId().equals(requiredInstrument))
-                                .toList()));
+                List<Dataset> eligible = candidates.stream()
+                        .filter(dataset -> resolution.equals(normalizeResolution(dataset.resolution())))
+                        .filter(dataset -> dataset.instrumentId() == null
+                                || dataset.instrumentId().equals(requiredInstrument))
+                        .toList();
+                if (requiredInstrument != null) {
+                    List<Dataset> scoped = eligible.stream()
+                            .filter(dataset -> requiredInstrument.equals(dataset.instrumentId()))
+                            .toList();
+                    Cover scopedCover = coverFrom(coverageStart, coverageStart, coverageEnd, scoped);
+                    if (scopedCover != null) {
+                        selected.addAll(scopedCover.datasets());
+                        continue;
+                    }
+                }
+                selected.addAll(minimumCover(resolution, coverageStart, coverageEnd, eligible));
             }
         }
         return new Selection(policy, List.copyOf(selected));

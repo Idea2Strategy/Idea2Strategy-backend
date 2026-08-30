@@ -65,7 +65,6 @@ class StrategyBotIndependentE2ETest {
     private static final UUID DATASET_ID = UUID.fromString("a0000000-0000-4000-8000-000000000027");
     private static final UUID FEATURE_ID = UUID.fromString("b0000000-0000-4000-8000-000000000027");
     private static final Instant NOW = Instant.parse("2026-08-02T09:00:00Z");
-    private static final String LEASE_TOKEN = "e2e-lease-token";
 
     @Test
     void createsValidatesReleasesRunsAndPermanentlyStopsABasicStrategyBot() {
@@ -84,11 +83,10 @@ class StrategyBotIndependentE2ETest {
                 clock,
                 new RecordingDomainEventPublisher());
         UUID strategyId = drafts.createBasic("Momentum", "Independent E2E");
-        repository.activateLease(LEASE_TOKEN);
         StrategyDocument saved = drafts.saveExplicitly(
                 strategyId,
                 0,
-                LEASE_TOKEN,
+                null,
                 semanticDocument(),
                 "{\"positions\":{}}",
                 "basic-semantic/v1",
@@ -249,7 +247,6 @@ class StrategyBotIndependentE2ETest {
         private final Map<UUID, StrategyDocument> documents = new HashMap<>();
         private final Map<UUID, StrategyValidationRun> validations = new HashMap<>();
         private CompiledFlowPlan plan;
-        private String leaseDigest;
 
         @Override
         public void create(Strategy strategy, StrategyDocument document) {
@@ -268,7 +265,7 @@ class StrategyBotIndependentE2ETest {
             if (current.editSequence() != expectedEditSequence) {
                 return StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
             }
-            if (!OWNER_ID.equals(accountId) || !leaseDigest.equals(tokenDigest)) {
+            if (!OWNER_ID.equals(accountId)) {
                 return StrategyDraftReplaceResult.INVALID_LEASE;
             }
             documents.put(document.strategyId(), document);
@@ -297,10 +294,6 @@ class StrategyBotIndependentE2ETest {
                 plan = candidate;
             }
             return plan;
-        }
-
-        private void activateLease(String token) {
-            leaseDigest = StrategyEditLeaseTokens.sha256(token);
         }
 
         private StrategyValidationRunQueryPort validationQuery() {

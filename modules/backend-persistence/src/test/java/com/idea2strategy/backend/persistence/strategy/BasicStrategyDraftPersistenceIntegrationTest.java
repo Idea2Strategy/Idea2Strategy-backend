@@ -116,22 +116,10 @@ class BasicStrategyDraftPersistenceIntegrationTest {
                 events);
 
         UUID strategyId = service.createBasic("Momentum", null);
-        String leaseTokenDigest = StrategyEditLeaseTokens.sha256(LEASE_TOKEN);
-        assertThat(leaseCommandAdapter.acquire(
-                        new StrategyEditLease(
-                                strategyId,
-                                OWNER_ID,
-                                leaseTokenDigest,
-                                StrategyEditLeaseTokens.DIGEST_KEY_VERSION,
-                                NOW,
-                                NOW,
-                                NOW.plusSeconds(60)),
-                        NOW))
-                .isTrue();
         var latest = service.autosave(
                 strategyId,
                 0,
-                LEASE_TOKEN,
+                null,
                 "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"latest\"}]}",
                 "{\"positions\":{},\"viewport\":{\"x\":10,\"y\":20,\"zoom\":1}}",
                 "basic-semantic/v1",
@@ -140,7 +128,7 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         assertThatThrownBy(() -> service.saveExplicitly(
                         strategyId,
                         0,
-                        LEASE_TOKEN,
+                        null,
                         "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"stale\"}]}",
                         "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}",
                         "basic-semantic/v1",
@@ -158,18 +146,17 @@ class BasicStrategyDraftPersistenceIntegrationTest {
         assertThat(new StrategyDocumentQueryService(documentQueryAdapter, principal).getOwned(strategyId))
                 .isEqualTo(latest);
         assertThat(draftCommandAdapter.replaceDocument(
-                        latest, 0, OWNER_ID, leaseTokenDigest, NOW))
+                        latest, 0, OWNER_ID, "", NOW))
                 .isEqualTo(com.idea2strategy.backend.application.strategy.StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE);
-        assertThat(leaseCommandAdapter.release(strategyId, OWNER_ID, leaseTokenDigest)).isTrue();
-        assertThatThrownBy(() -> service.autosave(
+        assertThat(service.autosave(
                         strategyId,
                         1,
-                        LEASE_TOKEN,
-                        "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"late\"}]}",
+                        null,
+                        "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"next\"}]}",
                         "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}",
                         "basic-semantic/v1",
-                        "basic-presentation/v1"))
-                .isInstanceOf(StrategyEditLeaseInvalidException.class);
+                        "basic-presentation/v1").editSequence())
+                .isEqualTo(2);
         assertThat(events.publishedEvents()).containsExactly(
                 new StrategyCreated(STRATEGY_ID, OWNER_ID, StrategyMode.BASIC, NOW));
     }

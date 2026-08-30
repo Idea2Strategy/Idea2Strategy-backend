@@ -19,7 +19,7 @@ class BasicStrategyWarningAnalyzerTest {
     private static final UUID INSTRUMENT_ID = UUID.fromString("25082500-0000-4000-8000-000000000002");
 
     @Test
-    void warnsAboutDuplicateContradictoryAndRepeatedSellExposure() {
+    void warnsAboutDuplicateContradictoryAndPositionDependentSellWithoutCallingItBuyExposure() {
         var assembly = assembly(TradeContainer.SELL, List.of(
                 condition("floor-a", "BASIC_DRAWDOWN_FROM_PEAK", "GTE", "10"),
                 condition("floor-copy", "BASIC_DRAWDOWN_FROM_PEAK", "GTE", "10"),
@@ -30,8 +30,20 @@ class BasicStrategyWarningAnalyzerTest {
         assertThat(warnings).allMatch(finding -> finding.severity() == StrategyValidationFinding.Severity.WARNING);
         assertThat(warnings).extracting(StrategyValidationFinding::code)
                 .contains("DUPLICATE_CONDITION", "CONTRADICTORY_CONDITION",
-                        "REPEATED_ORDER_EXPOSURE", "SELL_REQUIRES_POSITION");
+                        "SELL_REQUIRES_POSITION")
+                .doesNotContain("REPEATED_ORDER_EXPOSURE");
         assertThat(warnings).allSatisfy(finding -> assertThat(finding.location()).startsWith("groups[0]"));
+    }
+
+    @Test
+    void warnsAboutRepeatedExposureOnlyForBuyFlows() {
+        var warnings = new BasicStrategyWarningAnalyzer().analyze(assembly(
+                TradeContainer.BUY,
+                List.of(condition("entry", "BASIC_POSITION_RETURN", "GTE", "1")),
+                "3"));
+
+        assertThat(warnings).extracting(StrategyValidationFinding::code)
+                .containsExactly("REPEATED_ORDER_EXPOSURE");
     }
 
     @Test

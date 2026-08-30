@@ -54,14 +54,6 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                        updated_at = ?
                  where strategy_id = ?
                    and edit_sequence = ?
-                   and exists (
-                       select 1
-                         from strategy.strategy_edit_leases lease
-                        where lease.strategy_id = document.strategy_id
-                          and lease.account_id = ?
-                          and lease.lease_token_digest = ?
-                          and lease.expires_at > ?
-                   )
                 """,
                 document.semanticDocument(),
                 document.presentationDocument(),
@@ -72,10 +64,7 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                 document.editSequence(),
                 document.updatedAt().atOffset(ZoneOffset.UTC),
                 document.strategyId(),
-                expectedEditSequence,
-                accountId,
-                leaseTokenDigest,
-                now.atOffset(ZoneOffset.UTC));
+                expectedEditSequence);
         if (updated == 1) {
             return StrategyDraftReplaceResult.UPDATED;
         }
@@ -83,8 +72,6 @@ public class BasicStrategyDraftJpaCommandAdapter implements BasicStrategyDraftCo
                 "select edit_sequence from strategy.strategy_documents where strategy_id = ?",
                 Long.class,
                 document.strategyId());
-        return currentEditSequence != null && currentEditSequence == expectedEditSequence
-                ? StrategyDraftReplaceResult.INVALID_LEASE
-                : StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
+        return StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
     }
 }

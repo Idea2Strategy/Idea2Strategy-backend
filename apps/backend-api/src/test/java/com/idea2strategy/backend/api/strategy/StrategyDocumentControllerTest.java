@@ -90,9 +90,9 @@ class StrategyDocumentControllerTest {
     }
 
     @Test
-    void explicitlySavesWithSequenceAndLeaseProtection() throws Exception {
+    void explicitlySavesWithOptimisticSequenceWithoutAWindowLease() throws Exception {
         when(commandService.saveExplicitly(
-                        eq(STRATEGY_ID), eq(3L), eq(LEASE_TOKEN), eq(SEMANTIC), eq(PRESENTATION),
+                        eq(STRATEGY_ID), eq(3L), eq(null), eq(SEMANTIC), eq(PRESENTATION),
                         eq("basic-semantic/v1"), eq("basic-presentation/v1")))
                 .thenReturn(document(4));
 
@@ -101,7 +101,6 @@ class StrategyDocumentControllerTest {
                         .content("""
                                 {
                                   "expectedEditSequence":3,
-                                  "leaseToken":"lease-token",
                                   "semanticDocument":{"groups":[],"mode":"BASIC"},
                                   "presentationDocument":{"positions":{},"viewport":{"x":0,"y":0,"zoom":1}}
                                 }
@@ -143,7 +142,7 @@ class StrategyDocumentControllerTest {
     }
 
     @Test
-    void rejectsMissingDocumentContentAndLeaseTokens() throws Exception {
+    void rejectsMissingDocumentContentAndBlankLegacyLeaseHeartbeatTokens() throws Exception {
         mvc.perform(put("/api/v1/strategies/{strategyId}/document", STRATEGY_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"expectedEditSequence\":0,\"leaseToken\":\"lease-token\"}"))

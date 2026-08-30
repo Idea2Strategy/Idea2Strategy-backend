@@ -136,13 +136,10 @@ public final class BasicStrategyDraftCommandService {
                 replacement,
                 expectedEditSequence,
                 principal.accountId(),
-                StrategyEditLeaseTokens.sha256(leaseToken),
+                "",
                 now);
         if (result == StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE) {
             throw new StrategyDraftConflictException();
-        }
-        if (result == StrategyDraftReplaceResult.INVALID_LEASE) {
-            throw new StrategyEditLeaseInvalidException();
         }
         return replacement;
     }

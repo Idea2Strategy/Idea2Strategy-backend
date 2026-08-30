@@ -52,9 +52,6 @@ public class StrategyDocumentController {
         if (request.semanticDocument() == null || request.presentationDocument() == null) {
             throw new IllegalArgumentException("Semantic and presentation documents are required");
         }
-        if (request.leaseToken() == null || request.leaseToken().isBlank()) {
-            throw new IllegalArgumentException("Strategy edit lease token is required");
-        }
         return response(commandService.saveExplicitly(
                 strategyId,
                 request.expectedEditSequence(),

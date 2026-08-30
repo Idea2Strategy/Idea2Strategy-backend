@@ -25,7 +25,8 @@ public final class BasicStrategyWarningAnalyzer {
                 BasicBlock block = group.blocks().get(blockIndex);
                 if (ORDER.equals(block.elementCode())) {
                     BigDecimal executions = decimal(block.parameters().get("maxExecutions"));
-                    if (executions != null && executions.compareTo(BigDecimal.ONE) > 0) {
+                    if (group.container() == BasicBlockAssembly.TradeContainer.BUY
+                            && executions != null && executions.compareTo(BigDecimal.ONE) > 0) {
                         add(warnings, "REPEATED_ORDER_EXPOSURE", groupPath + ".blocks[" + blockIndex
                                 + "].parameters.maxExecutions", "Repeated execution can increase exposure");
                     }

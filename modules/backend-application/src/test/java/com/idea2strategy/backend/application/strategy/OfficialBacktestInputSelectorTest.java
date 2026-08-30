@@ -183,6 +183,37 @@ class OfficialBacktestInputSelectorTest {
     }
 
     @Test
+    void prefersACompleteInstrumentScopedHistoryOverASmallerSharedComposite() {
+        UUID meta = UUID.fromString("73000000-0000-4000-8000-000000000001");
+        UUID shared = UUID.fromString("73000000-0000-4000-8000-000000000002");
+        UUID scoped2024 = UUID.fromString("73000000-0000-4000-8000-000000000003");
+        UUID scoped2025 = UUID.fromString("73000000-0000-4000-8000-000000000004");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", "2024-01-01", "2025-07-30", NOW.minusSeconds(60))),
+                List.of(
+                        dataset(shared, "ADJUSTED", "30m", "2024-01-01", "2025-07-31", NOW.minusSeconds(10)),
+                        new Dataset(scoped2024, meta, "META", "ADJUSTED", "30m", 1,
+                                LocalDate.parse("2024-01-01"), LocalDate.parse("2025-01-01"),
+                                "market-bars/1", NOW.minusSeconds(20)),
+                        new Dataset(scoped2025, meta, "META", "ADJUSTED", "30m", 1,
+                                LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01"),
+                                "market-bars/1", NOW.minusSeconds(20))),
+                NOW);
+        String plan = """
+                {"executionSnapshot":{"partitions":[{"flows":[{
+                  "officialInstrumentIds":["%s"],
+                  "steps":[{"arguments":{"resolution":"30m"}}]
+                }]}]}}
+                """.formatted(meta);
+
+        var selected = OfficialBacktestInputSelector.select(
+                plan, LocalDate.parse("2024-01-05"), LocalDate.parse("2025-07-29"), catalog);
+
+        assertThat(selected.datasets()).extracting(Dataset::id)
+                .containsExactly(scoped2024, scoped2025);
+    }
+
+    @Test
     void selectsOnlyTheManifestsRequiredByIndependentThirtyMinuteFourHourAndDailyFlows() {
         UUID aapl = UUID.fromString("72000000-0000-4000-8000-000000000001");
         UUID msft = UUID.fromString("72000000-0000-4000-8000-000000000002");

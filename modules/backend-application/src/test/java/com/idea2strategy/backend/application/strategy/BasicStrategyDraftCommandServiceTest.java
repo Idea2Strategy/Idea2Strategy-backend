@@ -52,7 +52,7 @@ class BasicStrategyDraftCommandServiceTest {
         StrategyDocument autosaved = service.autosave(
                 strategyId,
                 0,
-                LEASE_TOKEN,
+                null,
                 "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"buy\"}]}",
                 "{\"positions\":{},\"viewport\":{\"x\":10,\"y\":20,\"zoom\":1}}",
                 "basic-semantic/v1",
@@ -60,7 +60,7 @@ class BasicStrategyDraftCommandServiceTest {
         StrategyDocument explicitlySaved = service.saveExplicitly(
                 strategyId,
                 1,
-                LEASE_TOKEN,
+                null,
                 "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"buy\"},{\"id\":\"sell\"}]}",
                 "{\"positions\":{},\"viewport\":{\"x\":30,\"y\":40,\"zoom\":1}}",
                 "basic-semantic/v1",
@@ -100,23 +100,21 @@ class BasicStrategyDraftCommandServiceTest {
     }
 
     @Test
-    void endedSessionCannotSaveLateChanges() {
+    void anOwnerCanSaveWithoutAnEditSessionLease() {
         var repository = new InMemoryDraftRepository();
         var service = service(repository, new RecordingDomainEventPublisher());
         UUID strategyId = service.createBasic("Momentum", null);
-        repository.activateLease(LEASE_TOKEN);
-        repository.releaseLease();
+        StrategyDocument saved = service.autosave(
+                strategyId,
+                0,
+                null,
+                "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"owner-save\"}]}",
+                "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}",
+                "basic-semantic/v1",
+                "basic-presentation/v1");
 
-        assertThatThrownBy(() -> service.autosave(
-                        strategyId,
-                        0,
-                        LEASE_TOKEN,
-                        "{\"mode\":\"BASIC\",\"groups\":[{\"id\":\"late\"}]}",
-                        "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}",
-                        "basic-semantic/v1",
-                        "basic-presentation/v1"))
-                .isInstanceOf(StrategyEditLeaseInvalidException.class);
-        assertThat(repository.documents.get(strategyId).editSequence()).isZero();
+        assertThat(saved.editSequence()).isEqualTo(1);
+        assertThat(repository.documents.get(strategyId)).isEqualTo(saved);
     }
 
     private static BasicStrategyDraftCommandService service(
@@ -155,12 +153,6 @@ class BasicStrategyDraftCommandServiceTest {
             StrategyDocument current = documents.get(document.strategyId());
             if (current == null || current.editSequence() != expectedEditSequence) {
                 return StrategyDraftReplaceResult.STALE_EDIT_SEQUENCE;
-            }
-            if (!accountId.equals(leaseAccountId)
-                    || !tokenDigest.equals(leaseTokenDigest)
-                    || leaseExpiresAt == null
-                    || !leaseExpiresAt.isAfter(now)) {
-                return StrategyDraftReplaceResult.INVALID_LEASE;
             }
             documents.put(document.strategyId(), document);
             return StrategyDraftReplaceResult.UPDATED;
