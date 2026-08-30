@@ -431,12 +431,18 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 .hasMessageContaining("does not match the execution policy schema");
         assertNothingDurable();
 
-        // 2. The manifest period reaches outside the policy window.
+        // 2. A manifest may safely envelope the requested policy window, but it may not
+        // cover only a smaller slice. Annual physical objects routinely extend beyond a
+        // local policy cutoff, while the replay still reads only the pinned policy dates.
         setPolicyDocument("2025-06-01T04:00:00Z", "2025-07-01T04:00:00Z", "v1");
+        jdbc.update("update market_data.dataset_manifests set period_start = '2025-06-15', "
+                + "period_end = '2025-06-20' where id = ?", DATASET_ID);
         assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
-                .hasMessageContaining("is not inside the execution policy period");
+                .hasMessageContaining("does not cover the execution policy period");
         assertNothingDurable();
+        jdbc.update("update market_data.dataset_manifests set period_start = '2025-01-01', "
+                + "period_end = '2025-12-31' where id = ?", DATASET_ID);
 
         // 3. A RAW manifest would measure the strategy against unadjusted splits and dividends.
         setPolicyDocument("2025-01-01T05:00:00Z", "2025-12-31T05:00:00Z", "v1");

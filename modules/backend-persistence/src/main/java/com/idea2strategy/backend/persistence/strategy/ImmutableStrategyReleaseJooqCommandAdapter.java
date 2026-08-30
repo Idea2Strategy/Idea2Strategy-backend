@@ -246,7 +246,7 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
                     "Official backtest execution policy must be locked and not retired at the release instant");
         }
         OfficialPolicy officialPolicy = officialPolicy(policy.get("policy_document", String.class));
-        datasets.forEach(dataset -> requireCompatibleOfficialInput(officialPolicy, dataset));
+        requireCompatibleOfficialInputs(officialPolicy, datasets);
         var queuedAt = release.releasedAt().atOffset(ZoneOffset.UTC);
         java.time.LocalDate periodStart = officialPolicy.periodStart();
         // The policy end is an exclusive local-day boundary, while a backtest request's
@@ -427,7 +427,9 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
      * {@code market-bars/1} manifest labels its period with UTC dates while the policy states local
      * midnight, so comparing instants would reject a pair that does describe the same days; the
      * consumer resolves it the same way (backtest-engine #87). Both ends are inclusive of the
-     * manifest and must lie inside the policy window.
+     * selected manifests and must cover the policy window without a gap. Physical
+     * objects may start earlier or end later than the requested replay window; the
+     * immutable request pins the narrower policy dates.
      */
     private OfficialPolicy officialPolicy(String policyDocument) {
         final com.fasterxml.jackson.databind.JsonNode document;
@@ -463,30 +465,52 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
         }
     }
 
-    private void requireCompatibleOfficialInput(OfficialPolicy policy, org.jooq.Record dataset) {
-        String manifestSchema = dataset.get("schema_version", String.class);
-        if (!policy.marketDataSchemaVersion().equals(manifestSchema)) {
-            throw new ImmutableStrategyReleaseRejectedException(
-                    "Official backtest dataset schema " + manifestSchema
-                            + " does not match the execution policy schema " + policy.marketDataSchemaVersion());
+    private void requireCompatibleOfficialInputs(
+            OfficialPolicy policy, java.util.List<? extends org.jooq.Record> datasets) {
+        for (org.jooq.Record dataset : datasets) {
+            String manifestSchema = dataset.get("schema_version", String.class);
+            if (!policy.marketDataSchemaVersion().equals(manifestSchema)) {
+                throw new ImmutableStrategyReleaseRejectedException(
+                        "Official backtest dataset schema " + manifestSchema
+                                + " does not match the execution policy schema " + policy.marketDataSchemaVersion());
+            }
+
+            // Official Basic runs replay adjusted prices. A RAW manifest would silently measure a strategy
+            // against unadjusted splits and dividends.
+            String dataLayer = dataset.get("data_layer", String.class);
+            if (!"ADJUSTED".equals(dataLayer)) {
+                throw new ImmutableStrategyReleaseRejectedException(
+                        "Official backtest dataset must be ADJUSTED, not " + dataLayer);
+            }
         }
 
-        // Official Basic runs replay adjusted prices. A RAW manifest would silently measure a strategy
-        // against unadjusted splits and dividends.
-        String dataLayer = dataset.get("data_layer", String.class);
-        if (!"ADJUSTED".equals(dataLayer)) {
-            throw new ImmutableStrategyReleaseRejectedException(
-                    "Official backtest dataset must be ADJUSTED, not " + dataLayer);
-        }
-
-        java.time.LocalDate manifestFirstDay = dataset.get("period_start", java.time.LocalDate.class);
-        java.time.LocalDate manifestLastDay = dataset.get("period_end", java.time.LocalDate.class);
-        if (manifestFirstDay.isBefore(policy.periodStart())
-                || manifestLastDay.isAfter(policy.periodEnd().plusDays(1))) {
-            throw new ImmutableStrategyReleaseRejectedException(
-                    "Official backtest dataset period " + manifestFirstDay + ".." + manifestLastDay
-                            + " is not inside the execution policy period "
-                            + policy.periodStart() + ".." + policy.periodEnd());
+        var byResolution = datasets.stream().collect(java.util.stream.Collectors.groupingBy(
+                dataset -> dataset.get("resolution", String.class)));
+        java.time.LocalDate requiredLastDay = policy.periodEnd().minusDays(1);
+        for (var entry : byResolution.entrySet()) {
+            java.time.LocalDate nextRequiredDay = policy.periodStart();
+            var ordered = entry.getValue().stream()
+                    .sorted(java.util.Comparator
+                            .comparing((org.jooq.Record dataset) ->
+                                    dataset.get("period_start", java.time.LocalDate.class))
+                            .thenComparing(dataset ->
+                                    dataset.get("period_end", java.time.LocalDate.class)))
+                    .toList();
+            for (org.jooq.Record dataset : ordered) {
+                java.time.LocalDate firstDay = dataset.get("period_start", java.time.LocalDate.class);
+                java.time.LocalDate lastDay = dataset.get("period_end", java.time.LocalDate.class);
+                if (lastDay.isBefore(nextRequiredDay)) continue;
+                if (firstDay.isAfter(nextRequiredDay)) break;
+                java.time.LocalDate afterManifest = lastDay.plusDays(1);
+                if (afterManifest.isAfter(nextRequiredDay)) nextRequiredDay = afterManifest;
+                if (nextRequiredDay.isAfter(requiredLastDay)) break;
+            }
+            if (!nextRequiredDay.isAfter(requiredLastDay)) {
+                throw new ImmutableStrategyReleaseRejectedException(
+                        "Official backtest dataset resolution " + entry.getKey()
+                                + " does not cover the execution policy period "
+                                + policy.periodStart() + ".." + policy.periodEnd());
+            }
         }
     }
 
