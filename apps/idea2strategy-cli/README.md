@@ -55,7 +55,7 @@ strategy release --strategy-id ID --validation-run-id ID --initial-cash-amount A
 bot list
 bot get --bot-id ID
 bot stop --bot-id ID [--reason-code USER_REQUEST] --yes
-backtest create --bot-id ID --period-start YYYY-MM-DD --period-end YYYY-MM-DD
+backtest create --bot-id ID --period-start YYYY-MM-DD --period-end YYYY-MM-DD --idempotency-key KEY
 backtest list [--limit 1..200] [--offset 0..]
 backtest get --run-id ID
 backtest cancel --run-id ID [--reason-code USER_CANCELLED] --yes
