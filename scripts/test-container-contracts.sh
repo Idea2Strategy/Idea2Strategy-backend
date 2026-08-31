@@ -26,6 +26,6 @@ for application in backend-api admin-mcp; do
 done
 
 test -f .dockerignore
-for pattern in '.git' '.gradle' '**/build' '.harness/local'; do
+for pattern in '.git' '.gradle' '**/build' '.local'; do
   grep -Fx "${pattern}" .dockerignore >/dev/null
 done
