@@ -23,8 +23,14 @@ import org.junit.jupiter.api.Test;
  */
 class StrategyBotCompiledPlanAssemblerTest {
     private static final UUID CATALOG_ID = UUID.fromString("40000000-0000-4000-8000-000000000001");
+    private static final UUID OFFICIAL_CATALOG_ID =
+            UUID.fromString("0f5a0000-0000-4000-8000-000000000001");
     private static final UUID PARTITION_ID = UUID.fromString("41000000-0000-4000-8000-000000000001");
     private static final UUID FEATURE_ID = UUID.fromString("70000000-0000-4000-8000-000000000001");
+    private static final UUID OFFICIAL_RSI_30M_FEATURE_ID =
+            UUID.fromString("ec37984b-6605-5560-8ea0-774c5b8e9626");
+    private static final UUID OFFICIAL_RSI_1H_FEATURE_ID =
+            UUID.fromString("85f4f80f-be4e-d9dc-bd52-d4781ba5f30f");
     private static final UUID AAPL = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final UUID MSFT = UUID.fromString("60000000-0000-4000-8000-000000000002");
     private static final Instant RELEASED_AT = Instant.parse("2026-08-04T13:30:00Z");
@@ -34,6 +40,41 @@ class StrategyBotCompiledPlanAssemblerTest {
             "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
     private static final String RSI_FEATURE_SET_HASH =
             "160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f";
+    private static final String OFFICIAL_RSI_30M_FEATURE_DOCUMENT = """
+            [{"calculatorVersion":"rsi:1.0.0",
+              "definitionHash":"sha256:250df12e46d233e7b8ece86c64df7a3941f0d70436aebe522b1387f15fb346dc",
+              "featureCode":"RSI_14",
+              "normalizedParameters":{"calendar_id":"XNYS",
+                "input_adjustment":"SPLIT_DIVIDEND_ADJUSTED",
+                "method":"SIMPLE_AVERAGE_BOUNDED_WINDOW","period":14,"price_field":"close"},
+              "outputValueType":"NUMBER","requiredHistoryPoints":15,"resolution":"30m"}]
+            """;
+    private static final String OFFICIAL_RSI_1H_FEATURE_DOCUMENT = """
+            [{"calculatorVersion":"rsi:1.0.0",
+              "definitionHash":"sha256:7e8c5600ff2bf07a043f797a50d6467f86fbdb56ee532c87929df97f246af2de",
+              "featureCode":"RSI_14",
+              "normalizedParameters":{"calendar_id":"XNYS",
+                "input_adjustment":"SPLIT_DIVIDEND_ADJUSTED",
+                "method":"SIMPLE_AVERAGE_BOUNDED_WINDOW","period":14,"price_field":"close"},
+              "outputValueType":"NUMBER","requiredHistoryPoints":15,"resolution":"1h"}]
+            """;
+    private static final String RETIRED_OFFICIAL_RSI_30M_FEATURE_DOCUMENT = """
+            [{"calculatorVersion":"rsi:1.0.0",
+              "definitionHash":"363f534dc77c6af0ebfe58f35be4fd2aa208906b1eaa36b550b17e9acb8692e4",
+              "featureCode":"RSI_14",
+              "normalizedParameters":{"calendar_id":"XNYS",
+                "input_adjustment":"SPLIT_DIVIDEND_ADJUSTED",
+                "method":"SIMPLE_AVERAGE_BOUNDED_WINDOW","period":14,"price_field":"close"},
+              "outputValueType":"NUMBER","requiredHistoryPoints":15,"resolution":"30m"}]
+            """;
+    private static final String OFFICIAL_RSI_30M_FEATURE_SET_HASH =
+            "7b17d553083fd23a2dd846bc85fc9808ab207c303f6e94c809e63aa094159c0d";
+    private static final String OFFICIAL_RSI_1H_FEATURE_SET_HASH =
+            "ac3758cba330676bea665e3b5338af37a64169f621bb52aa7c314526c930e1ca";
+    private static final String RETIRED_OFFICIAL_RSI_30M_FEATURE_SET_HASH =
+            "403ce6386874ff9be98ed0e254bb750e1748ba1c6951498241609309829ae768";
+    private static final String OFFICIAL_RSI_UNION_FEATURE_SET_HASH =
+            "1fe22f5c829fcfc1c341e7f3870dbe68eb9d2cb487d63abfd3a3e4b1cc2f8688";
     private static final String FORGED_FEATURE_SET_HASH = "f".repeat(64);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -162,53 +203,76 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     @Test
-    void hashesTheUnionWhenPartitionsRequireDifferentFeatureSets() {
+    void hashesTheSortedUnionOfTwoDisjointNonEmptyCompilerFeatureDocuments() {
         UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
-        JsonNode directFlow = objectMapper.createObjectNode()
-                .put("key", "direct")
-                .put("container", "BUY")
-                .<com.fasterxml.jackson.databind.node.ObjectNode>set(
-                        "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
-                .set("steps", objectMapper.createArrayNode()
-                        .add(step(1, "TEST_CONDITION", "{}"))
-                        .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER", "{}")));
-        var directRoot = (com.fasterxml.jackson.databind.node.ObjectNode) planWith(directFlow);
-        directRoot.put("requiredFeatureSetHash", EMPTY_FEATURE_SET_HASH);
-        directRoot.set("requiredFeatures", objectMapper.createArrayNode());
-        var featureRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
-                planWith(sellFlow("feature", List.of(MSFT)));
-        featureRoot.put("requiredFeatureSetHash", RSI_FEATURE_SET_HASH);
-        featureRoot.set("requiredFeatures", parse("""
-                [{"calculatorVersion":"rsi:1.0.0","definitionHash":"%s",
-                  "featureCode":"RSI_14","normalizedParameters":{"period":14},
-                  "outputValueType":"NUMBER","requiredHistoryPoints":15,"resolution":"30m"}]
-                """.formatted(HASH_B)));
-        BasicStrategyCatalog selected = new BasicStrategyCatalog(
-                catalog().version(),
-                List.of(
-                        element("TEST_CONDITION", "TEST", "{}", "[]"),
-                        element("BASIC_RSI_READ", "LOAD_FEATURE",
-                                "{\"feature\":\"RSI_14\",\"resolution\":\"$resolution\"}",
-                                "[\"RSI_14\"]"),
-                        element("BASIC_VALUE_COMPARE", "COMPARE",
-                                "{\"operator\":\"$operator\",\"threshold\":\"$threshold\"}", "[]"),
-                        element("BASIC_EQUAL_ALLOCATION_ORDER", "EMIT_ORDER_CANDIDATE",
-                                "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\","
-                                        + "\"side\":\"$container\"}", "[]")),
-                List.of(feature("RSI_14", "rsi:1.0.0", "30m", 15)),
-                catalog().instruments());
+        var thirtyMinuteRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(officialRsiFlow("thirty-minute", "BUY", List.of(AAPL), "30m"));
+        thirtyMinuteRoot.put("requiredFeatureSetHash", OFFICIAL_RSI_30M_FEATURE_SET_HASH);
+        thirtyMinuteRoot.set("requiredFeatures", parse(OFFICIAL_RSI_30M_FEATURE_DOCUMENT));
+        var oneHourRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(officialRsiFlow("one-hour", "SELL", List.of(MSFT), "1h"));
+        oneHourRoot.put("requiredFeatureSetHash", OFFICIAL_RSI_1H_FEATURE_SET_HASH);
+        oneHourRoot.set("requiredFeatures", parse(OFFICIAL_RSI_1H_FEATURE_DOCUMENT));
+        BasicStrategyCatalog selected = officialRsiCatalog(
+                officialRsiFeature("30m"), officialRsiFeature("1h"));
 
         ContractPlan plan = assembler.assemble(
                 List.of(
                         new StrategyBotCompiledPlanAssembler.PartitionPlan(
-                                directRoot, PARTITION_ID, 10_000, flowRecords(directRoot)),
+                                thirtyMinuteRoot, PARTITION_ID, 10_000,
+                                flowRecords(thirtyMinuteRoot, OFFICIAL_CATALOG_ID)),
                         new StrategyBotCompiledPlanAssembler.PartitionPlan(
-                                featureRoot, secondPartition, 10_000, flowRecords(featureRoot))),
+                                oneHourRoot, secondPartition, 10_000,
+                                flowRecords(oneHourRoot, OFFICIAL_CATALOG_ID))),
                 selected, new BigDecimal("100000.00"), HASH_A, HASH_B,
                 "basic-launch-snapshot.v1", RELEASED_AT);
 
-        assertThat(parse(plan.planDocument()).path("requiredFeatureSetHash").asText())
-                .isEqualTo("sha256:160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f");
+        JsonNode assembled = parse(plan.planDocument());
+        assertThat(assembled.path("requiredFeatures")).isEqualTo(parse("""
+                [
+                  {"requirementId":"rsi-14-pt1h",
+                   "featureId":"85f4f80f-be4e-d9dc-bd52-d4781ba5f30f",
+                   "featureVersion":"1.0.0",
+                   "instruments":["60000000-0000-4000-8000-000000000002"],
+                   "resolution":"PT1H","requiredObservations":14},
+                  {"requirementId":"rsi-14-pt30m",
+                   "featureId":"ec37984b-6605-5560-8ea0-774c5b8e9626",
+                   "featureVersion":"1.0.0",
+                   "instruments":["60000000-0000-4000-8000-000000000001"],
+                   "resolution":"PT30M","requiredObservations":14}
+                ]
+                """));
+        assertThat(assembled.path("requiredFeatureSetHash").asText())
+                .isEqualTo("sha256:" + OFFICIAL_RSI_UNION_FEATURE_SET_HASH)
+                .isNotEqualTo("sha256:" + OFFICIAL_RSI_30M_FEATURE_SET_HASH)
+                .isNotEqualTo("sha256:" + OFFICIAL_RSI_1H_FEATURE_SET_HASH);
+    }
+
+    @Test
+    void refusesConflictingCanonicalDefinitionsForTheSameFeatureIdentityAndResolution() {
+        UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
+        var activeRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(officialRsiFlow("active", "BUY", List.of(AAPL), "30m"));
+        activeRoot.put("requiredFeatureSetHash", OFFICIAL_RSI_30M_FEATURE_SET_HASH);
+        activeRoot.set("requiredFeatures", parse(OFFICIAL_RSI_30M_FEATURE_DOCUMENT));
+        var retiredRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(officialRsiFlow("retired", "SELL", List.of(MSFT), "30m"));
+        retiredRoot.put("requiredFeatureSetHash", RETIRED_OFFICIAL_RSI_30M_FEATURE_SET_HASH);
+        retiredRoot.set("requiredFeatures", parse(RETIRED_OFFICIAL_RSI_30M_FEATURE_DOCUMENT));
+
+        assertThatThrownBy(() -> assembler.assemble(
+                        List.of(
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        activeRoot, PARTITION_ID, 10_000,
+                                        flowRecords(activeRoot, OFFICIAL_CATALOG_ID)),
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        retiredRoot, secondPartition, 10_000,
+                                        flowRecords(retiredRoot, OFFICIAL_CATALOG_ID))),
+                        officialRsiCatalog(officialRsiFeature("30m")),
+                        new BigDecimal("100000.00"), HASH_A, HASH_B,
+                        "basic-launch-snapshot.v1", RELEASED_AT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Partitions disagree about required feature RSI_14@30m");
     }
 
     @Test
@@ -477,6 +541,10 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     private List<Flow> flowRecords(JsonNode planRoot) {
+        return flowRecords(planRoot, CATALOG_ID);
+    }
+
+    private List<Flow> flowRecords(JsonNode planRoot, UUID catalogId) {
         List<Flow> flows = new java.util.ArrayList<>();
         int order = 0;
         for (JsonNode flowNode : planRoot.path("flows")) {
@@ -485,7 +553,7 @@ class StrategyBotCompiledPlanAssemblerTest {
             flows.add(new Flow(
                     UUID.nameUUIDFromBytes(flowNode.path("key").asText().getBytes(
                             java.nio.charset.StandardCharsets.UTF_8)),
-                    flowNode.path("key").asText(), CATALOG_ID, UUID.randomUUID(), "{}", "{}",
+                    flowNode.path("key").asText(), catalogId, UUID.randomUUID(), "{}", "{}",
                     HASH_A, HASH_B, HASH_A, instruments, List.of(), order++));
         }
         return List.copyOf(flows);
@@ -541,6 +609,24 @@ class StrategyBotCompiledPlanAssemblerTest {
         return node;
     }
 
+    private JsonNode officialRsiFlow(
+            String key, String container, List<UUID> instruments, String resolution) {
+        var node = objectMapper.createObjectNode();
+        node.put("key", key);
+        node.put("container", container);
+        var ids = node.putArray("instrumentIds");
+        instruments.stream().map(UUID::toString).sorted().forEach(ids::add);
+        node.set("steps", objectMapper.createArrayNode()
+                .add(step(1, "BASIC_RSI_CROSS", """
+                        {"resolution":"%s","direction":"UP","period":"14","threshold":"50"}
+                        """.formatted(resolution)))
+                .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER", """
+                        {"orderPercent":"25","maxPositionPercent":"40","executionMode":"1회만",
+                         "waitMode":"조건 재충족","waitInterval":"1","maxExecutions":"1"}
+                        """)));
+        return node;
+    }
+
     private JsonNode step(int sequence, String elementCode, String parameters) {
         var node = objectMapper.createObjectNode();
         node.put("sequence", sequence);
@@ -568,6 +654,53 @@ class StrategyBotCompiledPlanAssemblerTest {
                         new SupportedInstrument(MSFT, "STOCK", "XNAS", "USD", "MSFT")));
     }
 
+    private BasicStrategyCatalog officialRsiCatalog(StrategyFeatureDefinition... features) {
+        return new BasicStrategyCatalog(
+                new ElementCatalogVersion(
+                        OFFICIAL_CATALOG_ID, "basic/v1", "basic-semantic/v1",
+                        "basic-elements:2026-08-25", "alpaca-sip/v1",
+                        "sha256:6f564e46b2696158c4c9ae2866a7fe6e02f4cb06849d7612a4032c632227d320",
+                        Instant.parse("2026-08-25T00:00:00Z"), null),
+                List.of(
+                        element(OFFICIAL_CATALOG_ID, "BASIC_RSI_CROSS", "RSI_CROSS",
+                                "{\"direction\":\"$direction\",\"period\":\"$period\","
+                                        + "\"resolution\":\"$resolution\",\"threshold\":\"$threshold\"}",
+                                "[\"RSI_14\"]"),
+                        element(OFFICIAL_CATALOG_ID, "BASIC_EQUAL_ALLOCATION_ORDER",
+                                "EMIT_ORDER_CANDIDATE",
+                                "{\"allocation\":\"EQUAL\",\"executionMode\":\"$executionMode\","
+                                        + "\"maxExecutions\":\"$maxExecutions\","
+                                        + "\"maxPositionPercent\":\"$maxPositionPercent\","
+                                        + "\"orderPercent\":\"$orderPercent\",\"orderType\":\"MARKET\","
+                                        + "\"side\":\"$container\",\"timeInForce\":\"DAY\","
+                                        + "\"waitInterval\":\"$waitInterval\",\"waitMode\":\"$waitMode\"}",
+                                "[]")),
+                List.of(features),
+                List.of(
+                        new SupportedInstrument(AAPL, "STOCK", "XNAS", "USD", "AAPL"),
+                        new SupportedInstrument(MSFT, "STOCK", "XNAS", "USD", "MSFT")));
+    }
+
+    private static StrategyFeatureDefinition officialRsiFeature(String resolution) {
+        return switch (resolution) {
+            case "30m" -> new StrategyFeatureDefinition(
+                    OFFICIAL_RSI_30M_FEATURE_ID, OFFICIAL_CATALOG_ID, "RSI_14", "rsi:1.0.0", "30m",
+                    "{\"calendar_id\":\"XNYS\",\"input_adjustment\":\"SPLIT_DIVIDEND_ADJUSTED\","
+                            + "\"method\":\"SIMPLE_AVERAGE_BOUNDED_WINDOW\",\"period\":14,"
+                            + "\"price_field\":\"close\"}",
+                    "NUMBER", 15,
+                    "sha256:250df12e46d233e7b8ece86c64df7a3941f0d70436aebe522b1387f15fb346dc");
+            case "1h" -> new StrategyFeatureDefinition(
+                    OFFICIAL_RSI_1H_FEATURE_ID, OFFICIAL_CATALOG_ID, "RSI_14", "rsi:1.0.0", "1h",
+                    "{\"calendar_id\":\"XNYS\",\"input_adjustment\":\"SPLIT_DIVIDEND_ADJUSTED\","
+                            + "\"method\":\"SIMPLE_AVERAGE_BOUNDED_WINDOW\",\"period\":14,"
+                            + "\"price_field\":\"close\"}",
+                    "NUMBER", 15,
+                    "sha256:7e8c5600ff2bf07a043f797a50d6467f86fbdb56ee532c87929df97f246af2de");
+            default -> throw new IllegalArgumentException("unsupported official RSI resolution: " + resolution);
+        };
+    }
+
     private static StrategyFeatureDefinition feature(
             String code, String calculatorVersion, String resolution, int historyPoints) {
         return new StrategyFeatureDefinition(
@@ -578,8 +711,13 @@ class StrategyBotCompiledPlanAssemblerTest {
 
     private static StrategyElementDefinition element(
             String code, String operation, String arguments, String features) {
+        return element(CATALOG_ID, code, operation, arguments, features);
+    }
+
+    private static StrategyElementDefinition element(
+            UUID catalogId, String code, String operation, String arguments, String features) {
         return new StrategyElementDefinition(
-                UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8)), CATALOG_ID,
+                UUID.nameUUIDFromBytes(code.getBytes(java.nio.charset.StandardCharsets.UTF_8)), catalogId,
                 code, "BLOCK", "{}", "{}", "{}",
                 "{\"containers\":[\"BUY\",\"SELL\"],\"runtime\":{\"operation\":\"" + operation + "\","
                         + "\"arguments\":" + arguments + "},"
