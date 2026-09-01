@@ -19,6 +19,19 @@ class BasicStrategyWarningAnalyzerTest {
     private static final UUID INSTRUMENT_ID = UUID.fromString("25082500-0000-4000-8000-000000000002");
 
     @Test
+    void materializedOpposingOccurrencesEmitContradictoryCondition() {
+        var assembly = assembly(TradeContainer.SELL, List.of(
+                condition("lower-bound", "BASIC_DRAWDOWN_FROM_PEAK", "GTE", "10"),
+                condition("upper-bound", "BASIC_DRAWDOWN_FROM_PEAK", "LT", "5")), "1");
+
+        var warnings = new BasicStrategyWarningAnalyzer().analyze(assembly);
+
+        assertThat(warnings).extracting(StrategyValidationFinding::code)
+                .contains("CONTRADICTORY_CONDITION")
+                .doesNotContain("DUPLICATE_CONDITION");
+    }
+
+    @Test
     void warnsAboutDuplicateContradictoryAndRepeatedSellExposure() {
         var assembly = assembly(TradeContainer.SELL, List.of(
                 condition("floor-a", "BASIC_DRAWDOWN_FROM_PEAK", "GTE", "10"),

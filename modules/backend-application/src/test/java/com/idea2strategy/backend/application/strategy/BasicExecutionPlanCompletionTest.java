@@ -20,6 +20,40 @@ class BasicExecutionPlanCompletionTest {
     private static final UUID MSFT = UUID.fromString("20000000-0000-4000-8000-000000000001");
 
     @Test
+    void preservesOccurrenceArgumentsSideResolutionAndInstrumentSelection() throws Exception {
+        String semantic = """
+                {"catalogId":"0f5a0000-0000-4000-8000-000000000001","groups":[
+                  {"id":"sell:bounds","allocationGroupId":"sell","container":"SELL","evaluationMode":"INDEPENDENT","allocationMode":"EQUAL",
+                   "instrumentIds":["20000000-0000-4000-8000-000000000001","10000000-0000-4000-8000-000000000001"],
+                   "blocks":[
+                     {"id":"lower","elementCode":"TEST_CONDITION","parameters":{"resolution":"1h","operator":"GTE","thresholdPercent":"10"}},
+                     {"id":"upper","elementCode":"TEST_CONDITION","parameters":{"resolution":"1h","operator":"LT","thresholdPercent":"5"}},
+                     {"id":"order","elementCode":"BASIC_EQUAL_ALLOCATION_ORDER","parameters":{"orderPercent":"25","maxPositionPercent":"40","executionMode":"1회만","waitMode":"조건 재충족","waitInterval":"1","maxExecutions":"1"}}],
+                   "connections":[
+                     {"fromBlockId":"lower","outputPort":"passed","toBlockId":"upper","inputPort":"passed"},
+                     {"fromBlockId":"upper","outputPort":"passed","toBlockId":"order","inputPort":"passed"}]}
+                ]}
+                """;
+        String canonical = StrategyDocumentJson.canonicalize(semantic);
+        var document = new StrategyDocument(
+                UUID.randomUUID(), canonical, "{}", "basic-semantic/v1", "basic-presentation/v1",
+                StrategyDocumentJson.sha256(canonical), StrategyDocumentJson.sha256("{}"), 1,
+                Instant.parse("2026-08-25T00:00:00Z"), Instant.parse("2026-08-25T00:00:00Z"));
+
+        JsonNode flow = JSON.readTree(new BasicExecutionPlanCompiler().compile(
+                UUID.randomUUID(), document, catalog(), Instant.parse("2026-08-25T00:00:01Z"))
+                .planDocument()).path("flows").get(0);
+
+        assertThat(flow.path("container").asText()).isEqualTo("SELL");
+        assertThat(flow.path("instrumentIds")).extracting(JsonNode::asText)
+                .containsExactly(AAPL.toString(), MSFT.toString());
+        assertThat(flow.path("steps").get(0).path("parameters"))
+                .isEqualTo(JSON.readTree("{\"operator\":\"GTE\",\"resolution\":\"1h\",\"thresholdPercent\":\"10\"}"));
+        assertThat(flow.path("steps").get(1).path("parameters"))
+                .isEqualTo(JSON.readTree("{\"operator\":\"LT\",\"resolution\":\"1h\",\"thresholdPercent\":\"5\"}"));
+    }
+
+    @Test
     void sortsInstrumentSpecificFlowsAndCarriesAllocationGroupAndCap() throws Exception {
         String semantic = """
                 {"catalogId":"0f5a0000-0000-4000-8000-000000000001","groups":[
@@ -53,6 +87,7 @@ class BasicExecutionPlanCompletionTest {
     }
 
     private static BasicStrategyCatalog catalog() {
+        String conditionSchema = "{\"type\":\"object\",\"properties\":{\"resolution\":{\"type\":\"string\"},\"operator\":{\"type\":\"string\"},\"thresholdPercent\":{\"type\":\"string\"}}}";
         String conditionContract = "{\"terminal\":false,\"containers\":[\"BUY\",\"SELL\"],\"runtime\":{\"operation\":\"TEST\",\"arguments\":{}},\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[]}}";
         String orderSchema = "{\"type\":\"object\",\"required\":[\"orderPercent\",\"maxPositionPercent\",\"executionMode\",\"waitMode\",\"waitInterval\",\"maxExecutions\"],\"properties\":{\"orderPercent\":{\"type\":\"string\"},\"maxPositionPercent\":{\"type\":\"string\"},\"executionMode\":{\"type\":\"string\"},\"waitMode\":{\"type\":\"string\"},\"waitInterval\":{\"type\":\"string\"},\"maxExecutions\":{\"type\":\"string\"}}}";
         String orderContract = "{\"terminal\":true,\"containers\":[\"BUY\",\"SELL\"],\"runtime\":{\"operation\":\"EMIT_ORDER_CANDIDATE\",\"arguments\":{\"side\":\"$container\",\"orderPercent\":\"$orderPercent\",\"maxPositionPercent\":\"$maxPositionPercent\",\"executionMode\":\"$executionMode\",\"waitMode\":\"$waitMode\",\"waitInterval\":\"$waitInterval\",\"maxExecutions\":\"$maxExecutions\"}},\"backtest\":{\"supported\":true,\"feeds\":[],\"features\":[]}}";
@@ -61,7 +96,7 @@ class BasicExecutionPlanCompletionTest {
                         "basic-elements:2026-08-25", "alpaca-sip/v1", "a".repeat(64),
                         Instant.parse("2026-08-25T00:00:00Z"), null),
                 List.of(
-                        element("TEST_CONDITION", "CONDITION", "{}", conditionContract),
+                        element("TEST_CONDITION", "CONDITION", conditionSchema, conditionContract),
                         element("BASIC_EQUAL_ALLOCATION_ORDER", "ACTION", orderSchema, orderContract)),
                 List.of(),
                 List.of(
