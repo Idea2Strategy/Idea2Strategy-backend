@@ -30,6 +30,11 @@ class StrategyBotCompiledPlanAssemblerTest {
     private static final Instant RELEASED_AT = Instant.parse("2026-08-04T13:30:00Z");
     private static final String HASH_A = "a".repeat(64);
     private static final String HASH_B = "b".repeat(64);
+    private static final String EMPTY_FEATURE_SET_HASH =
+            "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
+    private static final String RSI_FEATURE_SET_HASH =
+            "160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f";
+    private static final String FORGED_FEATURE_SET_HASH = "f".repeat(64);
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final StrategyBotCompiledPlanAssembler assembler = new StrategyBotCompiledPlanAssembler();
@@ -59,6 +64,104 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     @Test
+    void preservesAValidSinglePartitionCompilerFeatureSetIdentity() {
+        ContractPlan plan = assemble(planWith(buyFlow("buy", List.of(AAPL))));
+
+        assertThat(parse(plan.planDocument()).path("requiredFeatureSetHash").asText())
+                .isEqualTo("sha256:" + RSI_FEATURE_SET_HASH);
+    }
+
+    @Test
+    void refusesASinglePartitionWhoseClaimedHashDoesNotMatchItsFeatureDefinitions() {
+        var root = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(buyFlow("buy", List.of(AAPL)));
+        root.put("requiredFeatureSetHash", FORGED_FEATURE_SET_HASH);
+
+        assertThatThrownBy(() -> assemble(root))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requiredFeatureSetHash does not match requiredFeatures");
+    }
+
+    @Test
+    void refusesWhenOneOfSeveralPartitionsChangesItsFeatureDefinitionWithoutRehashing() {
+        UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
+        JsonNode firstRoot = planWith(buyFlow("buy", List.of(AAPL)));
+        var secondRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(sellFlow("sell", List.of(MSFT)));
+        ((com.fasterxml.jackson.databind.node.ObjectNode)
+                        secondRoot.path("requiredFeatures").get(0))
+                .put("definitionHash", "c".repeat(64));
+
+        assertThatThrownBy(() -> assembler.assemble(
+                        List.of(
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        firstRoot, PARTITION_ID, 10_000, flowRecords(firstRoot)),
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        secondRoot, secondPartition, 10_000, flowRecords(secondRoot))),
+                        catalog(feature("RSI_14", "rsi:1.0.0", "30m", 15)),
+                        new BigDecimal("100000.00"), HASH_A, HASH_B,
+                        "basic-launch-snapshot.v1", RELEASED_AT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(secondPartition.toString())
+                .hasMessageContaining("requiredFeatureSetHash does not match requiredFeatures");
+    }
+
+    @Test
+    void refusesMultiplePartitionsThatShareOneForgedFeatureSetHash() {
+        UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
+        var firstRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(buyFlow("buy", List.of(AAPL)));
+        var secondRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(sellFlow("sell", List.of(MSFT)));
+        firstRoot.put("requiredFeatureSetHash", FORGED_FEATURE_SET_HASH);
+        secondRoot.put("requiredFeatureSetHash", FORGED_FEATURE_SET_HASH);
+
+        assertThatThrownBy(() -> assembler.assemble(
+                        List.of(
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        firstRoot, PARTITION_ID, 10_000, flowRecords(firstRoot)),
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        secondRoot, secondPartition, 10_000, flowRecords(secondRoot))),
+                        catalog(feature("RSI_14", "rsi:1.0.0", "30m", 15)),
+                        new BigDecimal("100000.00"), HASH_A, HASH_B,
+                        "basic-launch-snapshot.v1", RELEASED_AT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requiredFeatureSetHash does not match requiredFeatures");
+    }
+
+    @Test
+    void refusesAPartitionThatOmitsItsCanonicalFeatureDefinitions() {
+        var root = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(buyFlow("buy", List.of(AAPL)));
+        root.remove("requiredFeatures");
+
+        assertThatThrownBy(() -> assemble(root))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requiredFeatures must be an array");
+    }
+
+    @Test
+    void refusesPartitionsCompiledByDifferentCompilerVersions() {
+        UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
+        JsonNode firstRoot = planWith(buyFlow("buy", List.of(AAPL)));
+        var secondRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(sellFlow("sell", List.of(MSFT)));
+        secondRoot.put("compilerVersion", "basic-compiler:2.0.0");
+
+        assertThatThrownBy(() -> assembler.assemble(
+                        List.of(
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        firstRoot, PARTITION_ID, 10_000, flowRecords(firstRoot)),
+                                new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                        secondRoot, secondPartition, 10_000, flowRecords(secondRoot))),
+                        catalog(feature("RSI_14", "rsi:1.0.0", "30m", 15)),
+                        new BigDecimal("100000.00"), HASH_A, HASH_B,
+                        "basic-launch-snapshot.v1", RELEASED_AT))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("all partitions must use one compiler version");
+    }
+
+    @Test
     void hashesTheUnionWhenPartitionsRequireDifferentFeatureSets() {
         UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
         JsonNode directFlow = objectMapper.createObjectNode()
@@ -70,13 +173,11 @@ class StrategyBotCompiledPlanAssemblerTest {
                         .add(step(1, "TEST_CONDITION", "{}"))
                         .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER", "{}")));
         var directRoot = (com.fasterxml.jackson.databind.node.ObjectNode) planWith(directFlow);
-        directRoot.put("requiredFeatureSetHash",
-                "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945");
+        directRoot.put("requiredFeatureSetHash", EMPTY_FEATURE_SET_HASH);
         directRoot.set("requiredFeatures", objectMapper.createArrayNode());
         var featureRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
                 planWith(sellFlow("feature", List.of(MSFT)));
-        featureRoot.put("requiredFeatureSetHash",
-                "160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f");
+        featureRoot.put("requiredFeatureSetHash", RSI_FEATURE_SET_HASH);
         featureRoot.set("requiredFeatures", parse("""
                 [{"calculatorVersion":"rsi:1.0.0","definitionHash":"%s",
                   "featureCode":"RSI_14","normalizedParameters":{"period":14},
@@ -394,7 +495,24 @@ class StrategyBotCompiledPlanAssemblerTest {
         var root = objectMapper.createObjectNode();
         root.put("schemaVersion", "basic-compiled-plan.v1");
         root.put("compilerVersion", "basic-compiler:1.0.0");
-        root.put("requiredFeatureSetHash", HASH_A);
+        boolean requiresRsi = false;
+        for (JsonNode flow : flows) {
+            for (JsonNode step : flow.path("steps")) {
+                requiresRsi |= "BASIC_RSI_READ".equals(step.path("elementCode").asText());
+            }
+        }
+        root.put(
+                "requiredFeatureSetHash",
+                requiresRsi ? RSI_FEATURE_SET_HASH : EMPTY_FEATURE_SET_HASH);
+        root.set(
+                "requiredFeatures",
+                requiresRsi
+                        ? parse("""
+                                [{"calculatorVersion":"rsi:1.0.0","definitionHash":"%s",
+                                  "featureCode":"RSI_14","normalizedParameters":{"period":14},
+                                  "outputValueType":"NUMBER","requiredHistoryPoints":15,"resolution":"30m"}]
+                                """.formatted(HASH_B))
+                        : objectMapper.createArrayNode());
         var array = root.putArray("flows");
         for (JsonNode flow : flows) {
             array.add(flow);

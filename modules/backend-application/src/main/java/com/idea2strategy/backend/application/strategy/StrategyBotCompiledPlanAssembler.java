@@ -434,12 +434,28 @@ public final class StrategyBotCompiledPlanAssembler {
      * The partition compiler identifies its canonical feature-definition document. A plan with more
      * than one distinct partition-local document publishes the identity of their sorted union,
      * matching the compiler's existing feature-document algorithm. The common single-document path
-     * deliberately preserves the compiler's emitted hash byte-for-byte.
+     * deliberately preserves the compiler's emitted hash byte-for-byte. Every partition's claim is
+     * re-derived first, so neither the single-document path nor a shared forged hash can bypass the
+     * feature definitions the compiler artifact actually carries.
      */
     private String requiredFeatureSetHash(List<PartitionPlan> partitionPlans) {
-        Set<String> partitionHashes = partitionPlans.stream()
-                .map(partition -> requiredText(partition.planRoot(), "requiredFeatureSetHash"))
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Set<String> partitionHashes = new LinkedHashSet<>();
+        for (PartitionPlan partition : partitionPlans) {
+            JsonNode features = partition.planRoot().path("requiredFeatures");
+            if (!features.isArray()) {
+                throw new IllegalStateException(
+                        "Partition " + partition.partitionId()
+                                + " requiredFeatures must be an array");
+            }
+            String claimed = requiredText(partition.planRoot(), "requiredFeatureSetHash");
+            String actual = StrategyDocumentJson.sha256(canonical(features));
+            if (!actual.equals(claimed)) {
+                throw new IllegalStateException(
+                        "Partition " + partition.partitionId()
+                                + " requiredFeatureSetHash does not match requiredFeatures");
+            }
+            partitionHashes.add(actual);
+        }
         if (partitionHashes.size() == 1) {
             return partitionHashes.iterator().next();
         }
@@ -447,10 +463,6 @@ public final class StrategyBotCompiledPlanAssembler {
         Map<String, String> featureDocuments = new java.util.TreeMap<>();
         for (PartitionPlan partition : partitionPlans) {
             JsonNode features = partition.planRoot().path("requiredFeatures");
-            if (!features.isArray()) {
-                throw new IllegalStateException(
-                        "A partition with a distinct feature set must carry requiredFeatures");
-            }
             features.forEach(feature -> {
                 String key = requiredText(feature, "featureCode") + "\u0000"
                         + requiredText(feature, "resolution");
