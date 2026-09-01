@@ -95,8 +95,9 @@ public final class OfficialBacktestInputSelector {
                         coverageEnd,
                         candidates.stream()
                                 .filter(dataset -> resolution.equals(normalizeResolution(dataset.resolution())))
-                                .filter(dataset -> dataset.instrumentId() == null
-                                        || dataset.instrumentId().equals(requiredInstrument))
+                                .filter(dataset -> requiredInstrument == null
+                                        ? dataset.instrumentId() == null
+                                        : requiredInstrument.equals(dataset.instrumentId()))
                                 .toList()));
             }
         }
