@@ -90,12 +90,12 @@ class CustomBacktestJooqAdapterIntegrationTest {
         jdbc.update("delete from market_data.dataset_manifests where id = ?", FEATURE_MANIFEST);
         jdbc.update("delete from market_data.pipeline_runs where id = ?", PIPELINE);
         jdbc.update("delete from market_data.feature_definitions where id = ?", FEATURE);
-        jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.dataset_objects where id in (?, ?)", DATASET_OBJECT, OLDER_DATASET_OBJECT);
         jdbc.update("delete from storage.objects where id in (?, ?)", STORAGE_OBJECT, OLDER_STORAGE_OBJECT);
         jdbc.update("delete from market_data.dataset_manifests where id = ?", DATASET);
         jdbc.update("delete from market_data.dataset_manifests where id = ?", OLDER_DATASET);
         jdbc.update("delete from market_data.dataset_manifests where id = ?", EMPTY_NEWER_DATASET);
+        jdbc.update("delete from market_data.instruments where id = ?", INSTRUMENT);
         jdbc.update("delete from market_data.feeds where provider_id = ? and code = 'FEATURE_RSI_14_1D_RSI_1_0_0'", PROVIDER);
         jdbc.update("delete from market_data.feeds where id in (?, ?)", FEED, FEATURE_FEED);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE);
@@ -121,27 +121,30 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "values (?, ?, 'FEATURE_RSI_14_1D_RSI_1_0_0', 'FEATURE_SERIES', '1d', 'UTC', "
                         + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
                 FEATURE_FEED, PROVIDER, at);
+        jdbc.update("insert into market_data.instruments "
+                        + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
+                INSTRUMENT);
         jdbc.update(
                 "insert into market_data.dataset_manifests "
-                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, period_end, "
                         + "schema_version, dataset_hash, created_at, available_at) "
-                        + "values (?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2024-01-01T05:00:00Z', "
+                        + "values (?, ?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2024-01-01T05:00:00Z', "
                         + "'2025-01-01T04:59:59Z', 'v1', ?, ?, ?)",
-                DATASET, FEED, "a".repeat(64), at, at);
+                DATASET, FEED, INSTRUMENT, "a".repeat(64), at, at);
         jdbc.update(
                 "insert into market_data.dataset_manifests "
-                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, period_end, "
                         + "schema_version, dataset_hash, created_at, available_at) "
-                        + "values (?, ?, 'ADJUSTED', '1d', 2, 'AVAILABLE', '2024-01-01T05:00:00Z', "
+                        + "values (?, ?, ?, 'ADJUSTED', '1d', 2, 'AVAILABLE', '2024-01-01T05:00:00Z', "
                         + "'2025-01-01T04:59:59Z', 'v1', ?, ?, ?)",
-                OLDER_DATASET, FEED, "8".repeat(64), at.minusDays(2), at.minusDays(1));
+                OLDER_DATASET, FEED, INSTRUMENT, "8".repeat(64), at.minusDays(2), at.minusDays(1));
         jdbc.update(
                 "insert into market_data.dataset_manifests "
-                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "(id, feed_id, instrument_id, data_layer, resolution, revision_number, status, period_start, period_end, "
                         + "schema_version, dataset_hash, created_at, available_at) "
-                        + "values (?, ?, 'ADJUSTED', '1d', 3, 'AVAILABLE', '2024-01-01T05:00:00Z', "
+                        + "values (?, ?, ?, 'ADJUSTED', '1d', 3, 'AVAILABLE', '2024-01-01T05:00:00Z', "
                         + "'2025-01-01T04:59:59Z', 'v1', ?, ?, ?)",
-                EMPTY_NEWER_DATASET, FEED, "7".repeat(64), at.minusHours(1), at.minusHours(1));
+                EMPTY_NEWER_DATASET, FEED, INSTRUMENT, "7".repeat(64), at.minusHours(1), at.minusHours(1));
         insertMarketObject(STORAGE_OBJECT, DATASET_OBJECT, DATASET, "market/main.parquet", "6".repeat(64), at);
         insertMarketObject(OLDER_STORAGE_OBJECT, OLDER_DATASET_OBJECT, OLDER_DATASET,
                 "market/revision-2.parquet", "5".repeat(64), at.minusDays(1));
@@ -149,9 +152,6 @@ class CustomBacktestJooqAdapterIntegrationTest {
                         + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
                         + "definition_hash, published_at) values (?, 'basic/v1', 'schema/v1', 'catalog/v1', "
                         + "'data/v1', ?, ?)", CATALOG, "b".repeat(64), at.minusDays(1));
-        jdbc.update("insert into market_data.instruments "
-                        + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
-                INSTRUMENT);
         jdbc.update("insert into market_data.feature_definitions "
                         + "(id, element_catalog_version_id, feature_code, calculator_version, resolution, "
                         + "normalized_parameters, output_value_type, required_history_points, definition_hash) "
