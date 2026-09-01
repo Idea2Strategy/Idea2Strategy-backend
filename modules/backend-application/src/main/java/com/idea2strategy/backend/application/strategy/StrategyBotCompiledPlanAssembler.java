@@ -120,6 +120,21 @@ public final class StrategyBotCompiledPlanAssembler {
      */
     private static final int MONEY_SCALE = 8;
 
+    public record PartitionPlan(
+            JsonNode planRoot,
+            UUID partitionId,
+            int budgetCapBps,
+            List<Flow> flows) {
+        public PartitionPlan {
+            Objects.requireNonNull(planRoot, "planRoot");
+            Objects.requireNonNull(partitionId, "partitionId");
+            flows = List.copyOf(Objects.requireNonNull(flows, "flows"));
+            if (flows.isEmpty()) {
+                throw new IllegalArgumentException("partition must contain at least one flow");
+            }
+        }
+    }
+
     private final ObjectMapper objectMapper = new ObjectMapper()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
 
@@ -143,12 +158,40 @@ public final class StrategyBotCompiledPlanAssembler {
             String snapshotHash,
             String snapshotSchemaVersion,
             Instant releasedAt) {
-        Objects.requireNonNull(planRoot, "planRoot");
+        return assemble(
+                List.of(new PartitionPlan(planRoot, partitionId, budgetCapBps, flows)),
+                catalog,
+                initialCashAmount,
+                semanticHash,
+                snapshotHash,
+                snapshotSchemaVersion,
+                releasedAt);
+    }
+
+    public ContractPlan assemble(
+            List<PartitionPlan> partitionPlans,
+            BasicStrategyCatalog catalog,
+            BigDecimal initialCashAmount,
+            String semanticHash,
+            String snapshotHash,
+            String snapshotSchemaVersion,
+            Instant releasedAt) {
+        partitionPlans = List.copyOf(Objects.requireNonNull(partitionPlans, "partitionPlans"));
+        if (partitionPlans.isEmpty()) {
+            throw new IllegalArgumentException("compiled plan must contain at least one partition");
+        }
         Objects.requireNonNull(catalog, "catalog");
-        Objects.requireNonNull(partitionId, "partitionId");
         Objects.requireNonNull(initialCashAmount, "initialCashAmount");
-        Objects.requireNonNull(flows, "flows");
         Objects.requireNonNull(releasedAt, "releasedAt");
+
+        JsonNode firstPlanRoot = partitionPlans.getFirst().planRoot();
+        String compilerVersion = requiredText(firstPlanRoot, "compilerVersion");
+        partitionPlans.forEach(partition -> {
+            if (!compilerVersion.equals(requiredText(partition.planRoot(), "compilerVersion"))) {
+                throw new IllegalStateException("all partitions must use one compiler version");
+            }
+        });
+        String requiredFeatureSetHash = requiredFeatureSetHash(partitionPlans);
 
         Map<String, StrategyElementDefinition> elements = new HashMap<>();
         catalog.elements().forEach(element -> elements.put(element.elementCode(), element));
@@ -158,16 +201,16 @@ public final class StrategyBotCompiledPlanAssembler {
                         feature.featureCode(), normalizedResolution(feature.resolution())),
                 feature));
 
-        Map<String, List<PlanStep>> containers = containersByKey(planRoot, elements);
-        List<RequiredFeature> requiredFeatures = requiredFeatures(planRoot, elements, features);
+        List<RequiredFeature> requiredFeatures = requiredFeatures(
+                partitionPlans.stream().map(PartitionPlan::planRoot).toList(), elements, features);
 
         ObjectNode root = objectMapper.createObjectNode();
         root.put("contractVersion", CONTRACT_VERSION);
         root.put("schemaVersion", PLAN_SCHEMA_VERSION);
         root.put("elementCatalogVersion", catalog.version().catalogVersion());
         root.put("instrumentCatalogVersion", PUBLISHED_INSTRUMENT_CATALOG_VERSION);
-        root.put("compilerVersion", requiredText(planRoot, "compilerVersion"));
-        root.put("requiredFeatureSetHash", prefixed(requiredText(planRoot, "requiredFeatureSetHash")));
+        root.put("compilerVersion", compilerVersion);
+        root.put("requiredFeatureSetHash", prefixed(requiredFeatureSetHash));
 
         ArrayNode featureNodes = root.putArray("requiredFeatures");
         requiredFeatures.forEach(feature -> {
@@ -190,24 +233,27 @@ public final class StrategyBotCompiledPlanAssembler {
         snapshot.put("initialCashAmount", moneyAmount(initialCashAmount));
         snapshot.put("currency", "USD");
         ArrayNode partitions = snapshot.putArray("partitions");
-        ObjectNode partition = partitions.addObject();
-        partition.put("key", partitionId.toString());
-        partition.put("budgetCapBps", budgetCapBps);
-        ArrayNode flowNodes = partition.putArray("flows");
-        flows.stream()
-                .sorted(java.util.Comparator.comparingInt(Flow::positionOrder))
-                .forEach(flow -> {
-                    ObjectNode node = flowNodes.addObject();
-                    node.put("key", flow.name());
-                    ArrayNode instruments = node.putArray("officialInstrumentIds");
-                    flow.instrumentIds().stream().map(UUID::toString).sorted().forEach(instruments::add);
-                    List<PlanStep> container = containers.get(flow.name());
-                    if (container == null) {
-                        throw new IllegalStateException(
-                                "released flow " + flow.name() + " has no compiled container: the "
-                                        + "release and the compiled plan disagree about which flows exist");
-                    }
-                    appendSteps(node.putArray("steps"), container);
+        partitionPlans.forEach(partitionPlan -> {
+            Map<String, List<PlanStep>> containers = containersByKey(partitionPlan.planRoot(), elements);
+            ObjectNode partition = partitions.addObject();
+            partition.put("key", partitionPlan.partitionId().toString());
+            partition.put("budgetCapBps", partitionPlan.budgetCapBps());
+            ArrayNode flowNodes = partition.putArray("flows");
+            partitionPlan.flows().stream()
+                    .sorted(java.util.Comparator.comparingInt(Flow::positionOrder))
+                    .forEach(flow -> {
+                        ObjectNode node = flowNodes.addObject();
+                        node.put("key", flow.name());
+                        ArrayNode instruments = node.putArray("officialInstrumentIds");
+                        flow.instrumentIds().stream().map(UUID::toString).sorted().forEach(instruments::add);
+                        List<PlanStep> container = containers.get(flow.name());
+                        if (container == null) {
+                            throw new IllegalStateException(
+                                    "released flow " + flow.name() + " has no compiled container: the "
+                                            + "release and the compiled plan disagree about which flows exist");
+                        }
+                        appendSteps(node.putArray("steps"), container);
+                    });
                 });
 
         String checksum = checksum(root, requiredFeatures);
@@ -331,11 +377,13 @@ public final class StrategyBotCompiledPlanAssembler {
      * instruments requiring the same feature would produce exactly that.
      */
     private List<RequiredFeature> requiredFeatures(
-            JsonNode planRoot,
+            List<JsonNode> planRoots,
             Map<String, StrategyElementDefinition> elements,
             Map<FeatureRequirementKey, StrategyFeatureDefinition> features) {
         Map<FeatureRequirementKey, Set<String>> instrumentsByFeature = new LinkedHashMap<>();
-        for (JsonNode flow : planRoot.path("flows")) {
+        for (JsonNode flow : planRoots.stream()
+                .flatMap(planRoot -> planRoot.path("flows").valueStream())
+                .toList()) {
             Set<String> instruments = new LinkedHashSet<>();
             flow.path("instrumentIds").forEach(node -> instruments.add(node.asText()));
             Set<FeatureRequirementKey> requirements = new LinkedHashSet<>();
@@ -380,6 +428,43 @@ public final class StrategyBotCompiledPlanAssembler {
                     requiredObservations(definition)));
         });
         return List.copyOf(requirements);
+    }
+
+    /**
+     * The partition compiler identifies its canonical feature-definition document. A plan with more
+     * than one distinct partition-local document publishes the identity of their sorted union,
+     * matching the compiler's existing feature-document algorithm. The common single-document path
+     * deliberately preserves the compiler's emitted hash byte-for-byte.
+     */
+    private String requiredFeatureSetHash(List<PartitionPlan> partitionPlans) {
+        Set<String> partitionHashes = partitionPlans.stream()
+                .map(partition -> requiredText(partition.planRoot(), "requiredFeatureSetHash"))
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (partitionHashes.size() == 1) {
+            return partitionHashes.iterator().next();
+        }
+
+        Map<String, String> featureDocuments = new java.util.TreeMap<>();
+        for (PartitionPlan partition : partitionPlans) {
+            JsonNode features = partition.planRoot().path("requiredFeatures");
+            if (!features.isArray()) {
+                throw new IllegalStateException(
+                        "A partition with a distinct feature set must carry requiredFeatures");
+            }
+            features.forEach(feature -> {
+                String key = requiredText(feature, "featureCode") + "\u0000"
+                        + requiredText(feature, "resolution");
+                String document = canonical(feature);
+                String previous = featureDocuments.putIfAbsent(key, document);
+                if (previous != null && !previous.equals(document)) {
+                    throw new IllegalStateException(
+                            "Partitions disagree about required feature " + key.replace('\u0000', '@'));
+                }
+            });
+        }
+        ArrayNode union = objectMapper.createArrayNode();
+        featureDocuments.values().forEach(document -> union.add(parse(document)));
+        return StrategyDocumentJson.sha256(canonical(union));
     }
 
     private FeatureRequirementKey resolveFeatureRequirement(

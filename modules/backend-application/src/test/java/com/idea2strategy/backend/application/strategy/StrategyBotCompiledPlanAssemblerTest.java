@@ -35,6 +35,82 @@ class StrategyBotCompiledPlanAssemblerTest {
     private final StrategyBotCompiledPlanAssembler assembler = new StrategyBotCompiledPlanAssembler();
 
     @Test
+    void publishesEveryCompiledPartitionUnderItsExactIdentity() {
+        UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
+        JsonNode firstRoot = planWith(buyFlow("buy", List.of(AAPL)));
+        JsonNode secondRoot = planWith(sellFlow("sell", List.of(MSFT)));
+
+        ContractPlan plan = assembler.assemble(
+                List.of(
+                        new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                firstRoot, PARTITION_ID, 10_000, flowRecords(firstRoot)),
+                        new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                secondRoot, secondPartition, 10_000, flowRecords(secondRoot))),
+                catalog(feature("RSI_14", "rsi:1.0.0", "30m", 15)),
+                new BigDecimal("100000.00"), HASH_A, HASH_B,
+                "basic-launch-snapshot.v1", RELEASED_AT);
+
+        JsonNode partitions = parse(plan.planDocument()).path("executionSnapshot").path("partitions");
+        assertThat(partitions).hasSize(2);
+        assertThat(partitions).extracting(node -> node.path("key").asText())
+                .containsExactly(PARTITION_ID.toString(), secondPartition.toString());
+        assertThat(sideOf(partitions.get(0).path("flows").get(0))).isEqualTo("BUY");
+        assertThat(sideOf(partitions.get(1).path("flows").get(0))).isEqualTo("SELL");
+    }
+
+    @Test
+    void hashesTheUnionWhenPartitionsRequireDifferentFeatureSets() {
+        UUID secondPartition = UUID.fromString("41000000-0000-4000-8000-000000000002");
+        JsonNode directFlow = objectMapper.createObjectNode()
+                .put("key", "direct")
+                .put("container", "BUY")
+                .<com.fasterxml.jackson.databind.node.ObjectNode>set(
+                        "instrumentIds", objectMapper.createArrayNode().add(AAPL.toString()))
+                .set("steps", objectMapper.createArrayNode()
+                        .add(step(1, "TEST_CONDITION", "{}"))
+                        .add(step(2, "BASIC_EQUAL_ALLOCATION_ORDER", "{}")));
+        var directRoot = (com.fasterxml.jackson.databind.node.ObjectNode) planWith(directFlow);
+        directRoot.put("requiredFeatureSetHash",
+                "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945");
+        directRoot.set("requiredFeatures", objectMapper.createArrayNode());
+        var featureRoot = (com.fasterxml.jackson.databind.node.ObjectNode)
+                planWith(sellFlow("feature", List.of(MSFT)));
+        featureRoot.put("requiredFeatureSetHash",
+                "160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f");
+        featureRoot.set("requiredFeatures", parse("""
+                [{"calculatorVersion":"rsi:1.0.0","definitionHash":"%s",
+                  "featureCode":"RSI_14","normalizedParameters":{"period":14},
+                  "outputValueType":"NUMBER","requiredHistoryPoints":15,"resolution":"30m"}]
+                """.formatted(HASH_B)));
+        BasicStrategyCatalog selected = new BasicStrategyCatalog(
+                catalog().version(),
+                List.of(
+                        element("TEST_CONDITION", "TEST", "{}", "[]"),
+                        element("BASIC_RSI_READ", "LOAD_FEATURE",
+                                "{\"feature\":\"RSI_14\",\"resolution\":\"$resolution\"}",
+                                "[\"RSI_14\"]"),
+                        element("BASIC_VALUE_COMPARE", "COMPARE",
+                                "{\"operator\":\"$operator\",\"threshold\":\"$threshold\"}", "[]"),
+                        element("BASIC_EQUAL_ALLOCATION_ORDER", "EMIT_ORDER_CANDIDATE",
+                                "{\"allocation\":\"EQUAL\",\"orderType\":\"MARKET\","
+                                        + "\"side\":\"$container\"}", "[]")),
+                List.of(feature("RSI_14", "rsi:1.0.0", "30m", 15)),
+                catalog().instruments());
+
+        ContractPlan plan = assembler.assemble(
+                List.of(
+                        new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                directRoot, PARTITION_ID, 10_000, flowRecords(directRoot)),
+                        new StrategyBotCompiledPlanAssembler.PartitionPlan(
+                                featureRoot, secondPartition, 10_000, flowRecords(featureRoot))),
+                selected, new BigDecimal("100000.00"), HASH_A, HASH_B,
+                "basic-launch-snapshot.v1", RELEASED_AT);
+
+        assertThat(parse(plan.planDocument()).path("requiredFeatureSetHash").asText())
+                .isEqualTo("sha256:160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f");
+    }
+
+    @Test
     void publishesTheElementCatalogRuntimeOperationsRatherThanItsElementCodes() {
         ContractPlan plan = assemble(planWith(buyFlow("buy", List.of(AAPL))));
 
@@ -293,6 +369,13 @@ class StrategyBotCompiledPlanAssemblerTest {
     }
 
     private ContractPlan assembleWithCatalog(JsonNode planRoot, BasicStrategyCatalog selectedCatalog) {
+        List<Flow> flows = flowRecords(planRoot);
+        return assembler.assemble(
+                planRoot, selectedCatalog, PARTITION_ID, 10_000, new BigDecimal("100000.00"), flows,
+                HASH_A, HASH_B, "basic-launch-snapshot.v1", RELEASED_AT);
+    }
+
+    private List<Flow> flowRecords(JsonNode planRoot) {
         List<Flow> flows = new java.util.ArrayList<>();
         int order = 0;
         for (JsonNode flowNode : planRoot.path("flows")) {
@@ -304,9 +387,7 @@ class StrategyBotCompiledPlanAssemblerTest {
                     flowNode.path("key").asText(), CATALOG_ID, UUID.randomUUID(), "{}", "{}",
                     HASH_A, HASH_B, HASH_A, instruments, List.of(), order++));
         }
-        return assembler.assemble(
-                planRoot, selectedCatalog, PARTITION_ID, 10_000, new BigDecimal("100000.00"), flows,
-                HASH_A, HASH_B, "basic-launch-snapshot.v1", RELEASED_AT);
+        return List.copyOf(flows);
     }
 
     private JsonNode planWith(JsonNode... flows) {
