@@ -12,6 +12,8 @@ public final class DatabaseAccessPolicy {
     public static final String RUNTIME_GRANTS_FILE = "R__database_runtime_grants.sql";
     public static final String BACKTEST_OBJECT_CLEANUP_FUNCTION =
             "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb)";
+    public static final String BACKTEST_OBJECT_CLEANUP_REISSUE_FUNCTION =
+            "\"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text)";
     private static final String ROLE_PREFIX = "idea2strategy_";
     private static final Pattern CREATE_TABLE = Pattern.compile(
             "(?i)CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"
@@ -236,21 +238,25 @@ public final class DatabaseAccessPolicy {
         // storage.objects remains non-deletable by every application role.  Backtest
         // compensation is a transaction-scoped, namespace-fenced SECURITY DEFINER
         // capability installed by a forward migration, so only EXECUTE is exposed.
-        sql.append("REVOKE ALL ON FUNCTION ")
-                .append(BACKTEST_OBJECT_CLEANUP_FUNCTION)
-                .append(" FROM PUBLIC;\n");
-        for (var role : ApplicationRole.values()) {
+        for (var function : List.of(
+                BACKTEST_OBJECT_CLEANUP_FUNCTION,
+                BACKTEST_OBJECT_CLEANUP_REISSUE_FUNCTION)) {
             sql.append("REVOKE ALL ON FUNCTION ")
-                    .append(BACKTEST_OBJECT_CLEANUP_FUNCTION)
-                    .append(" FROM ")
-                    .append(databaseRole(role))
+                    .append(function)
+                    .append(" FROM PUBLIC;\n");
+            for (var role : ApplicationRole.values()) {
+                sql.append("REVOKE ALL ON FUNCTION ")
+                        .append(function)
+                        .append(" FROM ")
+                        .append(databaseRole(role))
+                        .append(";\n");
+            }
+            sql.append("GRANT EXECUTE ON FUNCTION ")
+                    .append(function)
+                    .append(" TO ")
+                    .append(databaseRole(ApplicationRole.BACKTEST))
                     .append(";\n");
         }
-        sql.append("GRANT EXECUTE ON FUNCTION ")
-                .append(BACKTEST_OBJECT_CLEANUP_FUNCTION)
-                .append(" TO ")
-                .append(databaseRole(ApplicationRole.BACKTEST))
-                .append(";\n");
         return sql.toString();
     }
 

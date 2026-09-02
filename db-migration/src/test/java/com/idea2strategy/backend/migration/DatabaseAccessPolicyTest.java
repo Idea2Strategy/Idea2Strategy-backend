@@ -427,12 +427,25 @@ class DatabaseAccessPolicyTest {
         assertTrue(
                 sql.contains("REVOKE ALL ON FUNCTION "
                         + "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb) FROM PUBLIC;"));
+        assertTrue(
+                sql.contains("GRANT EXECUTE ON FUNCTION "
+                        + "\"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text) "
+                        + "TO idea2strategy_backtest;"),
+                "successor recovery must be exposed only as the narrow reissue capability");
+        assertTrue(
+                sql.contains("REVOKE ALL ON FUNCTION "
+                        + "\"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text) FROM PUBLIC;"));
         for (var role : List.of("backend", "batch", "trading", "pipeline")) {
             assertFalse(
                     sql.contains("GRANT EXECUTE ON FUNCTION "
                             + "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb) "
                             + "TO idea2strategy_" + role + ";"),
                     role + " must not receive the backtest cleanup capability");
+            assertFalse(
+                    sql.contains("GRANT EXECUTE ON FUNCTION "
+                            + "\"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text) "
+                            + "TO idea2strategy_" + role + ";"),
+                    role + " must not receive the backtest reissue capability");
         }
         // Exactly one storage statement for this role: widening a privilege must not widen the surface.
         assertEquals(
