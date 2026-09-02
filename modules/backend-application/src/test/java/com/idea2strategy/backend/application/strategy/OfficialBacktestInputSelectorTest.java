@@ -135,6 +135,26 @@ class OfficialBacktestInputSelectorTest {
     }
 
     @Test
+    void selectsTheFinalAnnualManifestWhenTheLockedPeriodEndsInsideIt() {
+        UUID bars2024 = UUID.fromString("51000000-0000-4000-8000-000000000001");
+        UUID bars2025 = UUID.fromString("51000000-0000-4000-8000-000000000002");
+        var catalog = new StrategyReleaseInputCatalog(
+                List.of(policy("official-v1", "2024-01-01", "2025-07-31", NOW.minusSeconds(60))),
+                List.of(
+                        dataset(bars2024, "ADJUSTED", "30m", 4,
+                                "2024-01-01", "2025-01-01", NOW.minusSeconds(20)),
+                        dataset(bars2025, "ADJUSTED", "30m", 4,
+                                "2025-01-01", "2026-01-01", NOW.minusSeconds(10))),
+                NOW);
+
+        var selected = OfficialBacktestInputSelector.select(
+                plan("30m", "30m"), LocalDate.parse("2024-01-02"), LocalDate.parse("2025-07-30"), catalog);
+
+        assertThat(selected.datasets()).extracting(Dataset::id)
+                .containsExactly(bars2024, bars2025);
+    }
+
+    @Test
     void failsClosedAndNamesTheResolutionWhenSegmentedCoverageHasAGap() {
         UUID first = UUID.fromString("60000000-0000-4000-8000-000000000001");
         UUID second = UUID.fromString("60000000-0000-4000-8000-000000000002");

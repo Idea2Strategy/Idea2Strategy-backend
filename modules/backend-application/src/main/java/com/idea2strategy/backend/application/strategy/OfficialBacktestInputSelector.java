@@ -71,8 +71,8 @@ public final class OfficialBacktestInputSelector {
         List<Dataset> candidates = catalog.datasets().stream()
                 .filter(dataset -> "ADJUSTED".equals(dataset.dataLayer()))
                 .filter(dataset -> policy.marketDataSchemaVersion().equals(dataset.schemaVersion()))
-                .filter(dataset -> !dataset.periodStart().isBefore(policy.periodStart()))
-                .filter(dataset -> !dataset.periodEnd().isAfter(policy.periodEnd().plusDays(1)))
+                .filter(dataset -> dataset.periodEnd().isAfter(policy.periodStart()))
+                .filter(dataset -> dataset.periodStart().isBefore(policy.periodEnd()))
                 .filter(dataset -> !dataset.availableAt().isAfter(catalog.observedAt()))
                 .filter(dataset -> requirements.resolutions().contains(normalizeResolution(dataset.resolution())))
                 .toList();
