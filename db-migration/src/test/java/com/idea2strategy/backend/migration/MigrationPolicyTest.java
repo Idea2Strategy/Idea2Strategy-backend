@@ -66,7 +66,9 @@ class MigrationPolicyTest {
                         "V20260825000001__pipeline_basic_strategy_feature_catalog.sql",
                         "V20260826010000__backend_bind_room_invitations_to_accounts.sql",
                         "V20260902000000__pipeline_backtest_object_cleanup_capability.sql",
-                        "V20260902000001__pipeline_bind_backtest_cleanup_ownership.sql"),
+                        "V20260902000001__pipeline_bind_backtest_cleanup_ownership.sql",
+                        "V20260902000002__backtest_narrow_runtime_attempt_writes.sql",
+                        "V20260902000003__pipeline_narrow_backtest_object_writes.sql"),
                 plan.orderedFileNames());
     }
 

@@ -46,6 +46,8 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260826010000__backend_bind_room_invitations_to_accounts.sql",
                         "V20260902000000__pipeline_backtest_object_cleanup_capability.sql",
                         "V20260902000001__pipeline_bind_backtest_cleanup_ownership.sql",
+                        "V20260902000002__backtest_narrow_runtime_attempt_writes.sql",
+                        "V20260902000003__pipeline_narrow_backtest_object_writes.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
@@ -59,6 +61,12 @@ class CanonicalMigrationBundleAssemblerTest {
                         + "TO idea2strategy_backtest"));
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
                 .contains("GRANT EXECUTE ON FUNCTION \"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text) "
+                        + "TO idea2strategy_backtest"));
+        assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
+                .contains("GRANT EXECUTE ON FUNCTION \"backtest\".\"claim_run_attempt\"(uuid, text, text, bigint) "
+                        + "TO idea2strategy_backtest"));
+        assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
+                .contains("GRANT EXECUTE ON FUNCTION \"storage\".\"register_backtest_object\"(jsonb) "
                         + "TO idea2strategy_backtest"));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));

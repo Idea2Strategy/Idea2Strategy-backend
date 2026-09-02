@@ -77,7 +77,7 @@ class DatabaseAccessPolicyTest {
                 DatabaseAccessPolicy.Access.UPDATE,
                 "backtest",
                 "runs"));
-        assertTrue(DatabaseAccessPolicy.allows(
+        assertFalse(DatabaseAccessPolicy.allows(
                 DatabaseAccessPolicy.ApplicationRole.BACKTEST,
                 DatabaseAccessPolicy.Access.INSERT,
                 "storage",
@@ -148,6 +148,59 @@ class DatabaseAccessPolicyTest {
         for (var role : DatabaseAccessPolicy.ApplicationRole.values()) {
             assertFalse(DatabaseAccessPolicy.allows(
                     role, DatabaseAccessPolicy.Access.DDL, "market_data", "dataset_manifests"));
+        }
+    }
+
+    @Test
+    void keepsProtectedBacktestAttemptAndStoragePublicationWritesBehindCapabilities()
+            throws Exception {
+        String baseline;
+        try (var input = getClass().getClassLoader().getResourceAsStream("db/migration/V1__initial_schema.sql")) {
+            baseline = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(baseline));
+
+        for (var access : List.of(DatabaseAccessPolicy.Access.INSERT, DatabaseAccessPolicy.Access.UPDATE)) {
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            access,
+                            "backtest",
+                            "run_attempts"),
+                    "attempt state must be changed only by a fenced database capability: " + access);
+            assertFalse(
+                    DatabaseAccessPolicy.allows(
+                            DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                            access,
+                            "storage",
+                            "objects"),
+                    "publication state must be changed only by a fenced database capability: " + access);
+        }
+        assertTrue(sql.contains(
+                "GRANT SELECT ON TABLE \"backtest\".\"run_attempts\" TO idea2strategy_backtest;"));
+        assertTrue(sql.contains(
+                "GRANT SELECT ON TABLE \"storage\".\"objects\" TO idea2strategy_backtest;"));
+        assertFalse(sql.contains(
+                "GRANT SELECT, INSERT, UPDATE ON TABLE \"backtest\".\"run_attempts\" "
+                        + "TO idea2strategy_backtest;"));
+        assertFalse(sql.contains(
+                "GRANT SELECT, INSERT, UPDATE ON TABLE \"storage\".\"objects\" "
+                        + "TO idea2strategy_backtest;"));
+
+        for (var signature : List.of(
+                "\"backtest\".\"claim_run_attempt\"(uuid, text, text, bigint)",
+                "\"backtest\".\"heartbeat_run_attempt\"(uuid, uuid, bigint)",
+                "\"backtest\".\"close_run_attempt\"(uuid, uuid, text, text, text, boolean)",
+                "\"backtest\".\"recover_expired_run_attempt\"(uuid, text, text)",
+                "\"storage\".\"register_backtest_object\"(jsonb)",
+                "\"storage\".\"transition_backtest_object\"(uuid, text, timestamp with time zone)")) {
+            assertTrue(
+                    sql.contains("GRANT EXECUTE ON FUNCTION " + signature + " TO idea2strategy_backtest;"),
+                    "the runtime role needs the narrow capability " + signature);
+            assertTrue(
+                    sql.contains("REVOKE ALL ON FUNCTION " + signature + " FROM PUBLIC;"),
+                    "the narrow capability must not remain executable by PUBLIC: " + signature);
         }
     }
 
@@ -359,34 +412,27 @@ class DatabaseAccessPolicyTest {
     }
 
     @Test
-    void grantsTheBacktestRoleTheStorageObjectPromotionItsRegistrarPerforms() throws Exception {
-        // INT03 run 9095f2a3 failed five times against a role that held SELECT and INSERT on
-        // storage.objects and not UPDATE: on the deployed idea2strategy_backtest_runtime,
-        // has_table_privilege reported select=true, insert=true, update=false.
-        //
-        // UPDATE is not a convenience here. StorageObjectRegistrar inserts the row as STAGED and only
-        // then re-reads the bytes; mark_available and quarantine are both
-        // `UPDATE storage.objects SET status = ...`, so a run that writes its detail objects cannot
-        // record that they verified. The row exists, the bytes exist, and the run dies anyway.
-        for (var access : List.of(
+    void grantsTheBacktestRoleOnlyCapabilityBasedStorageObjectPublication() throws Exception {
+        // The worker needs to read object metadata, but staging and promotion now cross narrow,
+        // attempt-fenced SECURITY DEFINER capabilities. Direct table writes could otherwise forge
+        // cleanup ownership or publish unverified bytes.
+        assertTrue(DatabaseAccessPolicy.allows(
+                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
                 DatabaseAccessPolicy.Access.READ,
+                "storage",
+                "objects"));
+        for (var access : List.of(
                 DatabaseAccessPolicy.Access.INSERT,
-                DatabaseAccessPolicy.Access.UPDATE)) {
-            assertTrue(
+                DatabaseAccessPolicy.Access.UPDATE,
+                DatabaseAccessPolicy.Access.DELETE)) {
+            assertFalse(
                     DatabaseAccessPolicy.allows(
                             DatabaseAccessPolicy.ApplicationRole.BACKTEST,
                             access,
                             "storage",
                             "objects"),
-                    "the registrar stages, verifies and promotes its own rows: " + access);
+                    "storage objects must change only through fenced capabilities: " + access);
         }
-        // A storage row is the identity of bytes that exist. Verification failure moves it to
-        // QUARANTINED; nothing in the worker removes one.
-        assertFalse(DatabaseAccessPolicy.allows(
-                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
-                DatabaseAccessPolicy.Access.DELETE,
-                "storage",
-                "objects"));
 
         // storage.objects is the only table in the schema today, so the rule being table-scoped rather
         // than schema-scoped is only observable against a name that does not exist yet. Assert it here:
@@ -409,16 +455,13 @@ class DatabaseAccessPolicyTest {
         var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(baseline));
 
         assertTrue(
+                sql.contains("GRANT SELECT ON TABLE \"storage\".\"objects\" "
+                        + "TO idea2strategy_backtest;"),
+                "the runtime grants retain the metadata read path");
+        assertFalse(
                 sql.contains("GRANT SELECT, INSERT, UPDATE ON TABLE \"storage\".\"objects\" "
                         + "TO idea2strategy_backtest;"),
-                "the runtime grants must ask for UPDATE, not only SELECT and INSERT");
-        assertFalse(
-                sql.contains("GRANT SELECT, INSERT ON TABLE \"storage\".\"objects\" TO idea2strategy_backtest;"),
-                "the narrower grant must no longer be generated for the backtest role");
-        assertFalse(
-                sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"storage\".\"objects\" "
-                        + "TO idea2strategy_backtest;"),
-                "widening must not have handed the worker DELETE");
+                "the worker must not receive direct publication writes");
         assertTrue(
                 sql.contains("GRANT EXECUTE ON FUNCTION "
                         + "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb) "
@@ -435,6 +478,16 @@ class DatabaseAccessPolicyTest {
         assertTrue(
                 sql.contains("REVOKE ALL ON FUNCTION "
                         + "\"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text) FROM PUBLIC;"));
+        assertTrue(
+                sql.contains("GRANT EXECUTE ON FUNCTION "
+                        + "\"storage\".\"register_backtest_object\"(jsonb) "
+                        + "TO idea2strategy_backtest;"),
+                "staging must be exposed only as the narrow registration capability");
+        assertTrue(
+                sql.contains("GRANT EXECUTE ON FUNCTION "
+                        + "\"storage\".\"transition_backtest_object\"(uuid, text, timestamp with time zone) "
+                        + "TO idea2strategy_backtest;"),
+                "verification must be exposed only as the narrow transition capability");
         for (var role : List.of("backend", "batch", "trading", "pipeline")) {
             assertFalse(
                     sql.contains("GRANT EXECUTE ON FUNCTION "

@@ -33,6 +33,14 @@ The central assembler validates the immutable V1 checksum, migration naming, glo
 
 Every assembled bundle ends with generated repeatable migration `R__database_runtime_grants.sql`. `DatabaseAccessPolicy` remains its single source of truth. It creates credential-free group roles, revokes public application access, and grants only the required schema and table privileges.
 
+`V20260902000002__backtest_narrow_runtime_attempt_writes.sql` and
+`V20260902000003__pipeline_narrow_backtest_object_writes.sql` remove direct
+`run_attempts` and `storage.objects` mutation from the backtest runtime role. Claim,
+heartbeat, close, recovery, registration, verification, cleanup, and immediate-successor
+reconciliation are exposed only through attempt-fenced function capabilities. Existing
+provider bytes registered without a database row remain deliberately unowned, and a
+later descendant cannot adopt an older ancestor's artifact.
+
 Environment-specific login roles and passwords remain deployment/bootstrap concerns and never appear in migration SQL.
 
 ## `storage.objects` event trigger and RDS major upgrades
