@@ -44,6 +44,7 @@ class CanonicalMigrationBundleAssemblerTest {
                         "V20260825000000__backend_basic_strategy_execution_completion.sql",
                         "V20260825000001__pipeline_basic_strategy_feature_catalog.sql",
                         "V20260826010000__backend_bind_room_invitations_to_accounts.sql",
+                        "V20260902000000__pipeline_backtest_object_cleanup_capability.sql",
                         DatabaseAccessPolicy.RUNTIME_GRANTS_FILE),
                 result.orderedFileNames());
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
@@ -52,6 +53,9 @@ class CanonicalMigrationBundleAssemblerTest {
                 .contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"trading\".\"execution_markers\" TO idea2strategy_trading"));
         assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
                 .contains("GRANT SELECT, INSERT ON TABLE \"backtest\".\"run_input_pins\" TO idea2strategy_backend"));
+        assertTrue(Files.readString(result.directory().resolve(DatabaseAccessPolicy.RUNTIME_GRANTS_FILE))
+                .contains("GRANT EXECUTE ON FUNCTION \"storage\".\"prepare_backtest_object_cleanup\"(jsonb) "
+                        + "TO idea2strategy_backtest"));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.MANIFEST_FILE)));
         assertTrue(Files.exists(result.directory().resolve(CanonicalMigrationBundle.DIGEST_FILE)));
     }

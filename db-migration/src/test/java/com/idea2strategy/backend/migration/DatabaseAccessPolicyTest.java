@@ -419,6 +419,21 @@ class DatabaseAccessPolicyTest {
                 sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE \"storage\".\"objects\" "
                         + "TO idea2strategy_backtest;"),
                 "widening must not have handed the worker DELETE");
+        assertTrue(
+                sql.contains("GRANT EXECUTE ON FUNCTION "
+                        + "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb) "
+                        + "TO idea2strategy_backtest;"),
+                "cleanup must be exposed only as the narrow function capability");
+        assertTrue(
+                sql.contains("REVOKE ALL ON FUNCTION "
+                        + "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb) FROM PUBLIC;"));
+        for (var role : List.of("backend", "batch", "trading", "pipeline")) {
+            assertFalse(
+                    sql.contains("GRANT EXECUTE ON FUNCTION "
+                            + "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb) "
+                            + "TO idea2strategy_" + role + ";"),
+                    role + " must not receive the backtest cleanup capability");
+        }
         // Exactly one storage statement for this role: widening a privilege must not widen the surface.
         assertEquals(
                 1,
