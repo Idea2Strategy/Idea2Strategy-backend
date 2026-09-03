@@ -36,6 +36,8 @@ class AssembledCompiledPlanContractTest {
     private static final UUID AAPL = UUID.fromString("60000000-0000-4000-8000-000000000001");
     private static final String HASH_A = "a".repeat(64);
     private static final String HASH_B = "b".repeat(64);
+    private static final String RSI_FEATURE_SET_HASH =
+            "160d96f04548e15fed4c1e23abb3ccbdd1e6f067ba94b4451a32ce8ca2a2e94f";
     private static final Instant RELEASED_AT = Instant.parse("2026-08-04T13:30:00Z");
 
     @Test
@@ -185,7 +187,11 @@ class AssembledCompiledPlanContractTest {
 
     private static String compiledPlan() {
         return "{\"schemaVersion\":\"basic-compiled-plan.v1\",\"compilerVersion\":\"basic-compiler:1.0.0\","
-                + "\"requiredFeatureSetHash\":\"" + HASH_A + "\",\"flows\":[{"
+                + "\"requiredFeatureSetHash\":\"" + RSI_FEATURE_SET_HASH + "\","
+                + "\"requiredFeatures\":[{\"calculatorVersion\":\"rsi:1.0.0\","
+                + "\"definitionHash\":\"" + HASH_B + "\",\"featureCode\":\"RSI_14\","
+                + "\"normalizedParameters\":{\"period\":14},\"outputValueType\":\"NUMBER\","
+                + "\"requiredHistoryPoints\":15,\"resolution\":\"30m\"}],\"flows\":[{"
                 + "\"key\":\"buy\",\"container\":\"BUY\",\"instrumentIds\":[\"" + AAPL + "\"],\"steps\":["
                 + "{\"sequence\":1,\"elementCode\":\"BASIC_RSI_READ\",\"parameters\":{\"resolution\":\"30m\"}},"
                 + "{\"sequence\":2,\"elementCode\":\"BASIC_VALUE_COMPARE\","

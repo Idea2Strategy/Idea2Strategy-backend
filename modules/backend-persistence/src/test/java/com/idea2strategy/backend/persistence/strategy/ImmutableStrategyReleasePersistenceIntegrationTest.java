@@ -431,11 +431,22 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 .hasMessageContaining("does not match the execution policy schema");
         assertNothingDurable();
 
-        // 2. The manifest period reaches outside the policy window.
-        setPolicyDocument("2025-06-01T04:00:00Z", "2025-07-01T04:00:00Z", "v1");
+        // 2. Annual immutable partitions are allowed to overlap a shorter policy window. The run
+        // still evaluates only the policy dates, and pinning the full object preserves replay.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2025-07-31T04:00:00Z", "v1");
+        OfficialBacktestRequest annualRequest = OfficialBacktestRequest.forRelease(
+                release, List.of(DATASET_ID), "backtest-policy-v1");
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            assertThat(adapter.saveOnce(release, annualRequest, RUN_ID, 7, HASH_A)).isEqualTo(release);
+            status.setRollbackOnly();
+        });
+        assertNothingDurable();
+
+        // 3. A manifest wholly outside the policy window cannot contribute to its replay.
+        setPolicyDocument("2024-06-01T04:00:00Z", "2024-07-01T04:00:00Z", "v1");
         assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
-                .hasMessageContaining("is not inside the execution policy period");
+                .hasMessageContaining("does not overlap the execution policy period");
         assertNothingDurable();
 
         // 3. A RAW manifest would measure the strategy against unadjusted splits and dividends.

@@ -33,4 +33,71 @@ The central assembler validates the immutable V1 checksum, migration naming, glo
 
 Every assembled bundle ends with generated repeatable migration `R__database_runtime_grants.sql`. `DatabaseAccessPolicy` remains its single source of truth. It creates credential-free group roles, revokes public application access, and grants only the required schema and table privileges.
 
+`V20260902000002__backtest_narrow_runtime_attempt_writes.sql` and
+`V20260902000003__pipeline_narrow_backtest_object_writes.sql` remove direct
+`run_attempts` and `storage.objects` mutation from the backtest runtime role. Claim,
+heartbeat, close, recovery, registration, verification, cleanup, and immediate-successor
+reconciliation are exposed only through attempt-fenced function capabilities. Existing
+provider bytes registered without a database row remain deliberately unowned, and a
+later descendant cannot adopt an older ancestor's artifact.
+
 Environment-specific login roles and passwords remain deployment/bootstrap concerns and never appear in migration SQL.
+
+## `storage.objects` event trigger and RDS major upgrades
+
+`V20260902000001__pipeline_bind_backtest_cleanup_ownership.sql` installs the narrowly
+scoped `storage_reject_unvalidated_object_fks` event trigger. It runs only after
+`ALTER TABLE`, `CREATE TABLE`, or `CREATE TABLE AS`, and rejects only a command that
+leaves an unvalidated foreign key targeting `storage.objects`. Unrelated DDL is not
+blocked.
+
+PostgreSQL restricts event-trigger creation to superusers. The Development deployment
+contract satisfies that requirement without relying on the application role:
+
+- `infra/terraform/environments/development/database.tf` creates the RDS master user
+  `idea2strategy_admin` with an AWS-managed master secret.
+- `scripts/aws/development-database-bootstrap.sh` resolves that exact
+  `master_user_secret` and supplies its username and password to Flyway.
+- The migration fails explicitly unless Flyway's current user is a PostgreSQL
+  superuser or a member of AWS RDS's `rds_superuser` role.
+
+AWS RDS requires event triggers to be removed before a major-version upgrade. During
+the upgrade maintenance window, stop application and migration traffic, then run as
+the RDS master user:
+
+```sql
+DROP EVENT TRIGGER storage_reject_unvalidated_object_fks;
+```
+
+Immediately after the upgrade, first verify that no unsafe constraint was introduced:
+
+```sql
+SELECT n.nspname AS source_schema, c.relname AS source_table, fk.conname
+FROM pg_constraint AS fk
+JOIN pg_class AS c ON c.oid = fk.conrelid
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE fk.contype = 'f'
+  AND fk.confrelid = 'storage.objects'::regclass
+  AND NOT fk.convalidated;
+```
+
+The result must be empty. Then recreate the trigger from the already-migrated function
+and verify that it is enabled:
+
+```sql
+CREATE EVENT TRIGGER storage_reject_unvalidated_object_fks
+ON ddl_command_end
+WHEN TAG IN ('ALTER TABLE', 'CREATE TABLE', 'CREATE TABLE AS')
+EXECUTE FUNCTION storage.reject_unvalidated_storage_object_fks();
+
+SELECT evtname, evtenabled
+FROM pg_event_trigger
+WHERE evtname = 'storage_reject_unvalidated_object_fks';
+```
+
+Do not resume cleanup traffic unless the constraint query is empty and the trigger is
+present with `evtenabled = 'O'`. See the PostgreSQL event-trigger privilege contract
+and the AWS RDS major-upgrade event-trigger prerequisite:
+
+- <https://www.postgresql.org/docs/current/sql-createeventtrigger.html>
+- <https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_UpgradeDBInstance.PostgreSQL.MajorVersion.html>

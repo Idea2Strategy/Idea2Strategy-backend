@@ -426,8 +426,9 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
      * <p>The comparison is by calendar date in the policy's own timezone. A legacy
      * {@code market-bars/1} manifest labels its period with UTC dates while the policy states local
      * midnight, so comparing instants would reject a pair that does describe the same days; the
-     * consumer resolves it the same way (backtest-engine #87). Both ends are inclusive of the
-     * manifest and must lie inside the policy window.
+     * consumer resolves it the same way (backtest-engine #87). Manifests are immutable storage
+     * partitions, so a policy may use the intersecting rows of a partition that extends beyond its
+     * evaluation window; a partition wholly outside the policy cannot describe that replay.
      */
     private OfficialPolicy officialPolicy(String policyDocument) {
         final com.fasterxml.jackson.databind.JsonNode document;
@@ -481,11 +482,11 @@ public class ImmutableStrategyReleaseJooqCommandAdapter implements ImmutableStra
 
         java.time.LocalDate manifestFirstDay = dataset.get("period_start", java.time.LocalDate.class);
         java.time.LocalDate manifestLastDay = dataset.get("period_end", java.time.LocalDate.class);
-        if (manifestFirstDay.isBefore(policy.periodStart())
-                || manifestLastDay.isAfter(policy.periodEnd().plusDays(1))) {
+        if (!manifestLastDay.isAfter(policy.periodStart())
+                || !manifestFirstDay.isBefore(policy.periodEnd())) {
             throw new ImmutableStrategyReleaseRejectedException(
                     "Official backtest dataset period " + manifestFirstDay + ".." + manifestLastDay
-                            + " is not inside the execution policy period "
+                            + " does not overlap the execution policy period "
                             + policy.periodStart() + ".." + policy.periodEnd());
         }
     }

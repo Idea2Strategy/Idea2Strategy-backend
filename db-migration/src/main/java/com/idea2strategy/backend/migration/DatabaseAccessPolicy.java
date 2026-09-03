@@ -10,6 +10,22 @@ import java.util.regex.Pattern;
 
 public final class DatabaseAccessPolicy {
     public static final String RUNTIME_GRANTS_FILE = "R__database_runtime_grants.sql";
+    public static final String BACKTEST_OBJECT_CLEANUP_FUNCTION =
+            "\"storage\".\"prepare_backtest_object_cleanup\"(jsonb)";
+    public static final String BACKTEST_OBJECT_CLEANUP_REISSUE_FUNCTION =
+            "\"storage\".\"reissue_backtest_object_cleanup\"(jsonb, text)";
+    public static final String BACKTEST_ATTEMPT_CLAIM_FUNCTION =
+            "\"backtest\".\"claim_run_attempt\"(uuid, text, text, bigint)";
+    public static final String BACKTEST_ATTEMPT_HEARTBEAT_FUNCTION =
+            "\"backtest\".\"heartbeat_run_attempt\"(uuid, uuid, bigint)";
+    public static final String BACKTEST_ATTEMPT_CLOSE_FUNCTION =
+            "\"backtest\".\"close_run_attempt\"(uuid, uuid, text, text, text, boolean)";
+    public static final String BACKTEST_ATTEMPT_RECOVERY_FUNCTION =
+            "\"backtest\".\"recover_expired_run_attempt\"(uuid, text, text)";
+    public static final String BACKTEST_OBJECT_REGISTER_FUNCTION =
+            "\"storage\".\"register_backtest_object\"(jsonb)";
+    public static final String BACKTEST_OBJECT_TRANSITION_FUNCTION =
+            "\"storage\".\"transition_backtest_object\"(uuid, text, timestamp with time zone)";
     private static final String ROLE_PREFIX = "idea2strategy_";
     private static final Pattern CREATE_TABLE = Pattern.compile(
             "(?i)CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?"
@@ -231,6 +247,35 @@ public final class DatabaseAccessPolicy {
                         .append(" TO ").append(roleName).append(";\n");
             }
         }
+        // Protected attempt and storage-object state is never mutated through a
+        // table-wide grant. Claim, heartbeat, close, recovery, staged registration,
+        // verification, reissue and compensation are narrow SECURITY DEFINER
+        // capabilities installed by forward migrations, so only EXECUTE is exposed.
+        for (var function : List.of(
+                BACKTEST_OBJECT_CLEANUP_FUNCTION,
+                BACKTEST_OBJECT_CLEANUP_REISSUE_FUNCTION,
+                BACKTEST_ATTEMPT_CLAIM_FUNCTION,
+                BACKTEST_ATTEMPT_HEARTBEAT_FUNCTION,
+                BACKTEST_ATTEMPT_CLOSE_FUNCTION,
+                BACKTEST_ATTEMPT_RECOVERY_FUNCTION,
+                BACKTEST_OBJECT_REGISTER_FUNCTION,
+                BACKTEST_OBJECT_TRANSITION_FUNCTION)) {
+            sql.append("REVOKE ALL ON FUNCTION ")
+                    .append(function)
+                    .append(" FROM PUBLIC;\n");
+            for (var role : ApplicationRole.values()) {
+                sql.append("REVOKE ALL ON FUNCTION ")
+                        .append(function)
+                        .append(" FROM ")
+                        .append(databaseRole(role))
+                        .append(";\n");
+            }
+            sql.append("GRANT EXECUTE ON FUNCTION ")
+                    .append(function)
+                    .append(" TO ")
+                    .append(databaseRole(ApplicationRole.BACKTEST))
+                    .append(";\n");
+        }
         return sql.toString();
     }
 
@@ -360,6 +405,9 @@ public final class DatabaseAccessPolicy {
 
     private static boolean allowsBacktest(Access access, String schema, String table) {
         if ("backtest".equals(schema)) {
+            if ("run_attempts".equals(table)) {
+                return access == Access.READ;
+            }
             return access == Access.READ || access == Access.INSERT || access == Access.UPDATE;
         }
         if (("strategy".equals(schema) || "market_data".equals(schema)) && access == Access.READ) {
@@ -386,19 +434,12 @@ public final class DatabaseAccessPolicy {
             return "outbox_consumer_receipts".equals(table)
                     && (access == Access.READ || access == Access.INSERT || access == Access.UPDATE);
         }
-        // The worker registers its detail objects in two steps, because an object may not claim to be
-        // published before its bytes have been re-read: `register` inserts the row as STAGED, and
-        // `mark_available` promotes that same row to AVAILABLE once the checksum verifies. `quarantine`
-        // is the third statement, recording a verification failure against the row that already exists.
-        // Both transitions are `UPDATE storage.objects SET status = ...` in the engine's repository, so
-        // INSERT alone stops a run after it has written its bytes — which is what failed INT03 run
-        // 9095f2a3 five times, with SELECT and INSERT held and UPDATE denied on the deployed role.
-        //
-        // DELETE stays out: a storage row is the identity of bytes that exist, and the worker never
-        // retracts one. Corruption is recorded by moving the row to QUARANTINED, not by removing it.
+        // Registration and status transitions now execute through attempt-fenced
+        // functions. SELECT is sufficient for reconciliation and result reads; a
+        // table-wide INSERT/UPDATE would let this role forge AVAILABLE evidence.
         return "storage".equals(schema)
                 && "objects".equals(table)
-                && (access == Access.READ || access == Access.INSERT || access == Access.UPDATE);
+                && access == Access.READ;
     }
 
     private static boolean allowsPipeline(Access access, String schema, String table) {
