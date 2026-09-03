@@ -121,7 +121,7 @@ public final class FeatureMaterializationPinResolver {
                         + "where fm.feature_definition_id = ? and fm.instrument_id = ? and fm.status = 'SUCCEEDED' "
                         + "and fm.period_start <= ?::timestamptz and fm.period_end >= ?::timestamptz "
                         + "and fm.available_at <= ?::timestamptz "
-                        + "order by fm.id",
+                        + "order by fm.available_at desc, fm.created_at desc, fm.id desc limit 1",
                 OUTPUT_SCHEMA, asOf, requirement.featureId(), instrumentId, requiredStart, requiredEnd, asOf);
         if (candidates.size() != 1) {
             throw new IllegalStateException("Required feature/instrument tuple must resolve to exactly one "
