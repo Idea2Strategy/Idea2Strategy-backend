@@ -155,7 +155,7 @@ class FeatureMaterializationPinResolverIntegrationTest {
     }
 
     @Test
-    void resolvesTheNewestVisibleSucceededRevisionWhenCoverageOverlaps() {
+    void resolvesExactlyOneNewestVisibleSucceededRevisionWhenCoverageOverlaps() {
         UUID newestMaterialization = id(20);
         seedMaterialization(newestMaterialization, id(21), id(22), id(23), id(24), "c".repeat(64));
         jdbc.update("update market_data.feature_materializations set available_at = ?, created_at = ? where id = ?",
@@ -165,6 +165,22 @@ class FeatureMaterializationPinResolverIntegrationTest {
                         plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
                 .containsExactly(new BacktestRunInputPinWriter.FeaturePin(
                         newestMaterialization, "sha256:" + HASH));
+    }
+
+    @Test
+    void rejectsAnInvalidNewestRevisionRatherThanFallingBackToAnOlderCandidate() {
+        UUID newestMaterialization = id(20);
+        UUID newestManifest = id(22);
+        seedMaterialization(newestMaterialization, id(21), newestManifest, id(23), id(24), "c".repeat(64));
+        jdbc.update("update market_data.feature_materializations set available_at = ?, created_at = ? where id = ?",
+                AS_OF.minusHours(1), AS_OF.minusHours(2), newestMaterialization);
+        jdbc.update("update market_data.dataset_manifests set schema_version = 'unknown.v1' where id = ?",
+                newestManifest);
+
+        assertThatThrownBy(() -> resolver.resolve(
+                        plan(), LocalDate.parse("2024-01-01"), LocalDate.parse("2024-12-31"), AS_OF))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("feature-series.parquet.v1");
     }
 
     @Test
