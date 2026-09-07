@@ -18,8 +18,10 @@ public class BacktestRequestOutboxStore {
         this.jdbc = jdbc;
     }
 
+    /** Persists a request in the outbox, or returns its existing receipt for an identical retry. */
     @Transactional
     public BacktestRequestReceipt enqueue(BacktestRequestEnvelope request, Instant createdAt) {
+        /* Lock the key before looking up the row: a first request has no row to lock yet. */
         jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:key, 0))")
                 .param("key", request.producerIdempotencyKey())
                 .query((rs, row) -> 1)
@@ -36,6 +38,7 @@ public class BacktestRequestOutboxStore {
                 .optional();
         if (existing.isPresent()) {
             Existing found = existing.orElseThrow();
+            /* Reusing a key is valid only for the same event type and request content. */
             if (!request.eventType().equals(found.eventType())
                     || !request.requestHash().equals(found.requestHash())) {
                 throw new BacktestRequestIdempotencyConflictException();
@@ -43,6 +46,8 @@ public class BacktestRequestOutboxStore {
             return new BacktestRequestReceipt(found.messageId(), found.eventType(), false, request.aggregateId());
         }
 
+        /* Different idempotency keys can target the same aggregate. Serialize sequence allocation
+         * so concurrent requests cannot both insert the same max(sequence) + 1. */
         jdbc.sql("select pg_advisory_xact_lock(hashtextextended(:aggregateKey, 0))")
                 .param("aggregateKey", "backtest-request:" + request.aggregateId())
                 .query((rs, row) -> 1)
@@ -55,6 +60,7 @@ public class BacktestRequestOutboxStore {
                 .param("aggregateId", request.aggregateId())
                 .query(Long.class)
                 .single();
+        /* Persist the message in this transaction; delivery is handled by the outbox publisher. */
         jdbc.sql("""
                 insert into operations.outbox_messages (
                     id, owner_domain, aggregate_id, aggregate_sequence, event_type,
