@@ -351,9 +351,6 @@ class DatabaseAccessPolicyTest {
                 new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_entries"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "room_final_access_grants"),
                 new DatabaseAccessPolicy.QualifiedTable("competition", "live_evaluation_segments"),
-                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_snapshots"),
-                new DatabaseAccessPolicy.QualifiedTable("competition", "leaderboard_entries"),
-                new DatabaseAccessPolicy.QualifiedTable("competition", "room_final_access_grants"),
                 new DatabaseAccessPolicy.QualifiedTable("bot", "continuation_deadlines"),
                 new DatabaseAccessPolicy.QualifiedTable("backtest", "runs"))) {
             assertTrue(
