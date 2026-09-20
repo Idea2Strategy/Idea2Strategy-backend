@@ -75,7 +75,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
         jdbc.update("delete from trading.buying_power_buffer_policy_versions where id = ?", BUFFER_ID);
         jdbc.execute("truncate table identity.account_lifecycle_command_receipts, identity.account_lifecycle_events cascade");
-        jdbc.update("delete from identity.accounts where id in (?, ?)", OWNER_ID, CREATOR_ID);
+        jdbc.update("delete from identity.accounts where id in (?, ?, ?)", OWNER_ID, CREATOR_ID, FAILED_OWNER_ID);
         seedReadyCandidate();
     }
 
@@ -209,6 +209,20 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
         jdbc.update("delete from competition.leaderboard_snapshots");
         jdbc.update("update competition.participations set action_locked_at = null where id = ?", PARTICIPATION_ID);
         jdbc.update("update competition.rooms set access_type = 'SECRET' where id = ?", ROOM_ID);
+        jdbc.update("insert into identity.accounts (id, lifecycle_status) values (?, 'ACTIVE')", FAILED_OWNER_ID);
+        jdbc.update(
+                "insert into bot.bots "
+                        + "(id, owner_account_id, mode, name, lifecycle_status, lifecycle_changed_at, "
+                        + "execution_eligible_from, created_at, edit_sequence, updated_at) "
+                        + "values (?, ?, 'BASIC', 'Failed room bot', 'STOPPED', ?, ?, ?, 0, ?)",
+                FAILED_BOT_ID, FAILED_OWNER_ID, utc(ENDED_AT), utc(CUTOFF), utc(CUTOFF), utc(ENDED_AT));
+        jdbc.update(
+                "insert into competition.participations "
+                        + "(id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at, "
+                        + "evaluation_started_at, evaluation_finished_at, evaluation_failure_code) "
+                        + "values (?, ?, ?, ?, 'failed-room-bot', 'EVALUATION_FAILED', ?, ?, ?, 'LEDGER_OPEN_FAILED')",
+                FAILED_PARTICIPATION_ID, ROOM_ID, FAILED_BOT_ID, FAILED_OWNER_ID,
+                utc(CUTOFF.minusSeconds(600)), utc(CUTOFF.minusSeconds(600)), utc(CUTOFF));
         var result = new FinalRoomResult(
                 FINAL_SNAPSHOT_ID, ROOM_ID, TEMPLATE_ID, CUTOFF, "sha256:result", ENDED_AT,
                 List.of(new FinalLeaderboardEntry(
@@ -229,6 +243,7 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
                 .extracting(row -> List.of(row.get("account_id"), row.get("eligibility_basis")))
                 .containsExactly(
                         List.of(OWNER_ID, "ACTIVE_PARTICIPANT"),
+                        List.of(FAILED_OWNER_ID, "ACTIVE_PARTICIPANT"),
                         List.of(CREATOR_ID, "CREATOR"));
     }
 
@@ -428,6 +443,9 @@ class PrivateContinuationTransitionPersistenceIntegrationTest {
     private static final UUID FEE_ID = id(9);
     private static final UUID BUFFER_ID = id(10);
     private static final UUID CREATOR_ID = id(11);
+    private static final UUID FAILED_OWNER_ID = id(12);
+    private static final UUID FAILED_BOT_ID = id(13);
+    private static final UUID FAILED_PARTICIPATION_ID = id(14);
 
     @SpringBootConfiguration
     @EnableAutoConfiguration

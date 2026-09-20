@@ -197,6 +197,23 @@ class CanonicalVirtualLiquidationQuoteAdapterIntegrationTest {
         assertThat(quote.grossCostAmount()).isEqualByComparingTo("0");
     }
 
+    @Test
+    void aClosedMarketSegmentWithNoFillsStillProducesCanonicalFlatEvidence() {
+        jdbc.execute("truncate table trading.fills, trading.orders cascade");
+        jdbc.update("delete from bot.bot_events where bot_id = ?", BOT);
+
+        VirtualLiquidationQuote quote = adapter.load(context());
+        VirtualLiquidationPerformance performance =
+                new VirtualLiquidationPerformanceCalculator().calculate(context(), quote);
+
+        assertThat(quote.sourceEventSequence()).isEqualTo(1L);
+        assertThat(quote.liquidatedPositionCount()).isZero();
+        assertThat(quote.currentCashAmount()).isEqualByComparingTo("1000");
+        assertThat(quote.netLiquidationCashDelta()).isEqualByComparingTo("0");
+        assertThat(performance.equityAmount()).isEqualByComparingTo("1000");
+        assertThat(performance.totalReturnPct()).isEqualByComparingTo("0");
+    }
+
     private static VirtualLiquidationContext context() {
         return new VirtualLiquidationContext(
                 ROOM, PARTICIPATION, BOT, SEGMENT, STARTS_AT, ENDS_AT, 1L,
