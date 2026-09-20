@@ -130,12 +130,9 @@ class OperatorRbacReadPersistenceIntegrationTest {
                 Integer.class, OPERATOR);
         if (existing != null && existing == 1) return;
         jdbc.update("""
-                insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, external_identity_key_version, status,
-                     mfa_enrolled_at, last_mfa_verified_at, created_at)
-                values (?, ?, 1, 'ACTIVE', ?, ?, ?)
-                """, OPERATOR, "operator-read-" + OPERATOR, timestamp(NOW.minusSeconds(3600)),
-                timestamp(NOW.minusSeconds(60)), timestamp(NOW.minusSeconds(3600)));
+                insert into operations.operator_accounts (id, status, created_at)
+                values (?, 'ACTIVE', ?)
+                """, OPERATOR, timestamp(NOW.minusSeconds(3600)));
         jdbc.update("""
                 insert into operations.roles (id, code, hierarchy_rank, status)
                 values (?, 'A22_READER', 10, 'ACTIVE')

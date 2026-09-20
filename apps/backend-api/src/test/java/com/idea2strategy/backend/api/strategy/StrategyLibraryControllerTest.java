@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
@@ -25,10 +26,14 @@ class StrategyLibraryControllerTest {
     private static final Instant NOW = Instant.parse("2026-08-01T12:00:00Z");
 
     private MockMvc mvc;
+    private AtomicReference<StrategyLibraryItemKind> observedKind;
 
     @BeforeEach
     void setUp() {
-        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit) -> List.of(new StrategyLibraryItem(
+        observedKind = new AtomicReference<>();
+        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit, kind) -> {
+            observedKind.set(kind);
+            return List.of(new StrategyLibraryItem(
                 STRATEGY_ID,
                 StrategyLibraryItemKind.DRAFT,
                 StrategyMode.BASIC,
@@ -42,6 +47,7 @@ class StrategyLibraryControllerTest {
                 null,
                 2,
                 List.of("AAPL")));
+        };
         var service = new StrategyLibraryQueryService(
                 port, () -> OWNER_ID, Clock.fixed(NOW, ZoneOffset.UTC));
         mvc = MockMvcBuilders.standaloneSetup(new StrategyLibraryController(service))
@@ -51,7 +57,7 @@ class StrategyLibraryControllerTest {
 
     @Test
     void exposesPermissionScopedLibraryWithStableWireValues() throws Exception {
-        mvc.perform(get("/api/v1/strategies").queryParam("limit", "20"))
+        mvc.perform(get("/api/v1/strategies").queryParam("limit", "20").queryParam("kind", "draft"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items[0].id").value(STRATEGY_ID.toString()))
                 .andExpect(jsonPath("$.items[0].kind").value("draft"))
@@ -62,6 +68,7 @@ class StrategyLibraryControllerTest {
                 .andExpect(jsonPath("$.items[0].symbols[0]").value("AAPL"))
                 .andExpect(jsonPath("$.hasMore").value(false))
                 .andExpect(jsonPath("$.nextCursor").doesNotExist());
+        assert observedKind.get() == StrategyLibraryItemKind.DRAFT;
     }
 
     @Test
@@ -69,6 +76,8 @@ class StrategyLibraryControllerTest {
         mvc.perform(get("/api/v1/strategies").queryParam("limit", "101"))
                 .andExpect(status().isBadRequest());
         mvc.perform(get("/api/v1/strategies").queryParam("cursor", "tampered"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/strategies").queryParam("kind", "unknown"))
                 .andExpect(status().isBadRequest());
     }
 }

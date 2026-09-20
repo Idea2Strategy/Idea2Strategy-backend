@@ -80,10 +80,14 @@ class BasicStrategyCatalogPersistenceIntegrationTest {
         insertInstrument(AAPL_ID, "STOCK", "XNAS", null, "AAPL");
         insertInstrument(SPY_ID, "ETF", "ARCX", null, "SPY");
         insertInstrument(DELISTED_ID, "STOCK", "XNYS", java.time.LocalDate.of(2026, 7, 31), "OLD");
+        jdbcTemplate.update(
+                "update market_data.instrument_symbols set effective_to = ? where instrument_id = ?",
+                NOW.minusSeconds(1).atOffset(ZoneOffset.UTC),
+                DELISTED_ID);
     }
 
     @Test
-    void readsOnlyThePublishedCatalogAndCurrentlySupportedUsdInstruments() {
+    void readsThePublishedCatalogAndHistoricalUsdBacktestInstruments() {
         var service = new BasicStrategyCatalogQueryService(
                 adapter, Clock.fixed(NOW, ZoneOffset.UTC), ZoneId.of("America/New_York"));
 
@@ -91,7 +95,7 @@ class BasicStrategyCatalogPersistenceIntegrationTest {
 
         assertThat(catalog.elements()).extracting("elementCode").containsExactly("CONDITION", "RSI");
         assertThat(catalog.features()).extracting("featureCode").containsExactly("RSI_14");
-        assertThat(catalog.instruments()).extracting("symbol").containsExactly("AAPL", "SPY");
+        assertThat(catalog.instruments()).extracting("symbol").containsExactly("AAPL", "OLD", "SPY");
         assertThat(service.requireElement(CATALOG_ID, "RSI").parameterSchema()).contains("period");
         assertThatThrownBy(() -> service.getPublished("basic/v1", "schema/v1", "retired/v1"))
                 .isInstanceOf(StrategyCatalogNotFoundException.class);
@@ -107,7 +111,7 @@ class BasicStrategyCatalogPersistenceIntegrationTest {
 
         assertThat(service.getSupportedInstruments())
                 .extracting("symbol")
-                .containsExactly("AAPL", "SPY");
+                .containsExactly("AAPL", "OLD", "SPY");
     }
 
     private void insertCatalog(UUID id, String catalogVersion, Instant retiredAt, String hash) {

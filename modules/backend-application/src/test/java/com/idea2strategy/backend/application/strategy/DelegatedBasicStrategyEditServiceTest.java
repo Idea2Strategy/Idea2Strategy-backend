@@ -24,6 +24,7 @@ class DelegatedBasicStrategyEditServiceTest {
     private static final UUID STRATEGY_ID = UUID.fromString("40000000-0000-4000-8000-000000000001");
     private static final UUID CATALOG_ID = UUID.fromString("50000000-0000-4000-8000-000000000001");
     private static final UUID INSTRUMENT_ID = UUID.fromString("60000000-0000-4000-8000-000000000001");
+    private static final UUID META_INSTRUMENT_ID = UUID.fromString("60000000-0000-4000-8000-000000000002");
     private static final Instant NOW = Instant.parse("2026-08-01T12:00:00Z");
 
     @Test
@@ -48,6 +49,11 @@ class DelegatedBasicStrategyEditServiceTest {
 
         assertThat(applied.editSequence()).isEqualTo(8);
         assertThat(applied.semanticHash()).isEqualTo(preview.previewHash());
+        String emptyPresentation = "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}";
+        assertThat(applied.presentationDocument()).isEqualTo(StrategyDocumentJson.canonicalize(emptyPresentation));
+        assertThat(applied.presentationSchemaVersion())
+                .isEqualTo(BasicStrategyDraftCommandService.PRESENTATION_SCHEMA_VERSION);
+        assertThat(applied.presentationHash()).isEqualTo(StrategyDocumentJson.sha256(emptyPresentation));
         assertThat(commandPort.saved).isEqualTo(applied);
         assertThat(commandPort.editor).isEqualTo(editor);
     }
@@ -120,6 +126,48 @@ class DelegatedBasicStrategyEditServiceTest {
         assertThat(commandPort.saved).isNull();
     }
 
+    /**
+     * The whole point of delegated container creation: hand a tool an untouched strategy and it
+     * builds one. This failed on AWS after ADD_GROUP shipped, because a new document carries no
+     * catalogId and every proposed document must parse as an official assembly. The unit fixtures
+     * all had a catalogId already, so nothing here noticed.
+     */
+    @Test
+    void buildsAWholeStrategyFromTheDocumentANewStrategyActuallyStartsWith() {
+        var commandPort = new RecordingCommandPort();
+        var service = service(new RecordingAuthorizer(), commandPort, emptyDocument());
+        var operations = List.of(
+                new DelegatedBasicEditOperation("ADD_GROUP", Map.of(
+                        "groupId", "buy",
+                        "container", "BUY",
+                        "evaluationMode", "INDEPENDENT",
+                        "allocationMode", "EQUAL",
+                        "instrumentIds", List.of(INSTRUMENT_ID.toString()))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy", "blockId", "trigger", "elementCode", "MARKET_OPEN")),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy", "blockId", "condition", "elementCode", "RSI",
+                        "parameters", Map.of("period", 14))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy", "blockId", "order", "elementCode", "BUY_ORDER")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy", "fromBlockId", "trigger", "outputPort", "signal",
+                        "toBlockId", "condition", "inputPort", "input")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy", "fromBlockId", "condition", "outputPort", "result",
+                        "toBlockId", "order", "inputPort", "input")));
+
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.proposedSemanticDocument()).contains("\"catalogId\":\"" + CATALOG_ID + "\"");
+        assertThat(preview.valid()).isTrue();
+
+        var applied = service.apply(editor(), STRATEGY_ID, 7, catalog(), operations, preview.previewHash());
+
+        assertThat(applied.semanticHash()).isEqualTo(preview.previewHash());
+        assertThat(commandPort.saved).isEqualTo(applied);
+    }
+
     @Test
     void createsATradeContainerSoADelegatedToolCanStartFromNothing() {
         var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
@@ -138,27 +186,74 @@ class DelegatedBasicStrategyEditServiceTest {
         assertThat(preview.proposedSemanticDocument()).contains("\"container\":\"SELL\"");
     }
 
-    /**
-     * Rule 9.9: a strategy holds one container per side. A second BUY container has no defined
-     * meaning, so it is refused at the operation where the tool can still react, rather than
-     * surviving into a document that only fails later.
-     */
     @Test
-    void refusesASecondContainerOnASideThatAlreadyHasOne() {
+    void replacesAContainersCompleteInstrumentSetWithReviewedCatalogInstruments() {
+        var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
+        var operations = List.of(new DelegatedBasicEditOperation(
+                "SET_GROUP_INSTRUMENTS",
+                Map.of(
+                        "groupId", "buy",
+                        "instrumentIds", List.of(INSTRUMENT_ID.toString(), META_INSTRUMENT_ID.toString()))));
+
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.valid()).isTrue();
+        assertThat(preview.changes()).containsExactly("SET_GROUP_INSTRUMENTS buy AAPL,META");
+        assertThat(preview.proposedSemanticDocument())
+                .contains("\"instrumentIds\":[\"" + INSTRUMENT_ID + "\",\"" + META_INSTRUMENT_ID + "\"]");
+    }
+
+    @Test
+    void refusesEmptyDuplicateOrUnpublishedContainerInstrumentSets() {
+        var service = service(new RecordingAuthorizer(), new RecordingCommandPort());
+
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), List.of(
+                        new DelegatedBasicEditOperation("SET_GROUP_INSTRUMENTS", Map.of(
+                                "groupId", "buy", "instrumentIds", List.of())))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("instrumentIds");
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), List.of(
+                        new DelegatedBasicEditOperation("SET_GROUP_INSTRUMENTS", Map.of(
+                                "groupId", "buy", "instrumentIds",
+                                List.of(INSTRUMENT_ID.toString(), INSTRUMENT_ID.toString()))))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("duplicate");
+        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), List.of(
+                        new DelegatedBasicEditOperation("SET_GROUP_INSTRUMENTS", Map.of(
+                                "groupId", "buy", "instrumentIds",
+                                List.of("60000000-0000-4000-8000-000000000099"))))))
+                .isInstanceOf(DelegatedBasicEditRejectedException.class)
+                .hasMessageContaining("official catalog");
+    }
+
+    @Test
+    void allowsMultipleIndependentContainersOnTheSameSideWhenTheirIdsDiffer() {
         var commandPort = new RecordingCommandPort();
         var service = service(new RecordingAuthorizer(), commandPort);
-        var operations = List.of(new DelegatedBasicEditOperation(
-                "ADD_GROUP",
-                Map.of(
-                        "groupId", "buy-2",
-                        "container", "BUY",
-                        "evaluationMode", "INDEPENDENT",
-                        "allocationMode", "EQUAL",
-                        "instrumentIds", List.of(INSTRUMENT_ID.toString()))));
+        var operations = List.of(
+                new DelegatedBasicEditOperation("ADD_GROUP", Map.of(
+                        "groupId", "buy-2", "container", "BUY",
+                        "evaluationMode", "INDEPENDENT", "allocationMode", "EQUAL",
+                        "instrumentIds", List.of(META_INSTRUMENT_ID.toString()))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy-2", "blockId", "trigger-2", "elementCode", "MARKET_OPEN")),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy-2", "blockId", "condition-2", "elementCode", "RSI",
+                        "parameters", Map.of("period", 21))),
+                new DelegatedBasicEditOperation("ADD_BLOCK", Map.of(
+                        "groupId", "buy-2", "blockId", "order-2", "elementCode", "BUY_ORDER")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy-2", "fromBlockId", "trigger-2", "outputPort", "signal",
+                        "toBlockId", "condition-2", "inputPort", "input")),
+                new DelegatedBasicEditOperation("CONNECT_BLOCKS", Map.of(
+                        "groupId", "buy-2", "fromBlockId", "condition-2", "outputPort", "result",
+                        "toBlockId", "order-2", "inputPort", "input")));
 
-        assertThatThrownBy(() -> service.preview(editor(), STRATEGY_ID, 7, catalog(), operations))
-                .isInstanceOf(DelegatedBasicEditRejectedException.class)
-                .hasMessageContaining("one container per side");
+        var preview = service.preview(editor(), STRATEGY_ID, 7, catalog(), operations);
+
+        assertThat(preview.valid()).isTrue();
+        assertThat(preview.proposedSemanticDocument()).contains(
+                "\"id\":\"buy\"", "\"id\":\"buy-2\"", "\"container\":\"BUY\"");
         assertThat(commandPort.saved).isNull();
     }
 
@@ -197,8 +292,14 @@ class DelegatedBasicStrategyEditServiceTest {
     private static DelegatedBasicStrategyEditService service(
             DelegatedStrategyAuthorizationPort authorizer,
             DelegatedBasicEditCommandPort commandPort) {
+        return service(authorizer, commandPort, document());
+    }
+
+    private static DelegatedBasicStrategyEditService service(
+            DelegatedStrategyAuthorizationPort authorizer,
+            DelegatedBasicEditCommandPort commandPort,
+            StrategyDocument document) {
         Strategy strategy = Strategy.createBasic(STRATEGY_ID, ACCOUNT_ID, "Momentum", null, NOW.minusSeconds(60));
-        StrategyDocument document = document();
         StrategyQueryPort strategies = (id, owner) -> Optional.of(strategy)
                 .filter(value -> id.equals(STRATEGY_ID) && owner.equals(ACCOUNT_ID));
         StrategyDocumentQueryPort documents = (id, owner) -> Optional.of(document)
@@ -209,6 +310,16 @@ class DelegatedBasicStrategyEditServiceTest {
 
     private static DelegatedStrategyEditor editor() {
         return new DelegatedStrategyEditor(ACCOUNT_ID, AUTHORIZATION_ID, CREDENTIAL_ID);
+    }
+
+    /** Exactly what BasicStrategyDraftCommandService writes for a newly created strategy. */
+    private static StrategyDocument emptyDocument() {
+        String semantic = StrategyDocumentJson.canonicalize("{\"groups\":[],\"mode\":\"BASIC\"}");
+        String presentation = "{\"positions\":{}}";
+        return new StrategyDocument(
+                STRATEGY_ID, semantic, presentation, "basic-semantic/v1", "basic-presentation/v1",
+                StrategyDocumentJson.sha256(semantic), StrategyDocumentJson.sha256(presentation), 7,
+                NOW.minusSeconds(60), NOW.minusSeconds(1));
     }
 
     private static StrategyDocument document() {
@@ -242,7 +353,9 @@ class DelegatedBasicStrategyEditServiceTest {
                                 "{\"input\":{\"type\":\"BOOLEAN\"}}", "{\"result\":{\"type\":\"BOOLEAN\"}}"),
                         element("BUY_ORDER", "ORDER", "{}", "{\"input\":{\"type\":\"BOOLEAN\"}}", "{}")),
                 List.of(),
-                List.of(new SupportedInstrument(INSTRUMENT_ID, "STOCK", "XNAS", "USD", "AAPL")));
+                List.of(
+                        new SupportedInstrument(INSTRUMENT_ID, "STOCK", "XNAS", "USD", "AAPL"),
+                        new SupportedInstrument(META_INSTRUMENT_ID, "STOCK", "XNAS", "USD", "META")));
     }
 
     private static StrategyElementDefinition element(

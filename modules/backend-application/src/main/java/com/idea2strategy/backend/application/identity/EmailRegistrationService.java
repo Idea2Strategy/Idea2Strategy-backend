@@ -18,6 +18,7 @@ public final class EmailRegistrationService {
     private final VerificationTokenIssuer tokenIssuer;
     private final VerificationTokenDigest tokenDigest;
     private final AccountPreferenceDefaults preferenceDefaults;
+    private final boolean verificationRequired;
     private final Clock clock;
 
     public EmailRegistrationService(
@@ -38,6 +39,30 @@ public final class EmailRegistrationService {
                 tokenIssuer,
                 tokenDigest,
                 new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM),
+                true,
+                clock);
+    }
+
+    public EmailRegistrationService(
+            RegistrationQueryPort queryPort,
+            RegistrationCommandPort commandPort,
+            EmailProtector emailProtector,
+            PasswordPolicy passwordPolicy,
+            PasswordHasher passwordHasher,
+            VerificationTokenIssuer tokenIssuer,
+            VerificationTokenDigest tokenDigest,
+            boolean verificationRequired,
+            Clock clock) {
+        this(
+                queryPort,
+                commandPort,
+                emailProtector,
+                passwordPolicy,
+                passwordHasher,
+                tokenIssuer,
+                tokenDigest,
+                new AccountPreferenceDefaults("ko", "America/New_York", ThemePreference.SYSTEM),
+                verificationRequired,
                 clock);
     }
 
@@ -51,6 +76,30 @@ public final class EmailRegistrationService {
             VerificationTokenDigest tokenDigest,
             AccountPreferenceDefaults preferenceDefaults,
             Clock clock) {
+        this(
+                queryPort,
+                commandPort,
+                emailProtector,
+                passwordPolicy,
+                passwordHasher,
+                tokenIssuer,
+                tokenDigest,
+                preferenceDefaults,
+                true,
+                clock);
+    }
+
+    public EmailRegistrationService(
+            RegistrationQueryPort queryPort,
+            RegistrationCommandPort commandPort,
+            EmailProtector emailProtector,
+            PasswordPolicy passwordPolicy,
+            PasswordHasher passwordHasher,
+            VerificationTokenIssuer tokenIssuer,
+            VerificationTokenDigest tokenDigest,
+            AccountPreferenceDefaults preferenceDefaults,
+            boolean verificationRequired,
+            Clock clock) {
         this.queryPort = Objects.requireNonNull(queryPort, "queryPort");
         this.commandPort = Objects.requireNonNull(commandPort, "commandPort");
         this.emailProtector = Objects.requireNonNull(emailProtector, "emailProtector");
@@ -59,6 +108,7 @@ public final class EmailRegistrationService {
         this.tokenIssuer = Objects.requireNonNull(tokenIssuer, "tokenIssuer");
         this.tokenDigest = Objects.requireNonNull(tokenDigest, "tokenDigest");
         this.preferenceDefaults = Objects.requireNonNull(preferenceDefaults, "preferenceDefaults");
+        this.verificationRequired = verificationRequired;
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -69,44 +119,54 @@ public final class EmailRegistrationService {
         validateEmail(email.normalized());
         var existing = queryPort.findEmailRegistration(email.comparisonFingerprints());
         if (existing.isPresent()) {
-            return continuePendingRegistration(existing.orElseThrow());
+            return continueExistingRegistration(existing.orElseThrow(), command.correlationId());
         }
         if (queryPort.emailExists(email.lookupHmac())) {
             throw new DuplicateEmailException();
         }
 
         var now = clock.instant();
-        var expiresAt = now.plus(VERIFICATION_LIFETIME);
-        VerificationToken token = tokenIssuer.issue();
         UUID accountId = UUID.randomUUID();
         try {
-            commandPort.createPending(new PendingRegistration(
-                    accountId,
-                    UUID.randomUUID(),
-                    UUID.randomUUID(),
-                    email,
-                    passwordHasher.hash(command.password()),
-                    token.digest(),
-                    now,
-                    expiresAt,
-                    command.correlationId(),
-                    command.requestIpPrefix(),
-                    preferenceDefaults.at(now)));
+            if (verificationRequired) {
+                var expiresAt = now.plus(VERIFICATION_LIFETIME);
+                VerificationToken token = tokenIssuer.issue();
+                commandPort.createPending(new PendingRegistration(
+                        accountId,
+                        UUID.randomUUID(),
+                        UUID.randomUUID(),
+                        email,
+                        passwordHasher.hash(command.password()),
+                        token.digest(),
+                        now,
+                        expiresAt,
+                        command.correlationId(),
+                        command.requestIpPrefix(),
+                        preferenceDefaults.at(now)));
+                return new SignupResult(accountId, token.rawToken(), expiresAt);
+            }
+            commandPort.createActive(new ActiveEmailRegistration(
+                    accountId, UUID.randomUUID(), email, passwordHasher.hash(command.password()),
+                    now, command.correlationId(), preferenceDefaults.at(now)));
         } catch (DuplicateEmailException duplicate) {
             var racedRegistration = queryPort.findEmailRegistration(email.comparisonFingerprints());
             if (racedRegistration.isPresent()) {
-                return continuePendingRegistration(racedRegistration.orElseThrow());
+                return continueExistingRegistration(racedRegistration.orElseThrow(), command.correlationId());
             }
             throw duplicate;
         }
-        return new SignupResult(accountId, token.rawToken(), expiresAt);
+        return new SignupResult(accountId, null, null);
     }
 
-    private SignupResult continuePendingRegistration(ExistingEmailRegistration existing) {
+    private SignupResult continueExistingRegistration(ExistingEmailRegistration existing, UUID correlationId) {
         if (!existing.awaitingVerification()) {
             throw new DuplicateEmailException();
         }
-        return new SignupResult(existing.accountId(), null, existing.verificationExpiresAt());
+        if (verificationRequired) {
+            return new SignupResult(existing.accountId(), null, existing.verificationExpiresAt());
+        }
+        commandPort.activatePending(existing.accountId(), clock.instant(), correlationId);
+        return new SignupResult(existing.accountId(), null, null);
     }
 
     public void verify(VerifyEmailCommand command) {

@@ -45,6 +45,16 @@ class RoomInvitationServiceTest {
                 .isInstanceOf(RoomInvitationUnavailableException.class);
     }
 
+    @Test
+    void bindsConsumedInvitationToTheAuthenticatedAccount() {
+        var port = new StubInvitationPort();
+        port.allowConsume = true;
+        var service = service(port);
+
+        assertThat(service.consume("one-time-secret").roomId()).isEqualTo(ROOM_ID);
+        assertThat(port.consumerAccountId).isEqualTo(ACCOUNT_ID);
+    }
+
     private static RoomInvitationService service(StubInvitationPort port) {
         return new RoomInvitationService(
                 port,
@@ -57,6 +67,8 @@ class RoomInvitationServiceTest {
     private static final class StubInvitationPort implements RoomInvitationPort {
         private RoomInvitationIssueRequest issuedRequest;
         private boolean allowIssue = true;
+        private boolean allowConsume;
+        private UUID consumerAccountId;
         private final ArrayList<UUID> revoked = new ArrayList<>();
 
         @Override
@@ -78,8 +90,12 @@ class RoomInvitationServiceTest {
         }
 
         @Override
-        public Optional<ConsumedRoomInvitation> consume(String credentialDigest, Instant consumedAt) {
-            return Optional.empty();
+        public Optional<ConsumedRoomInvitation> consume(
+                String credentialDigest, UUID consumerAccountId, Instant consumedAt) {
+            this.consumerAccountId = consumerAccountId;
+            return allowConsume
+                    ? Optional.of(new ConsumedRoomInvitation(INVITATION_ID, ROOM_ID))
+                    : Optional.empty();
         }
     }
 }

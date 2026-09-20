@@ -12,6 +12,8 @@ import com.idea2strategy.backend.application.strategy.BasicStrategyCatalogQueryS
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseCommandService;
 import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleasePreparationCommand;
 import com.idea2strategy.backend.application.strategy.StrategyValidationRunQueryPort;
+import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalog;
+import com.idea2strategy.backend.application.strategy.StrategyReleaseInputCatalogQueryPort;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationRun;
 import com.idea2strategy.backend.domain.strategy.StrategyValidationStatus;
@@ -64,12 +66,20 @@ class RoomStrategyParticipationServiceTest {
             return new RoomParticipationAdmission(
                     UUID.randomUUID(), ROOM_ID, botId, OWNER_ID, "ALPHA", ADMITTED_AT);
         });
+        StrategyReleaseInputCatalogQueryPort releaseInputs = observedAt -> new StrategyReleaseInputCatalog(
+                List.of(new StrategyReleaseInputCatalog.ExecutionPolicy(
+                        "competition-policy-v1", "broker/v3", "accounting/v4", "room-precision/v2",
+                        FEE_ID, 20, BUFFER_ID, 1,
+                        java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
+                        "market-bars/1", ADMITTED_AT.minusSeconds(60))),
+                List.of(), observedAt);
         var service = new RoomStrategyParticipationService(
                 admissionService,
                 provisioningPort,
                 releaseService,
                 catalogService,
                 validations,
+                releaseInputs,
                 () -> OWNER_ID,
                 () -> BOT_ID);
 
@@ -80,10 +90,7 @@ class RoomStrategyParticipationServiceTest {
                 "basic/v1",
                 "schema/v1",
                 "catalog/v1",
-                8_000,
-                "broker/v3",
-                "accounting/v4",
-                "{\"policy\":\"FIRST_WINS\"}"));
+                8_000));
 
         assertThat(result.botId()).isEqualTo(BOT_ID);
         var preparation = ArgumentCaptor.forClass(ImmutableStrategyReleasePreparationCommand.class);
@@ -94,5 +101,7 @@ class RoomStrategyParticipationServiceTest {
         assertThat(preparation.getValue().buyingPowerBufferPolicyId()).isEqualTo(BUFFER_ID);
         assertThat(preparation.getValue().precisionRulesVersion()).isEqualTo("room-precision/v2");
         assertThat(preparation.getValue().budgetCapBps()).isEqualTo(8_000);
+        assertThat(preparation.getValue().brokerRulesVersion()).isEqualTo("broker/v3");
+        assertThat(preparation.getValue().accountingRulesVersion()).isEqualTo("accounting/v4");
     }
 }

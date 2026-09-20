@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.api.backtest;
 
 import com.idea2strategy.backend.application.backtest.BacktestRequestIdempotencyConflictException;
+import com.idea2strategy.backend.application.strategy.ImmutableStrategyReleaseRejectedException;
 import java.util.NoSuchElementException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -22,5 +23,12 @@ public class CustomBacktestExceptionHandler {
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
     ProblemDetail rejected(RuntimeException exception) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, exception.getMessage());
+    }
+
+    @ExceptionHandler(ImmutableStrategyReleaseRejectedException.class)
+    ProblemDetail officialInputsUnavailable(ImmutableStrategyReleaseRejectedException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, exception.getMessage());
+        detail.setProperty("reasonCode", "OFFICIAL_BACKTEST_INPUTS_UNAVAILABLE");
+        return detail;
     }
 }

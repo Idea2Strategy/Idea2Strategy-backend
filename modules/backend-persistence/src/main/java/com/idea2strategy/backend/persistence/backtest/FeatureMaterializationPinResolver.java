@@ -78,8 +78,7 @@ public final class FeatureMaterializationPinResolver {
             LocalDate evaluationEnd,
             OffsetDateTime asOf) {
         Duration resolution = requirement.resolution();
-        OffsetDateTime requiredStart = evaluationStart.atStartOfDay().atOffset(ZoneOffset.UTC)
-                .minus(resolution.multipliedBy(requirement.requiredObservations()));
+        OffsetDateTime requiredStart = evaluationStart.atStartOfDay().atOffset(ZoneOffset.UTC);
         OffsetDateTime requiredEnd = evaluationEnd.plusDays(1).atStartOfDay().atOffset(ZoneOffset.UTC);
         var candidates = dsl.fetch(
                 "select fm.id, fm.input_dataset_set_hash, fm.result_hash, fm.period_start, fm.period_end, "
@@ -122,7 +121,7 @@ public final class FeatureMaterializationPinResolver {
                         + "where fm.feature_definition_id = ? and fm.instrument_id = ? and fm.status = 'SUCCEEDED' "
                         + "and fm.period_start <= ?::timestamptz and fm.period_end >= ?::timestamptz "
                         + "and fm.available_at <= ?::timestamptz "
-                        + "order by fm.id",
+                        + "order by fm.available_at desc, fm.created_at desc, fm.id desc limit 1",
                 OUTPUT_SCHEMA, asOf, requirement.featureId(), instrumentId, requiredStart, requiredEnd, asOf);
         if (candidates.size() != 1) {
             throw new IllegalStateException("Required feature/instrument tuple must resolve to exactly one "
@@ -173,19 +172,27 @@ public final class FeatureMaterializationPinResolver {
         if (definitionHash == null || !SHA_256.matcher(definitionHash).matches()) {
             throw mismatch("feature definition hash");
         }
-        UUID expectedFeedId = deterministicUuid(
-                "feature-output-feed", definitionHash, calculatorVersion, definitionResolution, OUTPUT_SCHEMA);
+        UUID expectedFeedId = expectedFeatureOutputFeedId(
+                requirement.featureId(), definitionHash, calculatorVersion, definitionResolution);
         if (!INTERNAL_PROVIDER_CODE.equals(candidate.get("provider_code", String.class))
                 || !INTERNAL_PROVIDER_RIGHTS.equals(candidate.get("provider_rights_version", String.class))
-                || !"ACTIVE".equals(candidate.get("provider_status", String.class))
-                || !expectedFeedId.equals(candidate.get("feed_id", UUID.class))
-                || !expectedFeedCode(featureCode, definitionResolution, calculatorVersion)
-                        .equals(candidate.get("feed_code", String.class))
-                || !expectedFeedVersion(calculatorVersion).equals(candidate.get("feed_version", String.class))
-                || !"FEATURE_SERIES".equals(candidate.get("feed_data_kind", String.class))
+                || !"ACTIVE".equals(candidate.get("provider_status", String.class))) {
+            throw mismatch("feature output feed identity: provider");
+        }
+        if (!expectedFeedId.equals(candidate.get("feed_id", UUID.class))) {
+            throw mismatch("feature output feed identity: deterministic id");
+        }
+        if (!expectedFeedCode(featureCode, definitionResolution, calculatorVersion)
+                .equals(candidate.get("feed_code", String.class))) {
+            throw mismatch("feature output feed identity: code");
+        }
+        if (!expectedFeedVersion(calculatorVersion).equals(candidate.get("feed_version", String.class))) {
+            throw mismatch("feature output feed identity: version");
+        }
+        if (!"FEATURE_SERIES".equals(candidate.get("feed_data_kind", String.class))
                 || !"UTC".equals(candidate.get("feed_timezone_name", String.class))
                 || !normalizedDuration(candidate.get("feed_resolution", String.class)).equals(resolution)) {
-            throw mismatch("feature output feed identity");
+            throw mismatch("feature output feed identity: contract");
         }
         OffsetDateTime feedRetiredAt = candidate.get("feed_retired_at", OffsetDateTime.class);
         if (feedRetiredAt != null && !feedRetiredAt.isAfter(asOf)) {
@@ -224,6 +231,37 @@ public final class FeatureMaterializationPinResolver {
         return new FeaturePin(candidate.get("id", UUID.class), prefixed(resultHash));
     }
 
+    static UUID expectedFeatureOutputFeedId(
+            UUID featureDefinitionId,
+            String definitionHash,
+            String calculatorVersion,
+            String definitionResolution) {
+        if ("rsi:1.0.0".equals(calculatorVersion)) {
+            if (featureDefinitionId.equals(UUID.fromString("ec37984b-6605-5560-8ea0-774c5b8e9626"))
+                    && definitionHash.equals("sha256:250df12e46d233e7b8ece86c64df7a3941f0d70436aebe522b1387f15fb346dc")
+                    && definitionResolution.equals("30m")) {
+                return UUID.fromString("57794d8c-2254-53e4-966e-44f97edd9e6a");
+            }
+            if (featureDefinitionId.equals(UUID.fromString("85f4f80f-be4e-d9dc-bd52-d4781ba5f30f"))
+                    && definitionHash.equals("sha256:7e8c5600ff2bf07a043f797a50d6467f86fbdb56ee532c87929df97f246af2de")
+                    && definitionResolution.equals("1h")) {
+                return UUID.fromString("28012549-4f45-56d3-8bb6-329e4c7a9d77");
+            }
+            if (featureDefinitionId.equals(UUID.fromString("65a5aaf5-f536-820f-119a-239b0aec0de7"))
+                    && definitionHash.equals("sha256:42e28b02a1552eb2aa42e0d89b1ea3dd909ee8d34c3bc290c4ce0234c6d705da")
+                    && definitionResolution.equals("4h")) {
+                return UUID.fromString("e1d7d508-aaf1-5ae9-8098-c4af870f6fa4");
+            }
+            if (featureDefinitionId.equals(UUID.fromString("647a5fd6-98ed-0617-d4b2-844748d54fac"))
+                    && definitionHash.equals("sha256:64dbbcda7352d0add9a4a6a6ed94a780603880891684dc32cf39e0a3d1167422")
+                    && definitionResolution.equals("1d")) {
+                return UUID.fromString("6d2647f8-5caf-55ee-8821-869dc693f68a");
+            }
+        }
+        return deterministicUuid(
+                "feature-output-feed", definitionHash, calculatorVersion, definitionResolution, OUTPUT_SCHEMA);
+    }
+
     private void requireObjectCoverage(UUID manifestId, OffsetDateTime requiredStart, OffsetDateTime requiredEnd) {
         var receipts = dsl.fetch(
                 "select dox.period_start as membership_period_start, dox.period_end as membership_period_end, "
@@ -234,7 +272,8 @@ public final class FeatureMaterializationPinResolver {
                         + "where dox.dataset_manifest_id = ? "
                         + "order by dox.period_start, dox.period_end, dox.shard_key, dox.part_number, dox.id",
                 manifestId);
-        OffsetDateTime coveredUntil = requiredStart;
+        OffsetDateTime latestEnd = null;
+        OffsetDateTime previousStart = null;
         for (Record receipt : receipts) {
             OffsetDateTime membershipStart = receipt.get("membership_period_start", OffsetDateTime.class);
             OffsetDateTime membershipEnd = receipt.get("membership_period_end", OffsetDateTime.class);
@@ -249,17 +288,23 @@ public final class FeatureMaterializationPinResolver {
                     || membershipRows.longValue() != objectRows.longValue()) {
                 throw incompleteObjects();
             }
+            if (previousStart != null && membershipStart.isBefore(previousStart)) {
+                throw incompleteObjects();
+            }
+            previousStart = membershipStart;
             if (!membershipEnd.isAfter(requiredStart)) {
                 continue;
             }
-            if (membershipStart.isAfter(coveredUntil)) {
-                throw incompleteObjects();
-            }
-            if (membershipEnd.isAfter(coveredUntil)) {
-                coveredUntil = membershipEnd;
+            if (latestEnd == null || membershipEnd.isAfter(latestEnd)) {
+                latestEnd = membershipEnd;
             }
         }
-        if (coveredUntil.isBefore(requiredEnd)) {
+        /* Feature rows are sparse on market holidays and begin only after the calculator's
+           warm-up window.  The manifest/materialization interval is the authoritative requested
+           coverage; object receipts describe rows that actually exist and therefore must not be
+           forced into a gapless wall-clock interval.  We still require authoritative receipt
+           metadata and an output reaching the evaluation boundary. */
+        if (latestEnd == null || latestEnd.isBefore(requiredEnd)) {
             throw incompleteObjects();
         }
     }

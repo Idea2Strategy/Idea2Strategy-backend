@@ -55,7 +55,7 @@ public class AccountSanctionController {
 
     private OperatorRequestContext actor() {
         return securityContext.current()
-                .filter(OperatorRequestContext::trustedExternalSubject)
+                .filter(OperatorRequestContext::sessionAuthenticated)
                 .orElseThrow(AccountSanctionAuthenticationRejectedException::new);
     }
 

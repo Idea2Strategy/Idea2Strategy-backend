@@ -18,9 +18,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class JdbcOperatorBootstrapAdapter implements OperatorBootstrapPort {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactions;
+    private final OperatorBootstrapCredential credential;
 
     public JdbcOperatorBootstrapAdapter(JdbcTemplate jdbc, PlatformTransactionManager transactionManager) {
+        this(jdbc, transactionManager, null);
+    }
+
+    public JdbcOperatorBootstrapAdapter(JdbcTemplate jdbc, PlatformTransactionManager transactionManager,
+            OperatorBootstrapCredential credential) {
         this.jdbc = jdbc;
+        this.credential = credential;
         this.transactions = new TransactionTemplate(transactionManager);
         this.transactions.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     }
@@ -60,6 +67,7 @@ public final class JdbcOperatorBootstrapAdapter implements OperatorBootstrapPort
             reject("OPERATOR_BOOTSTRAP_MANIFEST_ALREADY_CONSUMED");
         }
         requireExpectedEmptyState(manifest);
+        if (credential == null) reject("OPERATOR_BOOTSTRAP_CREDENTIAL_REQUIRED");
         Instant appliedAt = jdbc.queryForObject("select clock_timestamp()", Timestamp.class).toInstant();
 
         jdbc.update("insert into operations.rbac_catalog_versions "
@@ -91,13 +99,18 @@ public final class JdbcOperatorBootstrapAdapter implements OperatorBootstrapPort
         jdbc.update("update operations.rbac_catalog_versions set status = 'ACTIVE', activated_at = ? "
                         + "where catalog_version = ? and status = 'DRAFT'",
                 Timestamp.from(appliedAt), manifest.catalogVersion());
-        jdbc.update("insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, "
-                        + "mfa_enrolled_at, last_mfa_verified_at, created_at) "
-                        + "values (?, ?, ?, 'ACTIVE', ?, null, ?)",
-                manifest.operatorAccountId(), manifest.externalIdentityKeyHmac(),
-                manifest.externalIdentityKeyVersion(), Timestamp.from(appliedAt),
-                Timestamp.from(appliedAt));
+        jdbc.update("insert into operations.operator_accounts (id, status, created_at) values (?, 'ACTIVE', ?)",
+                manifest.operatorAccountId(), Timestamp.from(appliedAt));
+        jdbc.update("""
+                insert into operations.operator_login_credentials
+                  (operator_account_id, login_name, password_hash, password_parameters, password_version,
+                   credential_version, totp_ciphertext, totp_nonce, totp_key_version, totp_enrolled_at,
+                   password_changed_at, created_at, updated_at)
+                values (?, ?, ?, cast(? as jsonb), ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                """, manifest.operatorAccountId(), manifest.loginName(), credential.passwordHash(),
+                credential.passwordParameters(), credential.passwordVersion(), credential.totpCiphertext(),
+                credential.totpNonce(), credential.totpKeyVersion(), Timestamp.from(appliedAt),
+                Timestamp.from(appliedAt), Timestamp.from(appliedAt), Timestamp.from(appliedAt));
         jdbc.update("insert into operations.operator_role_assignments "
                         + "(id, operator_account_id, role_id, catalog_version, granted_by_operator_id, granted_at) "
                         + "values (?, ?, ?, ?, ?, ?)",
@@ -114,7 +127,7 @@ public final class JdbcOperatorBootstrapAdapter implements OperatorBootstrapPort
                       jsonb_build_object('operatorAccountId', ?::text,
                                          'operatorRoleAssignmentId', ?::text,
                                          'catalogVersion', ?::text,
-                                         'externalIdentityKeyVersion', ?::int,
+                                         'credentialVersion', 1,
                                          'status', 'ACTIVE') as response_document,
                       jsonb_build_object('databaseRole', current_user,
                                          'deploymentActorId', ?::text,
@@ -142,17 +155,16 @@ public final class JdbcOperatorBootstrapAdapter implements OperatorBootstrapPort
                 manifest.bootstrapKey(), manifestHash, manifest.catalogVersion(),
                 manifest.catalogContentHash(), manifest.expectedDatabaseRole(), manifest.grantProvenance(),
                 manifest.operatorAccountId(), manifest.operatorRoleAssignmentId(), manifest.catalogVersion(),
-                manifest.externalIdentityKeyVersion(),
                 manifest.deploymentActorId(), manifest.grantProvenance(), manifest.operatorAccountId(),
                 manifest.auditEventId(), manifest.deploymentActorId(), manifest.operatorAccountId(),
                 manifest.correlationId(), "operator-bootstrap:" + manifest.bootstrapKey(),
                 Timestamp.from(appliedAt));
         jdbc.update("insert into operations.operator_bootstrap_receipts "
                         + "(bootstrap_key, manifest_hash, catalog_version, operator_account_id, "
-                        + "operator_role_assignment_id, external_identity_key_version, correlation_id, "
+                        + "operator_role_assignment_id, credential_version, correlation_id, "
                         + "audit_event_id, applied_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 manifest.bootstrapKey(), manifestHash, manifest.catalogVersion(), manifest.operatorAccountId(),
-                manifest.operatorRoleAssignmentId(), manifest.externalIdentityKeyVersion(),
+                manifest.operatorRoleAssignmentId(), 1,
                 manifest.correlationId(), manifest.auditEventId(), Timestamp.from(appliedAt));
         return new OperatorBootstrapResult(false, manifest.bootstrapKey(), manifestHash, manifest.catalogVersion(),
                 manifest.operatorAccountId(), manifest.operatorRoleAssignmentId(), manifest.correlationId(),

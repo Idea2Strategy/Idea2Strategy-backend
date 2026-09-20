@@ -232,10 +232,8 @@ public class BasicStrategyCatalogJooqQueryAdapter implements BasicStrategyCatalo
         var exchange = field(name("instrument", "primary_exchange_mic"), String.class);
         var currency = field(name("instrument", "currency_code"), String.class);
         var listedAt = field(name("instrument", "listed_at"), LocalDate.class);
-        var delistedAt = field(name("instrument", "delisted_at"), LocalDate.class);
         var symbol = field(name("symbol", "symbol"), String.class);
         var effectiveFrom = field(name("symbol", "effective_from"), OffsetDateTime.class);
-        var effectiveTo = field(name("symbol", "effective_to"), OffsetDateTime.class);
         OffsetDateTime observedAt = at.atOffset(ZoneOffset.UTC);
 
         return dsl.selectDistinct(instrumentId, assetType, exchange, currency, symbol)
@@ -245,9 +243,7 @@ public class BasicStrategyCatalogJooqQueryAdapter implements BasicStrategyCatalo
                 .where(assetType.in("STOCK", "ETF")
                         .and(currency.eq("USD"))
                         .and(listedAt.isNull().or(listedAt.le(marketDate)))
-                        .and(delistedAt.isNull().or(delistedAt.gt(marketDate)))
-                        .and(effectiveFrom.le(observedAt))
-                        .and(effectiveTo.isNull().or(effectiveTo.gt(observedAt))))
+                        .and(effectiveFrom.le(observedAt)))
                 .orderBy(symbol, exchange)
                 .fetch(record -> new SupportedInstrument(
                         record.get(instrumentId),

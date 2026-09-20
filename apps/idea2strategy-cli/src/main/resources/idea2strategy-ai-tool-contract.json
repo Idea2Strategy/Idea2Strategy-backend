@@ -3,7 +3,44 @@
   "tool": "idea2strategy",
   "outputMode": "JSON",
   "contractCommand": ["tool-contract"],
+  "discovery": [
+    {
+      "name": "resolve-instruments",
+      "purpose": "Turn a company or ticker a person named into the instrument ids a container needs.",
+      "command": ["catalog", "instruments", "--symbol", "<TICKER[,TICKER...]>"],
+      "requiredOutputFields": ["data.instruments"]
+    },
+    {
+      "name": "read-element-catalog",
+      "purpose": "Read the official element codes and their declared parameters. Never guess a code; an unpublished code is refused.",
+      "command": ["catalog", "elements"],
+      "requiredOutputFields": ["data.elements"]
+    },
+    {
+      "name": "read-strategy",
+      "purpose": "Read the complete persisted Basic strategy document before planning an edit.",
+      "command": ["strategy", "get", "--strategy-id", "<id>"],
+      "requiredOutputFields": ["data"]
+    }
+  ],
   "workflow": [
+    {
+      "name": "create-strategy",
+      "purpose": "A new strategy starts empty; the container and blocks are built by the operations below.",
+      "command": ["strategy", "create", "--name", "<name>"],
+      "requiredOutputFields": ["data.id"]
+    },
+    {
+      "name": "delegate-editing",
+      "purpose": "Grant this tool scoped, expiring permission to edit that strategy. The credential is returned once.",
+      "command": [
+        "delegation", "create",
+        "--name", "<tool name>",
+        "--scopes", "STRATEGY_EDIT",
+        "--strategy-id", "<data.id from create-strategy>"
+      ],
+      "requiredOutputFields": ["data.authorizationId", "data.credentialId"]
+    },
     {
       "name": "preview-basic-edit",
       "command": [
@@ -39,8 +76,15 @@
     "ADD_BLOCK",
     "REMOVE_BLOCK",
     "CONNECT_BLOCKS",
-    "SET_VALUE"
+    "SET_VALUE",
+    "SET_GROUP_INSTRUMENTS"
   ],
+  "resourceLifecycle": {
+    "strategies": ["create", "read", "update-through-reviewed-edit", "delete"],
+    "bots": ["read", "stop"],
+    "backtests": ["create", "read", "cancel", "evidence-preserving-delete"],
+    "competitions": ["create", "read", "cancel-as-delete"]
+  },
   "allowedDelegationScopes": [
     "STRATEGY_EDIT",
     "STRATEGY_VALIDATE"
@@ -48,7 +92,9 @@
   "forbiddenCapabilities": [
     "ARBITRARY_CODE",
     "DIRECT_ORDER",
-    "EXTERNAL_DATA"
+    "EXTERNAL_DATA",
+    "BOT_UPDATE",
+    "COMPETITION_UPDATE"
   ],
   "exitCodes": {
     "0": "success",

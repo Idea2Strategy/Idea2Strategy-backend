@@ -99,7 +99,7 @@ public final class OperatorRbacReadService {
 
     private OperatorRbacReadModels.ActorState trustedActor(
             OperatorRequestContext context, UUID correlationId, Instant now) {
-        if (context == null || !context.trustedExternalSubject()) {
+        if (context == null || !context.sessionAuthenticated()) {
             throw new OperatorRbacReadRejectedException(
                     OperatorRbacReadRejectedException.Reason.UNAUTHENTICATED,
                     "OPERATOR_AUTHENTICATION_REQUIRED", correlationId);

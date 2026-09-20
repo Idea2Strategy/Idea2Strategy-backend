@@ -100,9 +100,8 @@ class RoomTerminationPersistenceIntegrationTest {
                 OWNER_ID, PARTICIPANT_OWNER_ID);
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, created_at) "
-                        + "values (?, 'operator-e12', 1, 'ACTIVE', ?, ?)",
-                OPERATOR_ID, utc(NOW.minusSeconds(60)), utc(NOW.minusSeconds(60)));
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
+                OPERATOR_ID, utc(NOW.minusSeconds(60)));
         jdbc.update(
                 "insert into operations.roles (id, code, hierarchy_rank, status) "
                         + "values (?, 'E30_OPERATOR', 10, 'ACTIVE') on conflict (id) do nothing",

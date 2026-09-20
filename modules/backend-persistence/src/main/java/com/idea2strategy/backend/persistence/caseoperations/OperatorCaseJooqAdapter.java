@@ -241,9 +241,14 @@ public class OperatorCaseJooqAdapter implements
 
     private Optional<OperatorCaseState> loadCase(UUID caseId, boolean lock) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                select id, account_id, case_type::text, status::text, case_version,
+                select id, account_id, case_type::text, status::text, case_version, subject,
                        assignee_operator_id, updated_at, response_deadline_at,
-                       deadline_policy_version, clock_timestamp() as database_now
+                       deadline_policy_version, clock_timestamp() as database_now,
+                       coalesce((select event.payload_document->>'description'
+                          from operations.case_events event
+                         where event.case_id = operations.cases.id
+                           and event.event_type = 'SUBMITTED'::operations.case_event_type
+                         order by event.event_sequence limit 1), '') as description
                 from operations.cases where id = ?
                 """ + (lock ? " for update" : ""), caseId);
         if (rows.isEmpty()) {
@@ -285,6 +290,7 @@ public class OperatorCaseJooqAdapter implements
         Instant deadline = deadlineValue == null ? null : instant(deadlineValue);
         return Optional.of(new OperatorCaseState(
                 view, (UUID) row.get("assignee_operator_id"), evidence,
+                (String) row.get("subject"), (String) row.get("description"),
                 instant(row.get("database_now")), deadline,
                 (String) row.get("deadline_policy_version")));
     }

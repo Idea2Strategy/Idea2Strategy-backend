@@ -54,7 +54,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 () -> PLAN_ID, Clock.fixed(NOW, ZoneOffset.UTC));
         var releases = new CapturingReleasePort();
         var service = new ImmutableStrategyReleaseCommandService(
-                releases, planService, validations, strategies, documents, new TestPrincipal(OWNER_ID),
+                releases, planService, validations, strategies, documents, inputCatalogPort(), new TestPrincipal(OWNER_ID),
                 Clock.fixed(NOW, ZoneOffset.UTC));
 
         ImmutableStrategyRelease release = service.release(RUN_ID, catalog(), command());
@@ -96,6 +96,19 @@ class ImmutableStrategyReleaseCommandServiceTest {
         assertThat(releases.backtestRequest.assumptionsVersion()).isEqualTo("accounting/v1");
         assertThat(releases.backtestRequest.requestReason()).isEqualTo("STRATEGY_RELEASE");
         assertThat(releases.backtestRequest.metadata().idempotencyKey()).startsWith("sha256:").hasSize(71);
+    }
+
+    @Test
+    void appliesTheServerOwnedBasicConflictPolicyInsteadOfCallerInput() {
+        var callerControlled = new ImmutableStrategyReleaseCommand(
+                RELEASE_ID, new BigDecimal("100000.00"), 10_000,
+                "{\"policy\":\"CALLER_CONTROLLED\"}");
+
+        var release = releaseService().release(RUN_ID, catalog(), callerControlled);
+
+        assertThat(release.launchConfiguration().candidateConflictPolicy())
+                .isEqualTo(BasicLaunchPolicy.CANDIDATE_CONFLICT_POLICY)
+                .doesNotContain("CALLER_CONTROLLED");
     }
 
     /**
@@ -170,7 +183,7 @@ class ImmutableStrategyReleaseCommandServiceTest {
         var releasePort = new CapturingReleasePort();
         var service = new ImmutableStrategyReleaseCommandService(
                 releasePort, planService, validations, strategies, documents,
-                new TestPrincipal(OWNER_ID), Clock.fixed(NOW, ZoneOffset.UTC));
+                inputCatalogPort(), new TestPrincipal(OWNER_ID), Clock.fixed(NOW, ZoneOffset.UTC));
         var catalogPort = new ExactCatalogPort(catalog());
         var catalogService = new BasicStrategyCatalogQueryService(
                 catalogPort, Clock.fixed(NOW, ZoneOffset.UTC), ZoneOffset.UTC);
@@ -210,14 +223,26 @@ class ImmutableStrategyReleaseCommandServiceTest {
                 () -> PLAN_ID, Clock.fixed(NOW, ZoneOffset.UTC));
         return new ImmutableStrategyReleaseCommandService(
                 new CapturingReleasePort(), planService, validations, strategies, documents,
-                new TestPrincipal(OWNER_ID), Clock.fixed(NOW, ZoneOffset.UTC));
+                inputCatalogPort(), new TestPrincipal(OWNER_ID), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static ImmutableStrategyReleaseCommand command() {
         return new ImmutableStrategyReleaseCommand(
-                RELEASE_ID, new BigDecimal("100000.00"), 10_000, "broker/v1", "accounting/v1",
-                "precision/v1", FEE_ID, BUFFER_ID, DATASET_ID, "backtest-policy-v1",
-                "{\"policy\":\"FIRST_WINS\"}");
+                RELEASE_ID, new BigDecimal("100000.00"), 10_000, "{\"policy\":\"FIRST_WINS\"}");
+    }
+
+    private static StrategyReleaseInputCatalogQueryPort inputCatalogPort() {
+        return observedAt -> new StrategyReleaseInputCatalog(
+                List.of(new StrategyReleaseInputCatalog.ExecutionPolicy(
+                        "backtest-policy-v1", "broker/v1", "accounting/v1", "precision/v1",
+                        FEE_ID, 20, BUFFER_ID, 1,
+                        java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
+                        "market-bars/1", NOW.minusSeconds(60))),
+                List.of(new StrategyReleaseInputCatalog.Dataset(
+                        DATASET_ID, AAPL_ID, "ALPACA_SIP_ALL_30M", "ADJUSTED", "30m", 1,
+                        java.time.LocalDate.parse("2025-01-01"), java.time.LocalDate.parse("2025-12-31"),
+                        "market-bars/1", NOW.minusSeconds(30))),
+                observedAt);
     }
 
     private static StrategyDocument document() {

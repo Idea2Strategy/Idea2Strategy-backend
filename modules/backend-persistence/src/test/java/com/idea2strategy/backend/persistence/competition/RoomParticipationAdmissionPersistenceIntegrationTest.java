@@ -50,6 +50,9 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     private static final UUID FEE_ID = UUID.fromString("76000000-0000-4000-8000-000000000007");
     private static final UUID BUFFER_ID = UUID.fromString("76000000-0000-4000-8000-000000000008");
     private static final UUID OPERATOR_ID = UUID.fromString("76000000-0000-4000-8000-000000000009");
+    private static final UUID OUT_OF_SCOPE_INSTRUMENT = UUID.fromString("76000000-0000-4000-8000-000000000010");
+    private static final UUID CATALOG_ID = UUID.fromString("76000000-0000-4000-8000-000000000011");
+    private static final UUID PLAN_ID = UUID.fromString("76000000-0000-4000-8000-000000000012");
     private static final Instant NOW = Instant.parse("2026-08-02T00:00:00Z");
 
     @Container
@@ -76,12 +79,16 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
     @BeforeEach
     void prepareReferences() {
         jdbc.update("delete from competition.participation_events");
+        jdbc.update("delete from competition.room_invitations");
         jdbc.update("delete from competition.participations");
         jdbc.update("delete from bot.bots");
         jdbc.update("delete from competition.room_schedules");
         jdbc.update("delete from competition.live_room_rules");
         jdbc.update("delete from competition.room_rules");
         jdbc.update("delete from competition.rooms");
+        jdbc.update("delete from market_data.instruments where id = ?", OUT_OF_SCOPE_INSTRUMENT);
+        jdbc.update("delete from strategy.compiled_flow_plans where id = ?", PLAN_ID);
+        jdbc.update("delete from strategy.element_catalog_versions where id = ?", CATALOG_ID);
         jdbc.update("delete from operations.operator_accounts where id = ?", OPERATOR_ID);
         jdbc.update("delete from competition.scoring_template_versions where id = ?", SCORING_ID);
         jdbc.update("delete from trading.fee_policy_versions where id = ?", FEE_ID);
@@ -122,11 +129,22 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 at.minusDays(1));
         jdbc.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, created_at) "
-                        + "values (?, 'operator-e10', 1, 'ACTIVE', ?, ?)",
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
                 OPERATOR_ID,
-                at.minusDays(2),
                 at.minusDays(2));
+        jdbc.update(
+                "insert into strategy.element_catalog_versions "
+                        + "(id, language_version, schema_version, catalog_version, data_requirement_version, "
+                        + "definition_hash, published_at) values (?, 'basic/v1', 'schema/v1', 'catalog/v1', "
+                        + "'data/v1', 'admission-catalog', ?)",
+                CATALOG_ID, at.minusDays(1));
+        jdbc.update(
+                "insert into strategy.compiled_flow_plans "
+                        + "(id, element_catalog_version_id, semantic_hash, compiler_version, "
+                        + "required_feature_set_hash, plan_document, plan_hash, created_at) values "
+                        + "(?, ?, 'admission-semantic', 'basic-compiler:1.0.0', 'admission-features', "
+                        + "'{}'::jsonb, 'admission-plan', ?)",
+                PLAN_ID, CATALOG_ID, at.minusDays(1));
     }
 
     @Test
@@ -148,6 +166,51 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                         String.class,
                         id(1)))
                 .isEqualTo("PARTICIPATION_REGISTERED");
+    }
+
+    @Test
+    void rejectsSecretRoomAdmissionWhenTheAccountHasNoConsumedInvitation() {
+        insertRoom(ROOM_A, 4, 2);
+        jdbc.update("update competition.rooms set access_type = 'SECRET' where id = ?", ROOM_A);
+        var provisionCalls = new AtomicInteger();
+
+        var outcome = adapter.admit(request(41, ROOM_A, OWNER_A, "uninvited"), context -> {
+            provisionCalls.incrementAndGet();
+            return id(141);
+        });
+
+        assertThat(outcome.failure()).isEqualTo(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+        assertThat(provisionCalls).hasValue(0);
+    }
+
+    @Test
+    void admitsOnlyTheAccountBoundToAConsumedSecretRoomInvitation() {
+        insertRoom(ROOM_A, 4, 2);
+        jdbc.update("update competition.rooms set access_type = 'SECRET' where id = ?", ROOM_A);
+        UUID invitationId = id(742);
+        jdbc.update(
+                "insert into competition.room_invitations "
+                        + "(id, room_id, issued_by_account_id, credential_type, credential_digest, issued_at, "
+                        + "expires_at, claimed_by_account_id, claimed_at) "
+                        + "values (?, ?, ?, 'CODE', 'bound-secret-digest', ?, ?, ?, ?)",
+                invitationId,
+                ROOM_A,
+                CREATOR_ID,
+                NOW.minusSeconds(60).atOffset(ZoneOffset.UTC),
+                NOW.plusSeconds(3600).atOffset(ZoneOffset.UTC),
+                OWNER_A,
+                NOW.minusSeconds(30).atOffset(ZoneOffset.UTC));
+
+        var outsider = adapter.admit(request(42, ROOM_A, OWNER_B, "outsider"), provision(id(142), OWNER_B));
+        var invited = adapter.admit(request(43, ROOM_A, OWNER_A, "invited"), provision(id(143), OWNER_A));
+
+        assertThat(outsider.failure()).isEqualTo(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+        assertThat(invited.accepted()).isTrue();
+        assertThat(jdbc.queryForObject(
+                        "select admitted_participation_id from competition.room_invitations where id = ?",
+                        UUID.class,
+                        invitationId))
+                .isEqualTo(id(43));
     }
 
     @Test
@@ -280,6 +343,48 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 .isZero();
     }
 
+    @Test
+    void enforcesLockedAccountAgeAndStoppedBotSlotPoliciesBeforeProvisioning() {
+        insertRoom(ROOM_A, 1, 1);
+        jdbc.update("update identity.accounts set created_at = ? where id = ?", NOW.minus(java.time.Duration.ofDays(2)).atOffset(ZoneOffset.UTC), OWNER_A);
+        jdbc.update("update competition.room_rules set eligibility_document = '{\"minimumAccountAgeDays\":30}'::jsonb where room_id = ?", ROOM_A);
+        var calls = new AtomicInteger();
+
+        var tooNew = adapter.admit(request(61, ROOM_A, OWNER_A, "too-new"), context -> {
+            calls.incrementAndGet();
+            return id(161);
+        });
+        assertThat(tooNew.failure()).isEqualTo(RoomParticipationAdmissionFailure.ACCOUNT_INELIGIBLE);
+        assertThat(calls).hasValue(0);
+
+        jdbc.update("update competition.room_rules set eligibility_document = '{}'::jsonb where room_id = ?", ROOM_A);
+        UUID stoppedBot = id(162);
+        insertBot(stoppedBot, OWNER_B, NOW);
+        jdbc.update("insert into competition.participations (id, room_id, bot_id, owner_account_id, anonymous_alias, status, joined_at, withdrawn_at) values (?, ?, ?, ?, 'stopped', 'WITHDRAWN', ?, ?)", id(62), ROOM_A, stoppedBot, OWNER_B, NOW.atOffset(ZoneOffset.UTC), NOW.atOffset(ZoneOffset.UTC));
+        var retained = adapter.admit(request(63, ROOM_A, OWNER_A, "retained-slot"), provision(id(163), OWNER_A));
+        assertThat(retained.failure()).isEqualTo(RoomParticipationAdmissionFailure.ROOM_CAPACITY_REACHED);
+
+        jdbc.update("update competition.live_room_rules set stopped_bot_slot_policy = 'RELEASE_SLOT' where room_id = ?", ROOM_A);
+        assertThat(adapter.admit(request(64, ROOM_A, OWNER_A, "released-slot"), provision(id(164), OWNER_A)).accepted()).isTrue();
+    }
+
+    @Test
+    void rollsBackAProvisionedBotWhoseLockedFlowInstrumentIsOutsideTheRoomMarketScope() {
+        insertRoom(ROOM_A, 2, 2);
+        jdbc.update("update competition.room_rules set market_scope_document = '{\"market\":\"US\"}'::jsonb where room_id = ?", ROOM_A);
+        jdbc.update("insert into market_data.instruments (id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XETR', 'EUR')", OUT_OF_SCOPE_INSTRUMENT);
+        UUID botId = id(165);
+
+        var outcome = adapter.admit(request(65, ROOM_A, OWNER_A, "wrong-market"), context -> {
+            insertBot(botId, OWNER_A, context.executionEligibleFrom());
+            insertFlowInstrument(botId, OUT_OF_SCOPE_INSTRUMENT);
+            return botId;
+        });
+
+        assertThat(outcome.failure()).isEqualTo(RoomParticipationAdmissionFailure.MARKET_SCOPE_MISMATCH);
+        assertThat(jdbc.queryForObject("select count(*) from bot.bots where id = ?", Integer.class, botId)).isZero();
+    }
+
     private List<RoomParticipationAdmissionOutcome> runConcurrently(
             java.util.concurrent.Callable<RoomParticipationAdmissionOutcome> first,
             java.util.concurrent.Callable<RoomParticipationAdmissionOutcome> second) throws Exception {
@@ -324,6 +429,26 @@ class RoomParticipationAdmissionPersistenceIntegrationTest {
                 eligibleFrom.atOffset(ZoneOffset.UTC),
                 at,
                 at);
+    }
+
+    private void insertFlowInstrument(UUID botId, UUID instrumentId) {
+        var at = NOW.atOffset(ZoneOffset.UTC);
+        UUID partitionId = UUID.nameUUIDFromBytes((botId + ":partition").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        UUID flowId = UUID.nameUUIDFromBytes((botId + ":flow").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        jdbc.update(
+                "insert into bot.bot_partitions "
+                        + "(id, bot_id, name, budget_cap_bps, position_x, position_y, configuration_hash, created_at, updated_at) "
+                        + "values (?, ?, 'Main', 10000, 0, 0, 'admission-partition', ?, ?)",
+                partitionId, botId, at, at);
+        jdbc.update(
+                "insert into bot.flows "
+                        + "(id, partition_id, name, element_catalog_version_id, compiled_flow_plan_id, position_x, position_y, "
+                        + "semantic_document, layout_document, layout_schema_version, semantic_hash, layout_hash, "
+                        + "configuration_hash, created_at, updated_at) values "
+                        + "(?, ?, 'Admission flow', ?, ?, 0, 0, '{}'::jsonb, '{}'::jsonb, '1', "
+                        + "'admission-semantic', 'admission-layout', 'admission-flow', ?, ?)",
+                flowId, partitionId, CATALOG_ID, PLAN_ID, at, at);
+        jdbc.update("insert into bot.flow_instruments (flow_id, instrument_id) values (?, ?)", flowId, instrumentId);
     }
 
     private void insertRoom(UUID roomId, int roomLimit, int accountLimit) {

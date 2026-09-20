@@ -62,6 +62,8 @@ public final class OperatorCaseQueryService {
                 state.caseView().status(),
                 state.caseView().version(),
                 state.assigneeOperatorId(),
+                state.subject(),
+                state.description(),
                 redactor.redact(state.evidence()),
                 state.caseView().updatedAt());
     }
@@ -80,7 +82,7 @@ public final class OperatorCaseQueryService {
     }
 
     private static void requireTrusted(OperatorRequestContext context) {
-        if (!context.trustedExternalSubject()) {
+        if (!context.sessionAuthenticated()) {
             throw new OperatorCaseAuthenticationRejectedException();
         }
     }

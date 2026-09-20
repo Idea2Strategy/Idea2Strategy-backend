@@ -2,6 +2,7 @@ package com.idea2strategy.backend.application.identity;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -84,6 +85,44 @@ public final class EmailAuthenticationService {
         return new LoginResult(
                 account.accountId(), account.loginIdentityId(), account.authEpoch(), account.credentialVersion(),
                 familyId, token.rawToken(), expiresAt);
+    }
+
+    /**
+     * Mints the session a device authorization collects.
+     *
+     * <p>Deliberately the same path as a password login: the same refresh family, the same auth
+     * epoch and credential version, the same success record. A device-approved session that did not
+     * carry those would survive a password change, which is exactly what someone revoking access
+     * expects it not to do. The password check is absent because the browser already performed it —
+     * everything after it still applies.
+     */
+    public LoginResult completeApprovedDeviceLogin(UUID accountId, UUID correlationId) {
+        Objects.requireNonNull(accountId, "accountId");
+        var account = queryPort.findPasswordLoginByAccountId(accountId)
+                .orElseThrow(() -> new AuthenticationRejectedException("Account is not available"));
+        if (account.accountStatus() != AccountLifecycleStatus.ACTIVE
+                || account.loginIdentityStatus() != LoginIdentityStatus.ACTIVE) {
+            throw new AuthenticationRejectedException("Account is not active");
+        }
+        Instant now = clock.instant();
+        RefreshTokenSecret token = tokenIssuer.issue();
+        UUID familyId = UUID.randomUUID();
+        var expiresAt = now.plus(refreshTokenLifetime);
+        commandPort.completeLogin(
+                new RefreshTokenFamily(
+                        familyId,
+                        account.accountId(),
+                        account.loginIdentityId(),
+                        account.authEpoch(),
+                        account.credentialVersion(),
+                        token.digest(),
+                        now,
+                        expiresAt),
+                new AuthenticationSuccess(
+                        account.accountId(), account.loginIdentityId(), correlationId, now));
+        return new LoginResult(
+                account.accountId(), account.loginIdentityId(), account.authEpoch(),
+                account.credentialVersion(), familyId, token.rawToken(), expiresAt);
     }
 
     private void reject(PasswordLoginAccount account, LoginCommand command, String reason, String message) {

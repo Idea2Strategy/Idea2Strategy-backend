@@ -103,7 +103,7 @@ public class OperatorCaseController {
     }
 
     private OperatorRequestContext current() {
-        return context.current().filter(OperatorRequestContext::trustedExternalSubject)
+        return context.current().filter(OperatorRequestContext::sessionAuthenticated)
                 .orElseThrow(OperatorCaseAuthenticationRejectedException::new);
     }
 

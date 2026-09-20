@@ -12,3 +12,26 @@ management:
     web:
       exposure:
         include: health,info
+
+idea2strategy:
+  operator-auth:
+    enabled: ${OPERATOR_AUTH_ENABLED:false}
+    secure-cookie: ${OPERATOR_AUTH_SECURE_COOKIE:true}
+    idle-lifetime: ${OPERATOR_AUTH_IDLE_LIFETIME:PT15M}
+    absolute-lifetime: ${OPERATOR_AUTH_ABSOLUTE_LIFETIME:PT8H}
+    throttle-redis-uri: ${OPERATOR_AUTH_THROTTLE_REDIS_URI:}
+    totp-encryption:
+      version: ${OPERATOR_AUTH_TOTP_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_TOTP_KEY:}
+    session-hmac:
+      version: ${OPERATOR_AUTH_SESSION_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_SESSION_HMAC_KEY:}
+    csrf-hmac:
+      version: ${OPERATOR_AUTH_CSRF_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_CSRF_HMAC_KEY:}
+    source-hmac:
+      version: ${OPERATOR_AUTH_SOURCE_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_SOURCE_HMAC_KEY:}
+    login-hmac:
+      version: ${OPERATOR_AUTH_LOGIN_HMAC_KEY_VERSION:0}
+      key: ${OPERATOR_AUTH_LOGIN_HMAC_KEY:}

@@ -58,7 +58,7 @@ class TransactionalOutboxStoreIntegrationTest {
         jdbc.update("delete from operations.role_permissions");
         jdbc.update("delete from operations.permissions where code = 'OPERATIONS_OUTBOX_REPLAY'");
         jdbc.update("delete from operations.roles where code = 'OUTBOX_OPERATOR'");
-        jdbc.update("delete from operations.operator_accounts where external_identity_key_hmac like 'outbox-test-%'");
+        jdbc.update("delete from operations.operator_accounts");
     }
 
     @Test
@@ -158,11 +158,9 @@ class TransactionalOutboxStoreIntegrationTest {
         UUID permission = UUID.randomUUID();
         String catalogVersion = "outbox-test-" + UUID.randomUUID();
         jdbc.update("""
-                insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at,
-                     last_mfa_verified_at, created_at)
-                values (?, ?, 1, 'ACTIVE', clock_timestamp(), clock_timestamp(), clock_timestamp())
-                """, operator, "outbox-test-" + operator);
+                insert into operations.operator_accounts (id, status, created_at)
+                values (?, 'ACTIVE', clock_timestamp())
+                """, operator);
         jdbc.update("insert into operations.roles (id, code, hierarchy_rank, status) values (?, 'OUTBOX_OPERATOR', 1, 'ACTIVE')", role);
         jdbc.update("insert into operations.permissions (id, code, description, sensitivity) values (?, 'OPERATIONS_OUTBOX_REPLAY', 'Replay dead letters', 'HIGH')", permission);
         jdbc.update("insert into operations.role_permissions (role_id, permission_id) values (?, ?)", role, permission);

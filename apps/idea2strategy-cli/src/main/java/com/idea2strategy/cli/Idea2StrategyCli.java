@@ -12,6 +12,8 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.math.BigDecimal;
 import java.net.URLEncoder;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,17 +26,34 @@ import java.util.Set;
 public final class Idea2StrategyCli {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> ALLOWED_EDIT_OPERATIONS =
-            Set.of("ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE");
+            Set.of("ADD_GROUP", "ADD_BLOCK", "REMOVE_BLOCK", "CONNECT_BLOCKS", "SET_VALUE",
+                    "SET_GROUP_INSTRUMENTS");
     private static final Set<String> AUTHENTICATED_COMMANDS = Set.of(
+            "catalog.elements",
+            "catalog.instruments",
             "delegation.create",
             "delegation.revoke",
             "strategy.list",
+            "strategy.get",
             "strategy.create",
             "strategy.copy",
+            "strategy.delete",
             "strategy.edit.preview",
             "strategy.edit.apply",
             "strategy.validate",
-            "strategy.release");
+            "strategy.release",
+            "bot.list",
+            "bot.get",
+            "bot.stop",
+            "backtest.create",
+            "backtest.list",
+            "backtest.get",
+            "backtest.cancel",
+            "backtest.delete",
+            "competition.create",
+            "competition.list",
+            "competition.get",
+            "competition.delete");
 
     private Idea2StrategyCli() {}
 
@@ -68,9 +87,16 @@ public final class Idea2StrategyCli {
     private static JsonNode execute(Invocation invocation, InputStream stdin, Map<String, String> environment) {
         Arguments arguments = Arguments.parse(invocation.commandArguments());
         if (arguments.positionals().equals(List.of("operator", "bootstrap"))) {
-            return OperatorBootstrapCommand.execute(arguments, environment);
+            return OperatorBootstrapCommand.execute(arguments, environment, stdin);
+        }
+        if (arguments.positionals().equals(List.of("operator", "credential-provision"))) {
+            return OperatorCredentialProvisionCommand.execute(arguments, environment, stdin);
+        }
+        if (arguments.positionals().equals(List.of("operator", "credential-reset"))) {
+            return OperatorCredentialResetCommand.execute(arguments, environment, stdin);
         }
         ApiClient api = new ApiClient(invocation.baseUrl());
+        ApiClient backtestApi = new ApiClient(invocation.backtestBaseUrl());
         CredentialStore credentials = new CredentialStore(invocation.configDirectory());
         List<String> command = arguments.positionals();
         if (command.equals(List.of("tool-contract"))) {
@@ -88,15 +114,31 @@ public final class Idea2StrategyCli {
                 ? credentials.load()
                 : invocation.environmentToken();
         return switch (commandKey) {
+            case "catalog.elements" -> catalogElements(arguments, api, token);
+            case "catalog.instruments" -> catalogInstruments(arguments, api, token);
             case "delegation.create" -> delegationCreate(arguments, api, token);
             case "delegation.revoke" -> delegationRevoke(arguments, api, token);
             case "strategy.list" -> strategyList(arguments, api, token);
+            case "strategy.get" -> strategyGet(arguments, api, token);
             case "strategy.create" -> strategyCreate(arguments, api, token);
             case "strategy.copy" -> strategyCopy(arguments, api, token);
+            case "strategy.delete" -> strategyDelete(arguments, api, token);
             case "strategy.edit.preview" -> basicEdit(arguments, api, token, false);
             case "strategy.edit.apply" -> basicEdit(arguments, api, token, true);
             case "strategy.validate" -> strategyValidate(arguments, api, token);
             case "strategy.release" -> strategyRelease(arguments, api, token);
+            case "bot.list" -> botList(arguments, api, token);
+            case "bot.get" -> botGet(arguments, api, token);
+            case "bot.stop" -> botStop(arguments, api, token);
+            case "backtest.create" -> backtestCreate(arguments, api, token);
+            case "backtest.list" -> backtestList(arguments, backtestApi, token);
+            case "backtest.get" -> backtestGet(arguments, backtestApi, token);
+            case "backtest.cancel" -> backtestCancel(arguments, backtestApi, token);
+            case "backtest.delete" -> backtestDelete(arguments, backtestApi, token);
+            case "competition.create" -> competitionCreate(arguments, api, token);
+            case "competition.list" -> competitionList(arguments, api, token);
+            case "competition.get" -> competitionGet(arguments, api, token);
+            case "competition.delete" -> competitionDelete(arguments, api, token);
             default -> throw new IllegalStateException("Unmapped authenticated command");
         };
     }
@@ -114,8 +156,88 @@ public final class Idea2StrategyCli {
         }
     }
 
+    /**
+     * Signs in through the browser so nothing driving this CLI ever handles a password.
+     *
+     * <p>The short code is printed for a person to check against what the browser shows; the long
+     * one stays here and is what actually collects the token. Progress is written to standard error
+     * so standard output stays a single JSON document for whatever is parsing it.
+     */
+    private static JsonNode browserLogin(Arguments args, ApiClient api, CredentialStore credentials) {
+        ObjectNode request = JSON.createObjectNode().put("clientLabel", "idea2strategy-cli");
+        JsonNode authorization = api.post("/api/v1/auth/device/authorize", request, null);
+        String deviceCode = authorization.path("deviceCode").asText();
+        String userCode = authorization.path("userCode").asText();
+        String openUri = authorization.path("verificationUriComplete").asText();
+        if (deviceCode.isBlank() || userCode.isBlank() || openUri.isBlank()) {
+            throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Device authorization response was incomplete");
+        }
+
+        System.err.println("Open " + openUri);
+        System.err.println("Confirm this code in the browser: " + userCode);
+        if (!args.flag("--no-open")) {
+            openInBrowser(openUri);
+        }
+
+        long intervalSeconds = Math.max(1, authorization.path("intervalSeconds").asLong(5));
+        Instant deadline = Instant.now().plusSeconds(600);
+        ObjectNode poll = JSON.createObjectNode().put("deviceCode", deviceCode);
+        while (Instant.now().isBefore(deadline)) {
+            try {
+                Thread.sleep(intervalSeconds * 1000L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new CliFailure(70, "INTERRUPTED", "Browser login was interrupted");
+            }
+            // A pending request answers 202, which the client treats as success with no token, so
+            // the blank check below is the wait. Denied, expired, and unknown all arrive as
+            // failures and propagate: none of them will ever turn into an approval, and polling on
+            // would just burn the deadline.
+            JsonNode response;
+            try {
+                response = api.post("/api/v1/auth/device/token", poll, null);
+            } catch (CliFailure failure) {
+                // Nobody approved in time. Reporting the raw 410 leaves a person reading
+                // "REQUEST_REJECTED ... status 410" and looking for a fault; the request did
+                // exactly what it promised, and the answer is to run login again.
+                if (failure.status() != null && failure.status() == 410) {
+                    throw new CliFailure(
+                            5,
+                            "DEVICE_AUTHORIZATION_EXPIRED",
+                            "The approval window closed before the code was confirmed. Run login again.");
+                }
+                throw failure;
+            }
+            String token = response.path("accessToken").asText();
+            if (token.isBlank()) {
+                continue;
+            }
+            credentials.save(token);
+            ObjectNode result = JSON.createObjectNode().put("credentialSaved", true);
+            copyIfPresent(response, result, "accountId", "expiresAt");
+            return result;
+        }
+        throw new CliFailure(5, "DEVICE_AUTHORIZATION_TIMED_OUT", "The browser approval was not completed in time");
+    }
+
+    /** Best effort. A headless machine still gets the URI on standard error. */
+    private static void openInBrowser(String uri) {
+        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        List<String> command = os.contains("win")
+                ? List.of("rundll32", "url.dll,FileProtocolHandler", uri)
+                : os.contains("mac") ? List.of("open", uri) : List.of("xdg-open", uri);
+        try {
+            new ProcessBuilder(command).inheritIO().start();
+        } catch (IOException ignored) {
+            System.err.println("Could not open a browser automatically. Open the address above.");
+        }
+    }
+
     private static JsonNode login(Arguments args, ApiClient api, CredentialStore credentials, InputStream stdin) {
-        args.rejectUnknown("--email");
+        args.rejectUnknown("--email", "--browser", "--no-open");
+        if (args.flag("--browser")) {
+            return browserLogin(args, api, credentials);
+        }
         String password;
         try {
             password = new BufferedReader(new InputStreamReader(stdin, StandardCharsets.UTF_8)).readLine();
@@ -137,6 +259,45 @@ public final class Idea2StrategyCli {
         ObjectNode result = JSON.createObjectNode().put("credentialSaved", true);
         copyIfPresent(response, result, "accountId", "expiresAt");
         return result;
+    }
+
+    /**
+     * The catalog an edit is validated against.
+     *
+     * <p>Without this an external tool cannot turn "use RSI" into an operation: element codes and
+     * their declared parameters live in the published catalog, and guessing a code produces an
+     * edit the server refuses. Reading beats guessing.
+     */
+    private static JsonNode catalogElements(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown();
+        return api.get("/api/v1/strategy-catalogs/basic", token);
+    }
+
+    /**
+     * Symbol to instrument id.
+     *
+     * <p>A container names the instruments it trades by id, and a person asks for "Apple". Without
+     * a lookup the tool has no way to cross that gap.
+     */
+    private static JsonNode catalogInstruments(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--symbol");
+        JsonNode instruments = api.get("/api/v1/strategy-catalogs/basic/instruments", token);
+        String symbol = args.optional("--symbol");
+        if (symbol == null || symbol.isBlank()) {
+            return instruments;
+        }
+        ArrayNode matches = JSON.createArrayNode();
+        for (String requested : symbol.split(",")) {
+            String wanted = requested.trim();
+            for (JsonNode instrument : instruments.path("instruments")) {
+                if (instrument.path("symbol").asText().equalsIgnoreCase(wanted)) {
+                    matches.add(instrument);
+                }
+            }
+        }
+        ObjectNode filtered = JSON.createObjectNode();
+        filtered.set("instruments", matches);
+        return filtered;
     }
 
     private static JsonNode delegationCreate(Arguments args, ApiClient api, String token) {
@@ -197,6 +358,17 @@ public final class Idea2StrategyCli {
         ObjectNode body = JSON.createObjectNode().put("name", args.required("--name")).put("mode", "BASIC");
         putOptional(body, "description", args.optional("--description"));
         return api.post("/api/v1/strategies", body, token);
+    }
+
+    private static JsonNode strategyGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--strategy-id");
+        return api.get("/api/v1/strategies/" + segment(args.required("--strategy-id")) + "/document", token);
+    }
+
+    private static JsonNode strategyDelete(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--strategy-id", "--yes");
+        requireConfirmation(args, "Strategy deletion");
+        return api.delete("/api/v1/strategies/" + segment(args.required("--strategy-id")), token);
     }
 
     private static JsonNode strategyCopy(Arguments args, ApiClient api, String token) {
@@ -293,6 +465,149 @@ public final class Idea2StrategyCli {
                 + "/releases", body, token);
     }
 
+    private static JsonNode botList(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown();
+        return api.get("/api/v1/bots/operations", token);
+    }
+
+    private static JsonNode botGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--bot-id");
+        String botId = args.required("--bot-id");
+        JsonNode bots = api.get("/api/v1/bots/operations", token);
+        if (!bots.isArray()) {
+            throw new CliFailure(6, "INVALID_SERVER_RESPONSE", "Bot operations response was not a list");
+        }
+        for (JsonNode bot : bots) {
+            if (botId.equals(bot.path("botId").asText())) {
+                return bot;
+            }
+        }
+        throw new CliFailure(5, "BOT_NOT_FOUND", "Owned bot was not found");
+    }
+
+    private static JsonNode botStop(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--bot-id", "--reason-code", "--yes");
+        requireConfirmation(args, "Bot stop");
+        ObjectNode body = JSON.createObjectNode().put("reasonCode", args.optional("--reason-code", "USER_REQUEST"));
+        return api.post("/api/v1/bots/" + segment(args.required("--bot-id")) + "/stop", body, token);
+    }
+
+    private static JsonNode backtestCreate(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--bot-id", "--period-start", "--period-end", "--idempotency-key");
+        String start = validDate(args.required("--period-start"), "--period-start");
+        String end = validDate(args.required("--period-end"), "--period-end");
+        if (LocalDate.parse(start).isAfter(LocalDate.parse(end))) {
+            throw Arguments.usage("--period-start must not be after --period-end");
+        }
+        ObjectNode body = JSON.createObjectNode().put("periodStart", start).put("periodEnd", end);
+        return api.post(
+                "/api/v1/bots/" + segment(args.required("--bot-id")) + "/backtests",
+                body,
+                token,
+                Map.of("Idempotency-Key", args.required("--idempotency-key")));
+    }
+
+    private static JsonNode backtestList(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--limit", "--offset");
+        int limit = boundedInteger(args.optional("--limit", "50"), "--limit", 1, 200);
+        int offset = boundedInteger(args.optional("--offset", "0"), "--offset", 0, Integer.MAX_VALUE);
+        return api.get("/api/v1/backtests?limit=" + limit + "&offset=" + offset, token);
+    }
+
+    private static JsonNode backtestGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--run-id");
+        return api.get("/api/v1/backtests/" + segment(args.required("--run-id")), token);
+    }
+
+    private static JsonNode backtestCancel(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--run-id", "--reason-code", "--yes");
+        requireConfirmation(args, "Backtest cancellation");
+        ObjectNode body = JSON.createObjectNode().put("reasonCode", args.optional("--reason-code", "USER_CANCELLED"));
+        return api.post("/api/v1/backtests/" + segment(args.required("--run-id")) + "/cancellation", body, token);
+    }
+
+    private static JsonNode backtestDelete(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--run-id", "--yes");
+        requireConfirmation(args, "Backtest deletion");
+        return api.delete("/api/v1/backtests/" + segment(args.required("--run-id")), token);
+    }
+
+    private static JsonNode competitionCreate(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--input-file");
+        JsonNode body = readJsonObject(args.required("--input-file"), "competition input");
+        return api.post("/api/v1/competition/rooms", body, token);
+    }
+
+    private static JsonNode competitionList(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--scope", "--limit", "--query");
+        int limit = boundedInteger(args.optional("--limit", "50"), "--limit", 1, 100);
+        String scope = args.optional("--scope", "mine");
+        if ("mine".equals(scope)) {
+            return api.get("/api/v1/competition/rooms/mine?limit=" + limit, token);
+        }
+        if ("public".equals(scope)) {
+            String path = "/api/v1/competition/rooms/public?limit=" + limit;
+            if (args.optional("--query") != null) {
+                path += "&q=" + segment(args.optional("--query"));
+            }
+            return api.get(path, token);
+        }
+        throw Arguments.usage("--scope must be mine or public");
+    }
+
+    private static JsonNode competitionGet(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--room-id");
+        return api.get("/api/v1/competition/rooms/mine/" + segment(args.required("--room-id")), token);
+    }
+
+    private static JsonNode competitionDelete(Arguments args, ApiClient api, String token) {
+        args.rejectUnknown("--room-id", "--reason-code", "--yes");
+        requireConfirmation(args, "Competition cancellation");
+        ObjectNode body = JSON.createObjectNode().put("reasonCode", args.optional("--reason-code", "CREATOR_REQUEST"));
+        return api.post("/api/v1/competition/rooms/" + segment(args.required("--room-id"))
+                + "/cancellation", body, token);
+    }
+
+    private static void requireConfirmation(Arguments args, String operation) {
+        if (!args.flag("--yes")) {
+            throw Arguments.usage(operation + " requires --yes");
+        }
+    }
+
+    private static int boundedInteger(String value, String option, int minimum, int maximum) {
+        try {
+            int parsed = Integer.parseInt(value);
+            if (parsed < minimum || parsed > maximum) {
+                throw Arguments.usage(option + " must be between " + minimum + " and " + maximum);
+            }
+            return parsed;
+        } catch (NumberFormatException exception) {
+            throw Arguments.usage(option + " must be an integer");
+        }
+    }
+
+    private static String validDate(String value, String option) {
+        try {
+            return LocalDate.parse(value).toString();
+        } catch (java.time.format.DateTimeParseException exception) {
+            throw Arguments.usage(option + " must use YYYY-MM-DD");
+        }
+    }
+
+    private static JsonNode readJsonObject(String fileName, String label) {
+        try {
+            JsonNode value = JSON.readTree(Files.readString(Path.of(fileName)));
+            if (!value.isObject()) {
+                throw new CliFailure(5, "INVALID_INPUT", label + " file must contain a JSON object");
+            }
+            return value;
+        } catch (CliFailure failure) {
+            throw failure;
+        } catch (Exception exception) {
+            throw new CliFailure(5, "INVALID_INPUT", label + " file is not valid JSON");
+        }
+    }
+
     private static ArrayNode readOperations(String fileName) {
         try {
             JsonNode value = JSON.readTree(Files.readString(Path.of(fileName)));
@@ -339,6 +654,7 @@ public final class Idea2StrategyCli {
 
     private record Invocation(
             String baseUrl,
+            String backtestBaseUrl,
             Path configDirectory,
             String environmentToken,
             List<String> commandArguments,
@@ -348,6 +664,8 @@ public final class Idea2StrategyCli {
             List<String> values = new ArrayList<>(Arrays.asList(raw));
             String baseUrl = takeGlobal(values, "--base-url", environment.getOrDefault(
                     "I2S_BASE_URL", "http://localhost:8080"));
+            String backtestBaseUrl = takeGlobal(values, "--backtest-base-url", environment.getOrDefault(
+                    "I2S_BACKTEST_BASE_URL", baseUrl));
             String defaultConfig = environment.get("I2S_CONFIG_DIR");
             if (defaultConfig == null || defaultConfig.isBlank()) {
                 defaultConfig = Path.of(System.getProperty("user.home"), ".idea2strategy").toString();
@@ -359,8 +677,10 @@ public final class Idea2StrategyCli {
             List<String> words = values.stream().takeWhile(value -> !value.startsWith("--")).toList();
             int commandWordCount = switch (words.getFirst()) {
                 case "login" -> 1;
+                case "catalog" -> 2;
                 case "delegation" -> 2;
                 case "strategy" -> words.size() >= 2 && "edit".equals(words.get(1)) ? 3 : 2;
+                case "bot", "backtest", "competition" -> 2;
                 case "operator" -> 2;
                 default -> 1;
             };
@@ -368,7 +688,7 @@ public final class Idea2StrategyCli {
                 throw Arguments.usage("Incomplete command");
             }
             String commandName = String.join(".", words.subList(0, commandWordCount));
-            return new Invocation(baseUrl, Path.of(config), blankToNull(environment.get("I2S_TOKEN")),
+            return new Invocation(baseUrl, backtestBaseUrl, Path.of(config), blankToNull(environment.get("I2S_TOKEN")),
                     List.copyOf(values), commandName);
         }
 

@@ -58,7 +58,7 @@ public class OperatorRbacController {
 
     private OperatorRequestContext currentActor() {
         return securityContext.current()
-                .filter(OperatorRequestContext::trustedExternalSubject)
+                .filter(OperatorRequestContext::sessionAuthenticated)
                 .orElseThrow(OperatorRbacAuthenticationRejectedException::new);
     }
 

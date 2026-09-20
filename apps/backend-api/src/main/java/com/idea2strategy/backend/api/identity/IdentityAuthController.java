@@ -57,7 +57,8 @@ public class IdentityAuthController {
         if (result.verificationToken() != null) {
             verificationDelivery.send(result.accountId(), result.verificationToken(), result.expiresAt());
         }
-        return ResponseEntity.accepted().body(new SignupResponse(result.accountId(), true, result.expiresAt()));
+        return ResponseEntity.accepted().body(new SignupResponse(
+                result.accountId(), result.verificationToken() != null, result.expiresAt()));
     }
 
     @GetMapping("/verify-email")

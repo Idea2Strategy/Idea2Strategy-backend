@@ -10,10 +10,7 @@ public record JoinRoomWithStrategyCommand(
         String languageVersion,
         String schemaVersion,
         String catalogVersion,
-        int budgetCapBps,
-        String brokerRulesVersion,
-        String accountingRulesVersion,
-        String candidateConflictPolicy) {
+        int budgetCapBps) {
     public JoinRoomWithStrategyCommand {
         Objects.requireNonNull(roomId, "roomId");
         Objects.requireNonNull(validationRunId, "validationRunId");
@@ -21,9 +18,6 @@ public record JoinRoomWithStrategyCommand(
         requireText(languageVersion, "languageVersion");
         requireText(schemaVersion, "schemaVersion");
         requireText(catalogVersion, "catalogVersion");
-        requireText(brokerRulesVersion, "brokerRulesVersion");
-        requireText(accountingRulesVersion, "accountingRulesVersion");
-        requireText(candidateConflictPolicy, "candidateConflictPolicy");
         if (budgetCapBps <= 0 || budgetCapBps > 10_000) {
             throw new IllegalArgumentException("budgetCapBps must be in 1..10000");
         }

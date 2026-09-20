@@ -18,6 +18,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -49,6 +51,7 @@ class LiveEvaluationEligibilityPersistenceIntegrationTest {
 
     @Autowired LiveEvaluationEligibilityJooqAdapter adapter;
     @Autowired JdbcTemplate jdbc;
+    @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void prepare() {
@@ -113,20 +116,23 @@ class LiveEvaluationEligibilityPersistenceIntegrationTest {
 
     @Test
     void countsWallClockWithinTheOfficialSegmentAndRequiresFillRowsIndependently() {
-        seedFill(1, SEGMENT_START.plusSeconds(120));
-        seedFill(2, SEGMENT_START.plusSeconds(600));
-        var beforeOperationBoundary = adapter.evaluate(PARTICIPATION_ID, SEGMENT_START.plusSeconds(299));
-        var atOperationBoundary = adapter.evaluate(PARTICIPATION_ID, SEGMENT_START.plusSeconds(300));
-        var afterSegment = adapter.evaluate(PARTICIPATION_ID, SEGMENT_START.plusSeconds(900));
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            seedFill(1, SEGMENT_START.plusSeconds(120));
+            seedFill(2, SEGMENT_START.plusSeconds(600));
+            var beforeOperationBoundary = adapter.evaluate(PARTICIPATION_ID, SEGMENT_START.plusSeconds(299));
+            var atOperationBoundary = adapter.evaluate(PARTICIPATION_ID, SEGMENT_START.plusSeconds(300));
+            var afterSegment = adapter.evaluate(PARTICIPATION_ID, SEGMENT_START.plusSeconds(900));
 
-        assertThat(beforeOperationBoundary.operationSeconds()).isEqualTo(299);
-        assertThat(beforeOperationBoundary.fillCount()).isEqualTo(1);
-        assertThat(beforeOperationBoundary.reasons())
-                .containsExactly(LiveEvaluationIneligibilityReason.MINIMUM_OPERATION_NOT_MET);
-        assertThat(atOperationBoundary.operationSeconds()).isEqualTo(300);
-        assertThat(atOperationBoundary.eligible()).isTrue();
-        assertThat(afterSegment.operationSeconds()).isEqualTo(600);
-        assertThat(afterSegment.fillCount()).isEqualTo(1);
+            assertThat(beforeOperationBoundary.operationSeconds()).isEqualTo(299);
+            assertThat(beforeOperationBoundary.fillCount()).isEqualTo(1);
+            assertThat(beforeOperationBoundary.reasons())
+                    .containsExactly(LiveEvaluationIneligibilityReason.MINIMUM_OPERATION_NOT_MET);
+            assertThat(atOperationBoundary.operationSeconds()).isEqualTo(300);
+            assertThat(atOperationBoundary.eligible()).isTrue();
+            assertThat(afterSegment.operationSeconds()).isEqualTo(600);
+            assertThat(afterSegment.fillCount()).isEqualTo(1);
+            status.setRollbackOnly();
+        });
     }
 
     @Test

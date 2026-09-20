@@ -9,5 +9,6 @@ public interface RoomInvitationPort {
 
     boolean revoke(UUID roomId, UUID invitationId, UUID actorAccountId, Instant revokedAt);
 
-    Optional<ConsumedRoomInvitation> consume(String credentialDigest, Instant consumedAt);
+    Optional<ConsumedRoomInvitation> consume(
+            String credentialDigest, UUID consumerAccountId, Instant consumedAt);
 }

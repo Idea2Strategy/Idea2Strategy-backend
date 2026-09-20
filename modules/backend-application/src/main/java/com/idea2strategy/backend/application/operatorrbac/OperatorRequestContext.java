@@ -6,9 +6,10 @@ import java.util.UUID;
 
 public record OperatorRequestContext(
         UUID operatorId,
-        boolean trustedExternalSubject,
+        boolean sessionAuthenticated,
         boolean mfaCompleted,
-        Instant mfaAuthenticatedAt) {
+        Instant mfaAuthenticatedAt,
+        UUID sessionId) {
     public OperatorRequestContext {
         Objects.requireNonNull(operatorId, "operatorId");
         if (!mfaCompleted && mfaAuthenticatedAt != null) {
@@ -17,7 +18,13 @@ public record OperatorRequestContext(
     }
 
     public OperatorRequestContext(
-            UUID operatorId, boolean trustedExternalSubject, boolean mfaCompleted) {
-        this(operatorId, trustedExternalSubject, mfaCompleted, null);
+            UUID operatorId, boolean sessionAuthenticated, boolean mfaCompleted) {
+        this(operatorId, sessionAuthenticated, mfaCompleted, null, null);
+    }
+
+    public OperatorRequestContext(
+            UUID operatorId, boolean sessionAuthenticated, boolean mfaCompleted,
+            Instant mfaAuthenticatedAt) {
+        this(operatorId, sessionAuthenticated, mfaCompleted, mfaAuthenticatedAt, null);
     }
 }

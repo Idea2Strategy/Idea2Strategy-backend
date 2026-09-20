@@ -62,11 +62,11 @@ public final class BasicBacktestCapabilityValidator {
 
         var requiredFeeds = new TreeSet<>(FEED_ORDER);
         var requiredFeatures = new TreeSet<String>();
-        var resolvedResolutions = new TreeSet<String>();
         var issues = new ArrayList<BasicBacktestCapabilityIssue>();
 
         for (int groupIndex = 0; groupIndex < assembly.groups().size(); groupIndex++) {
             var group = assembly.groups().get(groupIndex);
+            var flowResolutions = new TreeSet<String>();
             for (int blockIndex = 0; blockIndex < group.blocks().size(); blockIndex++) {
                 var block = group.blocks().get(blockIndex);
                 String location = "groups[" + groupIndex + "].blocks[" + blockIndex + "].elementCode";
@@ -77,15 +77,14 @@ public final class BasicBacktestCapabilityValidator {
                         catalogFeatures,
                         requiredFeeds,
                         requiredFeatures,
-                        resolvedResolutions,
+                        flowResolutions,
                         issues);
             }
-        }
-
-        if (resolvedResolutions.size() > 1) {
-            add(issues, "BACKTEST_MULTIPLE_RESOLUTIONS", "groups",
-                    "A production backtest strategy must use one resolution across all blocks",
-                    resolvedResolutions.stream().map(value -> "resolution:" + value).toList());
+            if (flowResolutions.size() > 1) {
+                add(issues, "BACKTEST_MULTIPLE_RESOLUTIONS", "groups[" + groupIndex + "]",
+                        "Each backtest flow must use one resolution, but independent flows may use different resolutions",
+                        flowResolutions.stream().map(value -> "resolution:" + value).toList());
+            }
         }
 
         return new BasicBacktestCapabilityResult(

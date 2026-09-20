@@ -101,7 +101,8 @@ class RoomInvitationControllerTest {
         }
 
         @Override
-        public Optional<ConsumedRoomInvitation> consume(String credentialDigest, Instant consumedAt) {
+        public Optional<ConsumedRoomInvitation> consume(
+                String credentialDigest, UUID consumerAccountId, Instant consumedAt) {
             if (!consumeAllowed || !credentialDigest.equals(RoomInvitationSecrets.digest("one-time-secret"))) {
                 return Optional.empty();
             }

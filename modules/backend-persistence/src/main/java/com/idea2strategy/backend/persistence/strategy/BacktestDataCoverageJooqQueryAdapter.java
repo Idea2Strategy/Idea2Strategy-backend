@@ -31,7 +31,7 @@ public class BacktestDataCoverageJooqQueryAdapter implements BacktestDataCoverag
      * Renaming the token would therefore accept raw bars for a feature whose definition says raw bars
      * are not substitutable, so the mismatch is left visible rather than papered over. Adjusted bars
      * are also published only at {@code 30m}. The required-feed expression is under review in
-     * {@code proposals/strategy-domain-decisions} §7; until it is settled this reports what the
+     * The coverage query reports what the
      * publication model actually contains.
      */
     @Override

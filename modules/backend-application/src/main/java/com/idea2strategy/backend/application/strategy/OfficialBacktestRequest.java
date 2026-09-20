@@ -3,6 +3,8 @@ package com.idea2strategy.backend.application.strategy;
 import com.idea2strategy.backend.domain.strategy.ImmutableStrategyRelease;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -18,7 +20,7 @@ public record OfficialBacktestRequest(
         UUID botId,
         String expectedSnapshotHash,
         String compiledPlanChecksum,
-        UUID datasetManifestId,
+        List<UUID> datasetManifestIds,
         String assumptionsVersion,
         String executionPolicyVersion,
         String requestReason) {
@@ -32,7 +34,10 @@ public record OfficialBacktestRequest(
         Objects.requireNonNull(botId, "botId");
         requireSha256(expectedSnapshotHash, "expectedSnapshotHash");
         requireSha256(compiledPlanChecksum, "compiledPlanChecksum");
-        Objects.requireNonNull(datasetManifestId, "datasetManifestId");
+        datasetManifestIds = List.copyOf(Objects.requireNonNull(datasetManifestIds, "datasetManifestIds"));
+        if (datasetManifestIds.isEmpty() || new HashSet<>(datasetManifestIds).size() != datasetManifestIds.size()) {
+            throw new IllegalArgumentException("datasetManifestIds must contain unique official datasets");
+        }
         requireText(assumptionsVersion, "assumptionsVersion");
         requireText(executionPolicyVersion, "executionPolicyVersion");
         if (!REQUEST_REASON.equals(requestReason)) {
@@ -57,12 +62,23 @@ public record OfficialBacktestRequest(
             ImmutableStrategyRelease release,
             UUID datasetManifestId,
             String executionPolicyVersion) {
+        return forRelease(release, List.of(datasetManifestId), executionPolicyVersion);
+    }
+
+    public static OfficialBacktestRequest forRelease(
+            ImmutableStrategyRelease release,
+            List<UUID> datasetManifestIds,
+            String executionPolicyVersion) {
         Objects.requireNonNull(release, "release");
-        Objects.requireNonNull(datasetManifestId, "datasetManifestId");
+        datasetManifestIds = List.copyOf(Objects.requireNonNull(datasetManifestIds, "datasetManifestIds"));
+        if (datasetManifestIds.isEmpty()) {
+            throw new IllegalArgumentException("datasetManifestIds must not be empty");
+        }
         requireText(executionPolicyVersion, "executionPolicyVersion");
         String snapshotHash = prefixed(release.snapshotHash());
         String planChecksum = release.contractPlan().planChecksum();
-        String operationKey = "OFFICIAL_BACKTEST|" + datasetManifestId + "|"
+        String operationKey = "OFFICIAL_BACKTEST|" + String.join(",", datasetManifestIds.stream()
+                .map(UUID::toString).toList()) + "|"
                 + release.launchConfiguration().accountingRulesVersion();
         String material = String.join("\n",
                 "contractVersion=" + CONTRACT_VERSION,
@@ -76,8 +92,13 @@ public record OfficialBacktestRequest(
         var metadata = new MessageMetadata(
                 CONTRACT_VERSION, MESSAGE_TYPE, messageId, release.releasedAt(), release.botId(), idempotencyKey);
         return new OfficialBacktestRequest(
-                metadata, runId, release.botId(), snapshotHash, planChecksum, datasetManifestId,
+                metadata, runId, release.botId(), snapshotHash, planChecksum, datasetManifestIds,
                 release.launchConfiguration().accountingRulesVersion(), executionPolicyVersion, REQUEST_REASON);
+    }
+
+    /** The finest selected dataset remains the v1 representative field in the transport envelope. */
+    public UUID datasetManifestId() {
+        return datasetManifestIds.getFirst();
     }
 
     private static UUID derivedId(UUID botId, String component) {

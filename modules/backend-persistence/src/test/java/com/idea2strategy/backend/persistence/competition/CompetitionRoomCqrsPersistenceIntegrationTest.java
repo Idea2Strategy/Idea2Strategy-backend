@@ -104,11 +104,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 CREATED_AT.atOffset(ZoneOffset.UTC));
         jdbcTemplate.update(
                 "insert into operations.operator_accounts "
-                        + "(id, external_identity_key_hmac, external_identity_key_version, status, mfa_enrolled_at, last_mfa_verified_at, created_at) "
-                        + "values (?, 'operator-e06', 1, 'ACTIVE', ?, ?, ?)",
+                        + "(id, status, created_at) values (?, 'ACTIVE', ?)",
                 OPERATOR_ID,
-                CREATED_AT.atOffset(ZoneOffset.UTC),
-                CREATED_AT.atOffset(ZoneOffset.UTC),
                 CREATED_AT.atOffset(ZoneOffset.UTC));
         jdbcTemplate.update(
                 "insert into competition.scoring_template_versions "
@@ -274,7 +271,7 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
     }
 
     @Test
-    void invitationStoresOnlyDigestCapsExpiryAndCanBeConsumedOnce() {
+    void invitationStoresOnlyDigestCapsExpiryAndBindsConsumptionToOneAccount() {
         commandAdapter.save(userRoom(ROOM_ID, "Secret room", RoomAccessType.SECRET));
         jdbcTemplate.update("update competition.rooms set status = 'RECRUITING' where id = ?", ROOM_ID);
         Instant issuedAt = CREATED_AT.plusSeconds(90);
@@ -297,14 +294,16 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                         String.class,
                         INVITATION_ID))
                 .isEqualTo(digest);
-        assertThat(invitationAdapter.consume(digest, issuedAt.plusSeconds(1)))
+        assertThat(invitationAdapter.consume(digest, OWNER_ID, issuedAt.plusSeconds(1)))
                 .hasValueSatisfying(consumed -> assertThat(consumed.roomId()).isEqualTo(ROOM_ID));
-        assertThat(invitationAdapter.consume(digest, issuedAt.plusSeconds(2))).isEmpty();
+        assertThat(invitationAdapter.consume(digest, OWNER_ID, issuedAt.plusSeconds(2)))
+                .hasValueSatisfying(consumed -> assertThat(consumed.roomId()).isEqualTo(ROOM_ID));
+        assertThat(invitationAdapter.consume(digest, SECOND_ROOM_ID, issuedAt.plusSeconds(2))).isEmpty();
         assertThat(jdbcTemplate.queryForObject(
-                        "select revocation_reason_code from competition.room_invitations where id = ?",
-                        String.class,
+                        "select claimed_by_account_id from competition.room_invitations where id = ?",
+                        UUID.class,
                         INVITATION_ID))
-                .isEqualTo("CONSUMED");
+                .isEqualTo(OWNER_ID);
     }
 
     @Test
@@ -335,6 +334,9 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                     });
                     assertThat(view.participations()).isEmpty();
                 });
+        assertThat(ownedRoomManagementAdapter.findOwnedById(OWNER_ID, ROOM_ID))
+                .get().satisfies(view -> assertThat(view.name()).isEqualTo("Managed secret room"));
+        assertThat(ownedRoomManagementAdapter.findOwnedById(UUID.randomUUID(), ROOM_ID)).isEmpty();
         assertThat(ownedRoomManagementAdapter.findOwnedBy(UUID.randomUUID(), 50)).isEmpty();
     }
 
@@ -366,7 +368,8 @@ class CompetitionRoomCqrsPersistenceIntegrationTest {
                 .isFalse();
         assertThat(invitationAdapter.revoke(ROOM_ID, INVITATION_ID, OWNER_ID, CREATED_AT.plusSeconds(101)))
                 .isTrue();
-        assertThat(invitationAdapter.consume(request.credentialDigest(), CREATED_AT.plusSeconds(102)))
+        assertThat(invitationAdapter.consume(
+                        request.credentialDigest(), OWNER_ID, CREATED_AT.plusSeconds(102)))
                 .isEmpty();
     }
 

@@ -192,6 +192,52 @@ public record CompetitionRoom(
                 createdAt);
     }
 
+    public static CompetitionRoom platformBacktest(
+            UUID id,
+            UUID operatorId,
+            String name,
+            RoomAccessType accessType,
+            UUID scoringTemplateVersionId,
+            BigDecimal initialCashAmount,
+            int botParticipationLimit,
+            int perAccountBotLimit,
+            String eligibilityDocument,
+            String marketScopeDocument,
+            String scoringParameters,
+            UUID feePolicyId,
+            UUID buyingPowerBufferPolicyId,
+            String precisionRulesVersion,
+            String rulesHash,
+            RoomSchedule schedule,
+            Instant createdAt) {
+        return new CompetitionRoom(
+                id,
+                CompetitionType.BACKTEST,
+                RoomOrganizerType.PLATFORM,
+                null,
+                operatorId,
+                name,
+                accessType,
+                RoomStatus.DRAFT,
+                scoringTemplateVersionId,
+                initialCashAmount,
+                "USD",
+                botParticipationLimit,
+                perAccountBotLimit,
+                eligibilityDocument,
+                marketScopeDocument,
+                scoringParameters,
+                feePolicyId,
+                5,
+                buyingPowerBufferPolicyId,
+                precisionRulesVersion,
+                rulesHash,
+                createdAt,
+                null,
+                schedule,
+                createdAt);
+    }
+
     private static int effectiveScale(BigDecimal value) {
         return Math.max(0, value.stripTrailingZeros().scale());
     }

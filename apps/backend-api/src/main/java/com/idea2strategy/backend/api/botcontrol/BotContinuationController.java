@@ -3,7 +3,7 @@ package com.idea2strategy.backend.api.botcontrol;
 import com.idea2strategy.backend.application.botcontrol.BotContinuationService;
 import com.idea2strategy.backend.application.botcontrol.BotContinuationView;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/bots")
-@ConditionalOnBean(BotContinuationService.class)
+@ConditionalOnProperty(name = {"spring.datasource.url", "identity.crypto.customer-jwt-signing-key"})
 public class BotContinuationController {
     private final BotContinuationService service;
 

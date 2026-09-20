@@ -1,6 +1,7 @@
 package com.idea2strategy.backend.persistence.identity;
 
 import com.idea2strategy.backend.application.identity.RefreshTokenFamily;
+import com.idea2strategy.backend.application.identity.ActiveEmailRegistration;
 import com.idea2strategy.backend.application.identity.AuthenticationSuccess;
 import com.idea2strategy.backend.application.identity.AuthenticationRejectedException;
 import com.idea2strategy.backend.application.identity.ActivateOidcLink;
@@ -138,6 +139,158 @@ public class IdentityJpaCommandAdapter
                 null,
                 registration.correlationId(),
                 "oidc-signup:" + registration.correlationId(),
+                now);
+    }
+
+    @Override
+    @Transactional
+    public void createActive(ActiveEmailRegistration registration) {
+        OffsetDateTime now = utc(registration.registeredAt());
+        try {
+            guardIdentifierReuse("EMAIL", "PASSWORD", registration.email().comparisonFingerprints(), null);
+        } catch (AuthenticationRejectedException rejected) {
+            throw new DuplicateEmailException();
+        }
+        entityManager.createNativeQuery("""
+                        insert into identity.accounts (id, lifecycle_status, status_changed_at, created_at)
+                        values (:id, cast('ACTIVE' as identity.account_lifecycle_status), :now, :now)
+                        """)
+                .setParameter("id", registration.accountId())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_preferences
+                            (account_id, language_code, timezone_name, theme_preference,
+                             created_at, updated_at)
+                        values (:accountId, :languageCode, :timezoneName,
+                                cast(:themePreference as identity.theme_preference), :now, :updatedAt)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("languageCode", registration.preferences().languageCode())
+                .setParameter("timezoneName", registration.preferences().timezoneName())
+                .setParameter("themePreference", registration.preferences().themePreference().name())
+                .setParameter("now", now)
+                .setParameter("updatedAt", utc(registration.preferences().updatedAt()))
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_security_states (account_id, auth_epoch, updated_at)
+                        values (:accountId, 1, :now)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.account_emails
+                            (account_id, email_ciphertext, email_lookup_hmac, email_lookup_key_version,
+                             encryption_key_version, status, verified_at, created_at)
+                        values (:accountId, :ciphertext, :lookupHmac, :lookupVersion, :encryptionVersion,
+                                cast('VERIFIED' as identity.email_status), :now, :now)
+                        """)
+                .setParameter("accountId", registration.accountId())
+                .setParameter("ciphertext", registration.email().ciphertext())
+                .setParameter("lookupHmac", registration.email().lookupHmac())
+                .setParameter("lookupVersion", registration.email().lookupKeyVersion())
+                .setParameter("encryptionVersion", registration.email().encryptionKeyVersion())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.login_identities
+                            (id, account_id, provider_id, status, created_at, linked_at, activated_at)
+                        select :id, :accountId, id, cast('ACTIVE' as identity.login_identity_status),
+                               :now, :now, :now
+                        from identity.auth_providers where code = 'PASSWORD' and is_active = true
+                        """)
+                .setParameter("id", registration.loginIdentityId())
+                .setParameter("accountId", registration.accountId())
+                .setParameter("now", now)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        insert into identity.password_credentials
+                            (login_identity_id, password_hash, hash_scheme, hash_parameters,
+                             credential_version, password_changed_at)
+                        values (:loginId, :hash, :scheme, cast(:parameters as jsonb), 1, :now)
+                        """)
+                .setParameter("loginId", registration.loginIdentityId())
+                .setParameter("hash", registration.password().encodedHash())
+                .setParameter("scheme", registration.password().scheme())
+                .setParameter("parameters", registration.password().parametersJson())
+                .setParameter("now", now)
+                .executeUpdate();
+        insertAuthenticationEvent(
+                registration.accountId(),
+                "SIGNUP_COMPLETED",
+                registration.loginIdentityId(),
+                "USER",
+                null,
+                registration.correlationId(),
+                "signup:" + registration.correlationId(),
+                now);
+    }
+
+    @Override
+    @Transactional
+    public void activatePending(UUID accountId, Instant activatedAt, UUID correlationId) {
+        Object[] row;
+        try {
+            row = (Object[]) entityManager.createNativeQuery("""
+                            select account.lifecycle_status::text, email.status::text, login.id
+                            from identity.accounts account
+                            join identity.account_emails email on email.account_id = account.id
+                            join identity.login_identities login on login.account_id = account.id
+                            join identity.auth_providers provider on provider.id = login.provider_id
+                            where account.id = :accountId and provider.code = 'PASSWORD'
+                            for update of account, email, login
+                            """)
+                    .setParameter("accountId", accountId)
+                    .getSingleResult();
+        } catch (NoResultException exception) {
+            throw new DuplicateEmailException();
+        }
+        if (!"PENDING_VERIFICATION".equals(row[0]) || !"PENDING_VERIFICATION".equals(row[1])) {
+            throw new DuplicateEmailException();
+        }
+        OffsetDateTime now = utc(activatedAt);
+        UUID loginId = (UUID) row[2];
+        entityManager.createNativeQuery("""
+                        update identity.email_verification_requests set revoked_at = :now
+                        where account_id = :accountId and consumed_at is null and revoked_at is null
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.account_emails
+                        set status = cast('VERIFIED' as identity.email_status), verified_at = :now
+                        where account_id = :accountId
+                        """)
+                .setParameter("now", now)
+                .setParameter("accountId", accountId)
+                .executeUpdate();
+        entityManager.createNativeQuery("""
+                        update identity.login_identities
+                        set status = cast('ACTIVE' as identity.login_identity_status), linked_at = :now,
+                            activated_at = :now
+                        where id = :loginId and status = cast('PENDING' as identity.login_identity_status)
+                        """)
+                .setParameter("now", now)
+                .setParameter("loginId", loginId)
+                .executeUpdate();
+        transitionLifecycle(
+                accountId,
+                "PENDING_VERIFICATION",
+                "ACTIVE",
+                "EMAIL_VERIFICATION_BYPASSED",
+                correlationId,
+                "signup-activation:" + correlationId,
+                now);
+        insertAuthenticationEvent(
+                accountId,
+                "EMAIL_VERIFICATION_BYPASSED",
+                loginId,
+                "USER",
+                null,
+                correlationId,
+                "signup-activation:" + correlationId,
                 now);
     }
 

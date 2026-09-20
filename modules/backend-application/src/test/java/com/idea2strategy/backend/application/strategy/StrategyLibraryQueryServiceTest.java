@@ -24,10 +24,12 @@ class StrategyLibraryQueryServiceTest {
         var observedOwner = new AtomicReference<UUID>();
         var observedSnapshot = new AtomicReference<Instant>();
         var observedAfter = new AtomicReference<StrategyLibraryPosition>();
-        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit) -> {
+        var observedKind = new AtomicReference<StrategyLibraryItemKind>();
+        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit, kind) -> {
             observedOwner.set(ownerId);
             observedSnapshot.set(snapshotAt);
             observedAfter.set(after);
+            observedKind.set(kind);
             if (after != null) {
                 return List.of(item(PACKAGE_ID, StrategyLibraryItemKind.PACKAGE, StrategyMode.BASIC,
                         NOW.minusSeconds(30)));
@@ -40,17 +42,18 @@ class StrategyLibraryQueryServiceTest {
         var service = new StrategyLibraryQueryService(
                 port, () -> OWNER_ID, Clock.fixed(NOW, ZoneOffset.UTC));
 
-        StrategyLibraryPage first = service.list(null, 2);
+        StrategyLibraryPage first = service.list(null, 2, null);
 
         assertThat(observedOwner).hasValue(OWNER_ID);
         assertThat(observedSnapshot).hasValue(NOW);
+        assertThat(observedKind.get()).isNull();
         assertThat(first.items()).extracting(StrategyLibraryItem::id)
                 .containsExactly(DRAFT_ID, RELEASED_ID);
         assertThat(first.hasMore()).isTrue();
         assertThat(first.nextCursor()).isNotBlank();
         assertThat(first.items()).isUnmodifiable();
 
-        StrategyLibraryPage second = service.list(first.nextCursor(), 2);
+        StrategyLibraryPage second = service.list(first.nextCursor(), 2, null);
 
         assertThat(observedSnapshot).hasValue(NOW);
         assertThat(observedAfter.get()).isEqualTo(new StrategyLibraryPosition(
@@ -61,25 +64,43 @@ class StrategyLibraryQueryServiceTest {
     }
 
     @Test
+    void forwardsTheRequestedResourceKindToStorage() {
+        var observedKind = new AtomicReference<StrategyLibraryItemKind>();
+        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit, kind) -> {
+            observedKind.set(kind);
+            return List.of(item(DRAFT_ID, StrategyLibraryItemKind.DRAFT, StrategyMode.BASIC,
+                    NOW.minusSeconds(10)));
+        };
+        var service = new StrategyLibraryQueryService(
+                port, () -> OWNER_ID, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        StrategyLibraryPage page = service.list(null, 20, StrategyLibraryItemKind.DRAFT);
+
+        assertThat(observedKind).hasValue(StrategyLibraryItemKind.DRAFT);
+        assertThat(page.items()).extracting(StrategyLibraryItem::kind)
+                .containsExactly(StrategyLibraryItemKind.DRAFT);
+    }
+
+    @Test
     void rejectsInvalidLimitsAndMalformedCursorsBeforeQueryingStorage() {
-        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit) -> {
+        StrategyLibraryQueryPort port = (ownerId, snapshotAt, after, limit, kind) -> {
             throw new AssertionError("storage must not be called");
         };
         var service = new StrategyLibraryQueryService(
                 port, () -> OWNER_ID, Clock.fixed(NOW, ZoneOffset.UTC));
 
-        assertThatThrownBy(() -> service.list(null, 0))
+        assertThatThrownBy(() -> service.list(null, 0, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("limit must be between 1 and 100");
-        assertThatThrownBy(() -> service.list(null, 101))
+        assertThatThrownBy(() -> service.list(null, 101, null))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.list("not-a-valid-cursor", 20))
+        assertThatThrownBy(() -> service.list("not-a-valid-cursor", 20, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("cursor is invalid");
         String futureCursor = StrategyLibraryCursor.encode(
                 NOW.plusSeconds(1),
                 new StrategyLibraryPosition(NOW, StrategyLibraryItemKind.DRAFT, DRAFT_ID));
-        assertThatThrownBy(() -> service.list(futureCursor, 20))
+        assertThatThrownBy(() -> service.list(futureCursor, 20, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("cursor is invalid");
     }

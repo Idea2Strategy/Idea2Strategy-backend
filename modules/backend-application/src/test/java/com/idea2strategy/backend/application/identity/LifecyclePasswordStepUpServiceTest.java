@@ -88,7 +88,17 @@ class LifecyclePasswordStepUpServiceTest {
 
     private static LifecyclePasswordStepUpService service(
             PasswordLoginAccount account, boolean passwordMatches, IdentityCommandPort commands) {
-        IdentityQueryPort identities = ignored -> Optional.ofNullable(account);
+        IdentityQueryPort identities = new IdentityQueryPort() {
+            @Override
+            public Optional<PasswordLoginAccount> findPasswordLoginByEmailLookup(String emailLookup) {
+                return Optional.ofNullable(account);
+            }
+
+            @Override
+            public Optional<PasswordLoginAccount> findPasswordLoginByAccountId(java.util.UUID accountId) {
+                return Optional.ofNullable(account);
+            }
+        };
         PasswordVerifier passwords = (raw, encoded) -> passwordMatches && raw.equals("correct-secret");
         EmailLookup emails = raw -> raw.strip().toLowerCase();
         return new LifecyclePasswordStepUpService(

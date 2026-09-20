@@ -54,7 +54,7 @@ public class OperatorRbacReadController {
     private com.idea2strategy.backend.application.operatorrbac.OperatorRequestContext current(
             UUID correlationId) {
         return securityContext.current()
-                .filter(context -> context.trustedExternalSubject())
+                .filter(context -> context.sessionAuthenticated())
                 .orElseThrow(() -> new OperatorRbacReadRejectedException(
                         OperatorRbacReadRejectedException.Reason.UNAUTHENTICATED,
                         "OPERATOR_AUTHENTICATION_REQUIRED", correlationId));

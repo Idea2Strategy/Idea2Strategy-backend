@@ -31,6 +31,7 @@ public final class BasicStrategyValidationCommandService {
     private final IdGenerator idGenerator;
     private final Clock clock;
     private final BasicBlockAssemblyValidator assemblyValidator;
+    private final BasicStrategyWarningAnalyzer warningAnalyzer;
     private final BasicBacktestCapabilityValidator backtestValidator;
     private final ObjectMapper objectMapper;
 
@@ -70,6 +71,7 @@ public final class BasicStrategyValidationCommandService {
         this.idGenerator = Objects.requireNonNull(idGenerator, "idGenerator");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.assemblyValidator = Objects.requireNonNull(assemblyValidator, "assemblyValidator");
+        this.warningAnalyzer = new BasicStrategyWarningAnalyzer();
         this.backtestValidator = Objects.requireNonNull(backtestValidator, "backtestValidator");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     }
@@ -146,6 +148,7 @@ public final class BasicStrategyValidationCommandService {
                     issue.message(),
                     List.of())));
             if (assemblyResult.valid()) {
+                findings.addAll(warningAnalyzer.analyze(assembly));
                 var backtestResult = backtestValidator.validate(assembly, catalog);
                 backtestResult.issues().forEach(issue -> findings.add(new StrategyValidationFinding(
                         backtestSeverity(issue.code()),

@@ -39,7 +39,7 @@ public final class OperatorCaseCommandService {
 
     public OperatorCaseDecisionResult execute(OperatorCaseCommand command) {
         Objects.requireNonNull(command, "command");
-        if (!command.requestContext().trustedExternalSubject()) {
+        if (!command.requestContext().sessionAuthenticated()) {
             throw new OperatorCaseAuthenticationRejectedException();
         }
         Instant now = clock.instant();

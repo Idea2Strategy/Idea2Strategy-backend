@@ -1,11 +1,8 @@
 package com.idea2strategy.backend.api.competition;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.idea2strategy.backend.application.competition.JoinRoomWithStrategyCommand;
 import com.idea2strategy.backend.application.competition.RoomStrategyParticipationService;
 import java.time.Instant;
-import java.util.Map;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.HttpStatus;
@@ -46,10 +43,7 @@ public class RoomParticipationController {
             String languageVersion,
             String schemaVersion,
             String catalogVersion,
-            int budgetCapBps,
-            String brokerRulesVersion,
-            String accountingRulesVersion,
-            Map<String, Object> candidateConflictPolicy) {
+            int budgetCapBps) {
         JoinRoomWithStrategyCommand toCommand(UUID roomId) {
             return new JoinRoomWithStrategyCommand(
                     roomId,
@@ -58,18 +52,7 @@ public class RoomParticipationController {
                     languageVersion,
                     schemaVersion,
                     catalogVersion,
-                    budgetCapBps,
-                    brokerRulesVersion,
-                    accountingRulesVersion,
-                    candidateConflictPolicy == null ? null : json(candidateConflictPolicy));
-        }
-
-        private static String json(Map<String, Object> value) {
-            try {
-                return new ObjectMapper().writeValueAsString(value);
-            } catch (JsonProcessingException exception) {
-                throw new IllegalArgumentException("candidateConflictPolicy must be valid JSON", exception);
-            }
+                    budgetCapBps);
         }
     }
 

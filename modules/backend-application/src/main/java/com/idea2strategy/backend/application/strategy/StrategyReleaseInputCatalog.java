@@ -24,14 +24,34 @@ public record StrategyReleaseInputCatalog(
             UUID feePolicyId,
             int feeRateBps,
             UUID buyingPowerBufferPolicyId,
-            int buyingPowerBufferBps) {}
+            int buyingPowerBufferBps,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            String marketDataSchemaVersion,
+            Instant lockedAt) {}
 
     public record Dataset(
             UUID id,
+            UUID instrumentId,
             String feedCode,
             String dataLayer,
             String resolution,
+            int revisionNumber,
             LocalDate periodStart,
             LocalDate periodEnd,
-            String schemaVersion) {}
+            String schemaVersion,
+            Instant availableAt) {
+        public Dataset(
+                UUID id,
+                String feedCode,
+                String dataLayer,
+                String resolution,
+                int revisionNumber,
+                LocalDate periodStart,
+                LocalDate periodEnd,
+                String schemaVersion,
+                Instant availableAt) {
+            this(id, null, feedCode, dataLayer, resolution, revisionNumber, periodStart, periodEnd, schemaVersion, availableAt);
+        }
+    }
 }

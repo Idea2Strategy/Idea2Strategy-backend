@@ -183,12 +183,20 @@ class OperatorRbacPersistenceIntegrationTest {
     private UUID operator(String key, boolean active, boolean mfa) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into operations.operator_accounts
-                    (id, external_identity_key_hmac, external_identity_key_version,
-                     status, mfa_enrolled_at, created_at)
-                values (?, ?, 1, ?, ?, clock_timestamp())
-                """, id, key + id, active ? "ACTIVE" : "DISABLED",
-                mfa ? Timestamp.from(NOW.minusSeconds(60)) : null);
+                insert into operations.operator_accounts (id, status, created_at)
+                values (?, ?, clock_timestamp())
+                """, id, active ? "ACTIVE" : "DISABLED");
+        if (mfa) {
+            jdbc.update("""
+                    insert into operations.operator_login_credentials
+                        (operator_account_id, login_name, password_hash, password_parameters,
+                         password_version, totp_ciphertext, totp_nonce, totp_key_version,
+                         totp_enrolled_at, password_changed_at)
+                    values (?, ?, 'test-password-hash', '{}'::jsonb, 1,
+                            decode('00', 'hex'), decode('000000000000000000000000', 'hex'), 1,
+                            clock_timestamp(), clock_timestamp())
+                    """, id, key);
+        }
         return id;
     }
 

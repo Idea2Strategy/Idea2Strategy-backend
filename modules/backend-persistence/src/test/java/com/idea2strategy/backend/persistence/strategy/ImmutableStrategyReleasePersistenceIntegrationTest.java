@@ -48,8 +48,12 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     private static final UUID FEE_ID = UUID.fromString("b0000000-0000-4000-8000-000000000011");
     private static final UUID BUFFER_ID = UUID.fromString("c0000000-0000-4000-8000-000000000011");
     private static final UUID DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000011");
+    private static final UUID SECOND_DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000012");
+    private static final UUID THIRD_DATASET_ID = UUID.fromString("d0000000-0000-4000-8000-000000000013");
     private static final UUID FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000011");
+    private static final UUID SECOND_FEED_ID = UUID.fromString("e0000000-0000-4000-8000-000000000012");
     private static final UUID FEATURE_FEED_ID = UUID.fromString("39e0e076-89e0-5159-b113-a8f6778b7c9e");
+    private static final UUID PROVIDER_ID = UUID.fromString("b9146ed9-dbb0-5323-93e3-8518f3851236");
     private static final UUID FEATURE_PIPELINE_ID = UUID.fromString("e1000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_MANIFEST_ID = UUID.fromString("e2000000-0000-4000-8000-000000000011");
     private static final UUID FEATURE_OBJECT_ID = UUID.fromString("e3000000-0000-4000-8000-000000000011");
@@ -104,7 +108,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "values ('backtest-policy-v1', ?, ?::jsonb, ?)",
                 HASH_A,
                 "{\"version\":\"backtest-policy-v1\",\"periodStart\":\"2025-01-01T05:00:00Z\","
-                        + "\"periodEnd\":\"2026-01-01T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
+                        + "\"periodEnd\":\"2025-12-31T05:00:00Z\",\"marketDataSchemaVersion\":\"v1\","
                         + "\"timezone\":\"America/New_York\"}",
                 at);
         jdbc.update(
@@ -119,21 +123,23 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "plan_document, plan_hash, created_at) values (?, ?, ?, 'basic-compiler:1.0.0', ?, "
                         + "'{}'::jsonb, ?, ?)",
                 PLAN_ID, CATALOG_ID, HASH_A, HASH_B, HASH_C, at);
-        jdbc.update(
-                "insert into market_data.providers (id, code, display_name, rights_version, status, created_at) "
-                        + "values (?, 'IDEA2STRATEGY_INTERNAL', 'Test', 'internal-derived-v1', 'ACTIVE', ?)",
-                UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+        jdbc.update("delete from market_data.feeds where provider_id = ? and code = 'FEATURE_RSI_14_1M_RSI_1_0_0'", PROVIDER_ID);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'OFFICIAL', 'BAR', '1d', 'UTC', 'v1', ?)",
-                FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+                FEED_ID, PROVIDER_ID, at);
+        jdbc.update(
+                "insert into market_data.feeds "
+                        + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
+                        + "values (?, ?, 'OFFICIAL_4H', 'BAR', '4h', 'UTC', 'v1', ?)",
+                SECOND_FEED_ID, PROVIDER_ID, at);
         jdbc.update(
                 "insert into market_data.feeds "
                         + "(id, provider_id, code, data_kind, resolution, timezone_name, feed_version, created_at) "
                         + "values (?, ?, 'FEATURE_RSI_14_1M_RSI_1_0_0', 'FEATURE_SERIES', '1m', 'UTC', "
                         + "'rsi-1.0.0+feature-series.parquet.v1', ?)",
-                FEATURE_FEED_ID, UUID.fromString("f0000000-0000-4000-8000-000000000011"), at);
+                FEATURE_FEED_ID, PROVIDER_ID, at);
         jdbc.update(
                 "insert into market_data.dataset_manifests "
                         + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
@@ -141,6 +147,20 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         + "values (?, ?, 'ADJUSTED', '1d', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
                         + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
                 DATASET_ID, FEED_ID, HASH_D, at, at);
+        jdbc.update(
+                "insert into market_data.dataset_manifests "
+                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "schema_version, dataset_hash, created_at, available_at) "
+                        + "values (?, ?, 'ADJUSTED', '4h', 1, 'AVAILABLE', '2025-01-01T00:00:00Z', "
+                        + "'2025-06-30T00:00:00Z', 'v1', ?, ?, ?)",
+                SECOND_DATASET_ID, SECOND_FEED_ID, HASH_C, at, at);
+        jdbc.update(
+                "insert into market_data.dataset_manifests "
+                        + "(id, feed_id, data_layer, resolution, revision_number, status, period_start, period_end, "
+                        + "schema_version, dataset_hash, created_at, available_at) "
+                        + "values (?, ?, 'ADJUSTED', '4h', 1, 'AVAILABLE', '2025-07-01T00:00:00Z', "
+                        + "'2025-12-31T00:00:00Z', 'v1', ?, ?, ?)",
+                THIRD_DATASET_ID, SECOND_FEED_ID, HASH_B, at, at);
         jdbc.update(
                 "insert into market_data.instruments "
                         + "(id, asset_type, primary_exchange_mic, currency_code) values (?, 'STOCK', 'XNAS', 'USD')",
@@ -217,7 +237,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
     void atomicallyCreatesOneImmutableAggregateAndMakesTheReleaseIdIdempotent() throws Exception {
         ImmutableStrategyRelease release = release(BOT_ID, HASH_D);
         OfficialBacktestRequest request = OfficialBacktestRequest.forRelease(
-                release, DATASET_ID, "backtest-policy-v1");
+                release, List.of(DATASET_ID, SECOND_DATASET_ID, THIRD_DATASET_ID), "backtest-policy-v1");
 
         jdbc.update("update strategy.element_catalog_versions set retired_at = ? where id = ?",
                 NOW.atOffset(ZoneOffset.UTC), CATALOG_ID);
@@ -261,7 +281,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertThat(count("backtest.runs")).isEqualTo(1);
         assertThat(count("backtest.run_input_pins")).isEqualTo(1);
         assertThat(count("backtest.input_bundles")).isEqualTo(1);
-        assertThat(count("backtest.input_datasets")).isEqualTo(1);
+        assertThat(count("backtest.input_datasets")).isEqualTo(3);
         assertThat(count("backtest.input_feature_materializations")).isEqualTo(1);
         assertThat(count("operations.outbox_messages")).isEqualTo(1);
         // The transport aggregate for a BASIC official backtest is the bot, not the run. The BASIC
@@ -278,6 +298,11 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                         "select payload_document ->> 'datasetManifestId' from operations.outbox_messages "
                                 + "where aggregate_id = ?", String.class, BOT_ID))
                 .isEqualTo(DATASET_ID.toString());
+        assertThat(jdbc.queryForObject(
+                        "select jsonb_array_length(payload_document -> 'datasets') "
+                                + "from operations.outbox_messages where aggregate_id = ?",
+                        Integer.class, BOT_ID))
+                .isEqualTo(3);
         var transported = OBJECT_MAPPER.readValue(
                 jdbc.queryForObject(
                         "select payload_document::text from operations.outbox_messages where aggregate_id = ?",
@@ -306,7 +331,12 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 new StrategyBotContractFixtures.PinnedFeatureMaterialization(
                         FEATURE_MATERIALIZATION_ID.toString(), "sha256:" + HASH_B));
         assertThat(transported.periodStart()).isEqualTo("2025-01-01");
-        assertThat(transported.periodEnd()).isEqualTo("2025-12-31");
+        assertThat(transported.periodEnd()).isEqualTo("2025-12-30");
+        assertThat(jdbc.queryForObject(
+                        "select evaluation_end from backtest.runs where id = ?",
+                        java.time.LocalDate.class,
+                        request.runId()))
+                .isEqualTo(java.time.LocalDate.parse("2025-12-30"));
         assertThat(transported.requestHash()).matches("sha256:[0-9a-f]{64}");
         assertThat(jdbc.queryForMap(
                         "select p.input_bundle_fingerprint, p.input_contract_version, "
@@ -401,15 +431,26 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
                 .hasMessageContaining("does not match the execution policy schema");
         assertNothingDurable();
 
-        // 2. The manifest period reaches outside the policy window.
-        setPolicyDocument("2025-06-01T04:00:00Z", "2025-07-01T04:00:00Z", "v1");
+        // 2. Annual immutable partitions are allowed to overlap a shorter policy window. The run
+        // still evaluates only the policy dates, and pinning the full object preserves replay.
+        setPolicyDocument("2025-01-01T05:00:00Z", "2025-07-31T04:00:00Z", "v1");
+        OfficialBacktestRequest annualRequest = OfficialBacktestRequest.forRelease(
+                release, List.of(DATASET_ID), "backtest-policy-v1");
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            assertThat(adapter.saveOnce(release, annualRequest, RUN_ID, 7, HASH_A)).isEqualTo(release);
+            status.setRollbackOnly();
+        });
+        assertNothingDurable();
+
+        // 3. A manifest wholly outside the policy window cannot contribute to its replay.
+        setPolicyDocument("2024-06-01T04:00:00Z", "2024-07-01T04:00:00Z", "v1");
         assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
-                .hasMessageContaining("is not inside the execution policy period");
+                .hasMessageContaining("does not overlap the execution policy period");
         assertNothingDurable();
 
         // 3. A RAW manifest would measure the strategy against unadjusted splits and dividends.
-        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+        setPolicyDocument("2025-01-01T05:00:00Z", "2025-12-31T05:00:00Z", "v1");
         jdbc.update("update market_data.dataset_manifests set data_layer = 'RAW' where id = ?", DATASET_ID);
         assertThatThrownBy(() -> adapter.saveOnce(release, request, RUN_ID, 7, HASH_A))
                 .isInstanceOf(ImmutableStrategyReleaseRejectedException.class)
@@ -436,7 +477,7 @@ class ImmutableStrategyReleasePersistenceIntegrationTest {
         assertNothingDurable();
 
         // Restore the compatible pair so the caller can go on to prove the success path.
-        setPolicyDocument("2025-01-01T05:00:00Z", "2026-01-01T05:00:00Z", "v1");
+        setPolicyDocument("2025-01-01T05:00:00Z", "2025-12-31T05:00:00Z", "v1");
     }
 
     private void setPolicyDocument(String periodStart, String periodEnd, String schemaVersion) {

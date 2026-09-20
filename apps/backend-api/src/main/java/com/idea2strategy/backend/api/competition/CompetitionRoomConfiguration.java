@@ -5,6 +5,7 @@ import com.idea2strategy.backend.application.common.CurrentOperatorPrincipal;
 import com.idea2strategy.backend.application.common.CurrentPrincipal;
 import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQueryService;
 import com.idea2strategy.backend.application.competition.OfficialCompetitionRoomCreationService;
+import com.idea2strategy.backend.application.competition.OfficialBacktestCompetitionRoomCreationService;
 import com.idea2strategy.backend.application.competition.OperatorRoomManagementService;
 import com.idea2strategy.backend.application.competition.OwnedBotComparisonQueryService;
 import com.idea2strategy.backend.application.competition.OwnedRoomManagementQueryService;
@@ -34,6 +35,7 @@ import com.idea2strategy.backend.persistence.competition.CompetitionRoomJpaEntit
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomRulesJpaEntity;
 import com.idea2strategy.backend.persistence.competition.CompetitionRoomScheduleJpaEntity;
 import com.idea2strategy.backend.persistence.competition.OperatorRoomJooqAdapter;
+import com.idea2strategy.backend.persistence.competition.OfficialBacktestRoomJooqCommandAdapter;
 import com.idea2strategy.backend.persistence.competition.OwnedRoomManagementJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.PostEvaluationChoiceJooqAdapter;
 import com.idea2strategy.backend.persistence.competition.RoomConfigurationJooqAdapter;
@@ -49,6 +51,7 @@ import com.idea2strategy.backend.persistence.strategy.CompiledFlowPlanJooqComman
 import com.idea2strategy.backend.persistence.strategy.ImmutableStrategyReleaseJooqCommandAdapter;
 import com.idea2strategy.backend.persistence.backtest.FeatureMaterializationPinResolver;
 import com.idea2strategy.backend.persistence.strategy.StrategyDocumentJooqQueryAdapter;
+import com.idea2strategy.backend.persistence.strategy.StrategyReleaseInputCatalogJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyJooqQueryAdapter;
 import com.idea2strategy.backend.persistence.strategy.StrategyValidationRunJooqQueryAdapter;
 import java.time.Clock;
@@ -80,6 +83,7 @@ import org.springframework.context.annotation.Import;
 })
 @Import({
     CompetitionRoomJpaCommandAdapter.class,
+    OfficialBacktestRoomJooqCommandAdapter.class,
     OperatorRoomJooqAdapter.class,
     OwnedRoomManagementJooqAdapter.class,
     AnonymousLeaderboardJooqAdapter.class,
@@ -233,6 +237,7 @@ public class CompetitionRoomConfiguration {
             StrategyValidationRunJooqQueryAdapter validationAdapter,
             StrategyJooqQueryAdapter strategyAdapter,
             StrategyDocumentJooqQueryAdapter documentAdapter,
+            StrategyReleaseInputCatalogJooqQueryAdapter releaseInputs,
             CurrentPrincipal principal) {
         return new ImmutableStrategyReleaseCommandService(
                 releaseAdapter,
@@ -240,6 +245,7 @@ public class CompetitionRoomConfiguration {
                 validationAdapter,
                 strategyAdapter,
                 documentAdapter,
+                releaseInputs,
                 principal,
                 Clock.systemUTC());
     }
@@ -252,6 +258,7 @@ public class CompetitionRoomConfiguration {
             ImmutableStrategyReleaseCommandService releaseService,
             BasicStrategyCatalogQueryService catalogService,
             StrategyValidationRunJooqQueryAdapter validationAdapter,
+            StrategyReleaseInputCatalogJooqQueryAdapter releaseInputs,
             CurrentPrincipal principal) {
         return new RoomStrategyParticipationService(
                 admissionService,
@@ -259,6 +266,7 @@ public class CompetitionRoomConfiguration {
                 releaseService,
                 catalogService,
                 validationAdapter,
+                releaseInputs,
                 principal,
                 UUID::randomUUID);
     }
@@ -325,5 +333,19 @@ public class CompetitionRoomConfiguration {
                 Clock.systemUTC(),
                 UUID::randomUUID,
                 new ObjectMapper());
+    }
+
+    @Bean
+    @ConditionalOnBean(CurrentOperatorPrincipal.class)
+    OfficialBacktestCompetitionRoomCreationService officialBacktestCompetitionRoomCreationService(
+            OfficialBacktestRoomJooqCommandAdapter commandAdapter,
+            ScoringTemplateCatalogService scoringCatalog,
+            CurrentOperatorPrincipal principal) {
+        return new OfficialBacktestCompetitionRoomCreationService(
+                commandAdapter,
+                scoringCatalog,
+                principal,
+                Clock.systemUTC(),
+                UUID::randomUUID);
     }
 }

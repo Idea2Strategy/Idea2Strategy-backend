@@ -30,11 +30,9 @@ public class CustomBacktestController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody CustomBacktestBody body) {
         var receipt = service.request(new CustomBacktestCommand(
-                botId, body.datasetManifestId(), body.periodStart(), body.periodEnd(),
-                body.executionPolicyVersion(), idempotencyKey));
+                botId, body.periodStart(), body.periodEnd(), idempotencyKey));
         return ResponseEntity.accepted().body(receipt);
     }
 
-    public record CustomBacktestBody(
-            UUID datasetManifestId, LocalDate periodStart, LocalDate periodEnd, String executionPolicyVersion) {}
+    public record CustomBacktestBody(LocalDate periodStart, LocalDate periodEnd) {}
 }

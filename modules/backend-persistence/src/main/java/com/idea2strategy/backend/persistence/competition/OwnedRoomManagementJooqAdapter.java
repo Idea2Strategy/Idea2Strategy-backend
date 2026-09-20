@@ -14,7 +14,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.JSONB;
 import org.springframework.stereotype.Repository;
@@ -32,6 +34,15 @@ public class OwnedRoomManagementJooqAdapter implements OwnedRoomManagementQueryP
 
     @Override
     public List<OwnedRoomManagementView> findOwnedBy(UUID ownerAccountId, int limit) {
+        return findOwned(ownerAccountId, null, limit);
+    }
+
+    @Override
+    public Optional<OwnedRoomManagementView> findOwnedById(UUID ownerAccountId, UUID roomId) {
+        return findOwned(ownerAccountId, roomId, 1).stream().findFirst();
+    }
+
+    private List<OwnedRoomManagementView> findOwned(UUID ownerAccountId, UUID roomId, int limit) {
         var rooms = table(name("competition", "rooms")).as("r");
         var rules = table(name("competition", "room_rules")).as("rr");
         var schedules = table(name("competition", "room_schedules")).as("rs");
@@ -39,6 +50,8 @@ public class OwnedRoomManagementJooqAdapter implements OwnedRoomManagementQueryP
         var id = field(name("r", "id"), UUID.class);
         var createdAt = field(name("r", "created_at"), OffsetDateTime.class);
 
+        Condition ownership = field(name("r", "creator_account_id"), UUID.class).eq(ownerAccountId);
+        if (roomId != null) ownership = ownership.and(id.eq(roomId));
         List<BaseRoom> baseRooms = dsl.select(
                         id,
                         field(name("r", "name"), String.class),
@@ -66,7 +79,7 @@ public class OwnedRoomManagementJooqAdapter implements OwnedRoomManagementQueryP
                 .join(rules).on(id.eq(field(name("rr", "room_id"), UUID.class)))
                 .join(schedules).on(id.eq(field(name("rs", "room_id"), UUID.class)))
                 .join(live).on(id.eq(field(name("lr", "room_id"), UUID.class)))
-                .where(field(name("r", "creator_account_id"), UUID.class).eq(ownerAccountId))
+                .where(ownership)
                 .orderBy(createdAt.desc(), id.desc())
                 .limit(limit)
                 .fetch(record -> new BaseRoom(

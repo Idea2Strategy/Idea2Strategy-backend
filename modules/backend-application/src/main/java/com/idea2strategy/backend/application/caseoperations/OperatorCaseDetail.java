@@ -12,6 +12,8 @@ public record OperatorCaseDetail(
         UserCaseStatus status,
         long version,
         UUID assigneeOperatorId,
+        String subject,
+        String description,
         List<OperatorEvidenceView> evidence,
         Instant updatedAt) {
     public OperatorCaseDetail {

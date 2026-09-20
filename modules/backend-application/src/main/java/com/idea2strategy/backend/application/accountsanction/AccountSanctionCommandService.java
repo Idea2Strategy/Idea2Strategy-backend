@@ -50,7 +50,7 @@ public final class AccountSanctionCommandService {
         if (command.type() == AccountSanctionCommand.Type.EXPIRE) {
             return AccountSanctionAuthorizationPort.Decision.system();
         }
-        if (!command.requestContext().trustedExternalSubject()) {
+        if (!command.requestContext().sessionAuthenticated()) {
             throw new AccountSanctionAuthenticationRejectedException();
         }
         UUID requiredPermission = command.type() == AccountSanctionCommand.Type.APPLY

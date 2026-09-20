@@ -38,35 +38,58 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
         dsl.fetchOne(
                 "select pg_advisory_xact_lock(hashtextextended(?::text, 0))",
                 request.ownerAccountId());
-        Object accountStatus = dsl.fetchValue(
-                "select lifecycle_status::text from identity.accounts where id = ? for update",
+        Record account = dsl.fetchOne(
+                "select lifecycle_status::text as lifecycle_status, created_at from identity.accounts where id = ? for update",
                 request.ownerAccountId());
-        if (!"ACTIVE".equals(accountStatus)) {
+        if (account == null || !"ACTIVE".equals(account.get("lifecycle_status", String.class))) {
             return rejected(RoomParticipationAdmissionFailure.ACCOUNT_INELIGIBLE);
         }
 
         Record room = dsl.fetchOne(
                 "select r.competition_type::text as competition_type, r.status::text as room_status, "
+                        + "r.access_type::text as access_type, "
                         + "rules.bot_participation_limit, rules.per_account_bot_limit, "
+                        + "rules.eligibility_document, rules.market_scope_document, "
                         + "rules.initial_cash_amount, rules.fee_policy_id, "
                         + "rules.buying_power_buffer_policy_id, rules.precision_rules_version, "
                         + "schedule.participation_opens_at, schedule.participation_closes_at, "
-                        + "schedule.evaluation_starts_at "
+                        + "schedule.evaluation_starts_at, live.stopped_bot_slot_policy "
                         + "from competition.rooms r "
                         + "join competition.room_rules rules on rules.room_id = r.id "
                         + "join competition.room_schedules schedule on schedule.room_id = r.id "
+                        + "left join competition.live_room_rules live on live.room_id = r.id "
                         + "where r.id = ? for update of r",
                 request.roomId());
         var submissionTiming = submissionTiming(room, request.admittedAt());
         if (submissionTiming == null) {
             return rejected(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
         }
+        if (!eligibleAccount(account, room, request.admittedAt())) {
+            return rejected(RoomParticipationAdmissionFailure.ACCOUNT_INELIGIBLE);
+        }
+        UUID invitationGrantId = null;
+        if ("SECRET".equals(room.get("access_type", String.class))) {
+            Record grant = dsl.fetchOne(
+                    "select id from competition.room_invitations "
+                            + "where room_id = ? and claimed_by_account_id = ? "
+                            + "and admitted_participation_id is null and revoked_at is null "
+                            + "and expires_at > ?::timestamptz "
+                            + "order by claimed_at, id limit 1 for update",
+                    request.roomId(),
+                    request.ownerAccountId(),
+                    request.admittedAt().atOffset(ZoneOffset.UTC));
+            if (grant == null) {
+                return rejected(RoomParticipationAdmissionFailure.ROOM_NOT_JOINABLE);
+            }
+            invitationGrantId = grant.get("id", UUID.class);
+        }
 
-        int roomCount = countOccupied(request.roomId(), null);
+        String stoppedBotSlotPolicy = room.get("stopped_bot_slot_policy", String.class);
+        int roomCount = countOccupied(request.roomId(), null, stoppedBotSlotPolicy);
         if (roomCount >= room.get("bot_participation_limit", Integer.class)) {
             return rejected(RoomParticipationAdmissionFailure.ROOM_CAPACITY_REACHED);
         }
-        int accountRoomCount = countOccupied(request.roomId(), request.ownerAccountId());
+        int accountRoomCount = countOccupied(request.roomId(), request.ownerAccountId(), stoppedBotSlotPolicy);
         if (accountRoomCount >= room.get("per_account_bot_limit", Integer.class)) {
             return rejected(RoomParticipationAdmissionFailure.ACCOUNT_ROOM_LIMIT_REACHED);
         }
@@ -102,6 +125,10 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return rejected(RoomParticipationAdmissionFailure.PROVISIONED_BOT_INVALID);
         }
+        if (!botMatchesMarketScope(botId, room.get("market_scope_document", org.jooq.JSONB.class))) {
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return rejected(RoomParticipationAdmissionFailure.MARKET_SCOPE_MISMATCH);
+        }
 
         dsl.execute(
                 "insert into competition.participations "
@@ -121,6 +148,21 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
                 request.eventId(),
                 request.participationId(),
                 admittedAt);
+        if (invitationGrantId != null) {
+            int grantsSpent = dsl.execute(
+                    "update competition.room_invitations "
+                            + "set admitted_participation_id = ?, revoked_at = ?::timestamptz, "
+                            + "revocation_reason_code = 'ADMITTED' "
+                            + "where id = ? and claimed_by_account_id = ? "
+                            + "and admitted_participation_id is null and revoked_at is null",
+                    request.participationId(),
+                    admittedAt,
+                    invitationGrantId,
+                    request.ownerAccountId());
+            if (grantsSpent != 1) {
+                throw new IllegalStateException("Account-bound room invitation was not spent atomically");
+            }
+        }
         return RoomParticipationAdmissionOutcome.accepted(new RoomParticipationAdmission(
                 request.participationId(),
                 request.roomId(),
@@ -143,19 +185,62 @@ public class RoomParticipationAdmissionJooqAdapter implements RoomParticipationA
         return schedule.timingAt(at).orElse(null);
     }
 
-    private int countOccupied(UUID roomId, UUID ownerAccountId) {
+    private int countOccupied(UUID roomId, UUID ownerAccountId, String stoppedBotSlotPolicy) {
         String ownerCondition = ownerAccountId == null ? "" : " and owner_account_id = ?";
+        String releasedCondition = "RELEASE_SLOT".equals(stoppedBotSlotPolicy)
+                ? " and status not in ('WITHDRAWN'::competition.participation_status, 'EXPELLED'::competition.participation_status)"
+                : "";
         Object[] bindings = ownerAccountId == null
                 ? new Object[] {roomId}
                 : new Object[] {roomId, ownerAccountId};
         Number count = (Number) dsl.fetchValue(
                 "select count(*) from competition.participations "
                         + "where room_id = ? "
-                        + "and status not in ('WITHDRAWN'::competition.participation_status, "
-                        + "'EXPELLED'::competition.participation_status)"
+                        + releasedCondition
                         + ownerCondition,
                 bindings);
         return count.intValue();
+    }
+
+    private boolean eligibleAccount(Record account, Record room, java.time.Instant admittedAt) {
+        org.jooq.JSONB eligibility = room.get("eligibility_document", org.jooq.JSONB.class);
+        if (eligibility == null || "{}".equals(eligibility.data())) {
+            return true;
+        }
+        return Boolean.TRUE.equals(dsl.fetchValue(
+                "select jsonb_typeof(?::jsonb) = 'object' "
+                        + "and (?::jsonb - 'minimumAccountAgeDays' - 'minimumAccountState') = '{}'::jsonb "
+                        + "and coalesce(?::jsonb->>'minimumAccountState', 'ACTIVE') = 'ACTIVE' "
+                        + "and case when jsonb_exists(?::jsonb, 'minimumAccountAgeDays') "
+                        + "then jsonb_typeof(?::jsonb->'minimumAccountAgeDays') = 'number' "
+                        + "and (?::jsonb->>'minimumAccountAgeDays')::int >= 0 "
+                        + "and ?::timestamptz <= ?::timestamptz - make_interval(days => (?::jsonb->>'minimumAccountAgeDays')::int) "
+                        + "else true end",
+                eligibility.data(), eligibility.data(), eligibility.data(), eligibility.data(),
+                eligibility.data(), eligibility.data(), account.get("created_at", OffsetDateTime.class),
+                admittedAt.atOffset(ZoneOffset.UTC), eligibility.data()));
+    }
+
+    private boolean botMatchesMarketScope(UUID botId, org.jooq.JSONB scope) {
+        if (scope == null || "{}".equals(scope.data())) {
+            return true;
+        }
+        return Boolean.TRUE.equals(dsl.fetchValue(
+                "select case "
+                        + "when (?::jsonb - 'market' - 'exchangeMics') <> '{}'::jsonb then false "
+                        + "when jsonb_exists(?::jsonb, 'market') and ?::jsonb->>'market' <> 'US' then false "
+                        + "else exists(select 1 from bot.bot_partitions partition "
+                        + "join bot.flows flow on flow.partition_id = partition.id "
+                        + "join bot.flow_instruments selected on selected.flow_id = flow.id "
+                        + "where partition.bot_id = ?) "
+                        + "and not exists(select 1 from bot.bot_partitions partition "
+                        + "join bot.flows flow on flow.partition_id = partition.id "
+                        + "join bot.flow_instruments selected on selected.flow_id = flow.id "
+                        + "left join market_data.instruments instrument on instrument.id = selected.instrument_id "
+                        + "where partition.bot_id = ? and (instrument.id is null "
+                        + "or (jsonb_exists(?::jsonb, 'market') and (instrument.currency_code <> 'USD' or instrument.primary_exchange_mic not in ('XNAS','XNYS','ARCX','BATS','IEXG'))) "
+                        + "or (jsonb_exists(?::jsonb, 'exchangeMics') and not jsonb_exists(?::jsonb->'exchangeMics', trim(instrument.primary_exchange_mic))))) end",
+                scope.data(), scope.data(), scope.data(), botId, botId, scope.data(), scope.data(), scope.data()));
     }
 
     private boolean aliasExists(UUID roomId, String alias) {

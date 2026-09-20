@@ -45,8 +45,56 @@ public record BacktestRequestEnvelope(
     public static BacktestRequestEnvelope custom(
             UUID accountId,
             UUID botId,
+            List<CompetitionDataset> datasets,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            String expectedSnapshotHash,
+            String compiledPlanChecksum,
+            String instrumentCatalogVersion,
+            List<CompetitionFeatureMaterialization> featureMaterializations,
+            BigDecimal initialCashAmount,
+            String assumptionsVersion,
+            String executionPolicyVersion,
+            String clientIdempotencyKey,
+            Instant occurredAt) {
+        datasets = List.copyOf(Objects.requireNonNull(datasets, "datasets"));
+        if (datasets.isEmpty()) throw new IllegalArgumentException("datasets must not be empty");
+        CompetitionDataset representative = datasets.getFirst();
+        return custom(accountId, botId, representative.datasetManifestId(), representative.expectedDatasetHash(),
+                datasets, periodStart, periodEnd, expectedSnapshotHash, compiledPlanChecksum,
+                instrumentCatalogVersion, featureMaterializations, initialCashAmount, assumptionsVersion,
+                executionPolicyVersion, clientIdempotencyKey, occurredAt);
+    }
+
+    public static BacktestRequestEnvelope custom(
+            UUID accountId,
+            UUID botId,
             UUID datasetManifestId,
             String expectedDatasetHash,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            String expectedSnapshotHash,
+            String compiledPlanChecksum,
+            String instrumentCatalogVersion,
+            List<CompetitionFeatureMaterialization> featureMaterializations,
+            BigDecimal initialCashAmount,
+            String assumptionsVersion,
+            String executionPolicyVersion,
+            String clientIdempotencyKey,
+            Instant occurredAt) {
+        return custom(accountId, botId, datasetManifestId, expectedDatasetHash,
+                List.of(new CompetitionDataset(datasetManifestId, "MARKET_BARS", expectedDatasetHash)),
+                periodStart, periodEnd, expectedSnapshotHash, compiledPlanChecksum, instrumentCatalogVersion,
+                featureMaterializations, initialCashAmount, assumptionsVersion, executionPolicyVersion,
+                clientIdempotencyKey, occurredAt);
+    }
+
+    private static BacktestRequestEnvelope custom(
+            UUID accountId,
+            UUID botId,
+            UUID datasetManifestId,
+            String expectedDatasetHash,
+            List<CompetitionDataset> datasets,
             LocalDate periodStart,
             LocalDate periodEnd,
             String expectedSnapshotHash,
@@ -77,7 +125,7 @@ public record BacktestRequestEnvelope(
         String requestHash = sha256(String.join("\n",
                 accountId.toString(), botId.toString(), datasetManifestId.toString(), expectedDatasetHash,
                 periodStart.toString(), periodEnd.toString(), expectedSnapshotHash, compiledPlanChecksum,
-                instrumentCatalogVersion, featureHashMaterial(featureMaterializations),
+                instrumentCatalogVersion, datasetHashMaterial(datasets), featureHashMaterial(featureMaterializations),
                 initialCashAmount.toPlainString(), assumptionsVersion,
                 executionPolicyVersion));
         UUID messageId = derivedId(CUSTOM_EVENT, producerKey);
@@ -94,6 +142,7 @@ public record BacktestRequestEnvelope(
         root.put("compiledPlanChecksum", compiledPlanChecksum);
         root.put("datasetManifestId", datasetManifestId.toString());
         root.put("expectedDatasetHash", expectedDatasetHash);
+        writeDatasets(root.putArray("datasets"), datasets);
         root.put("periodStart", periodStart.toString());
         root.put("periodEnd", periodEnd.toString());
         root.put("instrumentCatalogVersion", instrumentCatalogVersion);
@@ -289,6 +338,23 @@ public record BacktestRequestEnvelope(
             featureNode.put("featureMaterializationId", feature.featureMaterializationId().toString());
             featureNode.put("lockedResultHash", feature.lockedResultHash());
         });
+    }
+
+    private static void writeDatasets(ArrayNode nodes, List<CompetitionDataset> datasets) {
+        datasets.forEach(dataset -> {
+            ObjectNode node = nodes.addObject();
+            node.put("datasetManifestId", dataset.datasetManifestId().toString());
+            node.put("purposeCode", dataset.purposeCode());
+            node.put("expectedDatasetHash", dataset.expectedDatasetHash());
+        });
+    }
+
+    private static String datasetHashMaterial(List<CompetitionDataset> datasets) {
+        StringBuilder material = new StringBuilder();
+        datasets.forEach(dataset -> material.append(dataset.datasetManifestId())
+                .append(':').append(dataset.purposeCode())
+                .append(':').append(dataset.expectedDatasetHash()).append(';'));
+        return material.toString();
     }
 
     private static String featureHashMaterial(List<CompetitionFeatureMaterialization> features) {

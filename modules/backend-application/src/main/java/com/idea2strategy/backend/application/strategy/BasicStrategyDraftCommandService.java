@@ -17,7 +17,7 @@ public final class BasicStrategyDraftCommandService {
     public static final String SEMANTIC_SCHEMA_VERSION = "basic-semantic/v1";
     public static final String PRESENTATION_SCHEMA_VERSION = "basic-presentation/v1";
     private static final String EMPTY_SEMANTIC_DOCUMENT = "{\"groups\":[],\"mode\":\"BASIC\"}";
-    private static final String EMPTY_PRESENTATION_DOCUMENT =
+    static final String EMPTY_PRESENTATION_DOCUMENT =
             "{\"positions\":{},\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}";
 
     private final BasicStrategyDraftCommandPort commandPort;

@@ -9,5 +9,6 @@ public interface StrategyLibraryQueryPort {
             UUID ownerAccountId,
             Instant snapshotAt,
             StrategyLibraryPosition after,
-            int limit);
+            int limit,
+            StrategyLibraryItemKind kind);
 }

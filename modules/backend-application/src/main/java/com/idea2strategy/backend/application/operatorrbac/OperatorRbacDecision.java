@@ -14,7 +14,7 @@ public interface OperatorRbacDecision {
             Set<UUID> actorPermissionIds,
             Set<UUID> actorDelegablePermissionIds,
             Set<UUID> targetRolePermissionIds,
-            boolean trustedExternalSubject,
+            boolean sessionAuthenticated,
             boolean mfaSatisfied,
             boolean strictHierarchySatisfied) {
         public Evidence {
