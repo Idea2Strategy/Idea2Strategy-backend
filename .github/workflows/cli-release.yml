@@ -61,10 +61,12 @@ jobs:
         run: |
           set -euo pipefail
           archive="$(ls apps/idea2strategy-cli/build/distributions/*.zip)"
-          sha256sum "$archive" > "${archive}.sha256"
+          # Hash from inside the directory so the line names the file alone and
+          # `sha256sum -c` works wherever the two downloads land.
+          (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
                  --title "Idea2Strategy CLI $TAG" \
-                 --notes "Requires Java 21. Verify with the published .sha256, unzip, and run \`bin/idea2strategy tool-contract\`."
+                 --notes "Requires Java 21. Verify with \`sha256sum -c\` on the published .sha256, unzip, and run \`bin/idea2strategy tool-contract\`."
           gh release upload "$TAG" "$archive" "${archive}.sha256" \
             --repo "$GITHUB_REPOSITORY" --clobber

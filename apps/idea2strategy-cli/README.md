@@ -5,9 +5,11 @@ external-data fetching, or direct-order commands.
 
 ## Install
 
-Download `idea2strategy-<version>.zip` from a `cli-v*` release, verify it against the published
-`.sha256`, and unzip it. The launcher is `bin/idea2strategy` (`bin/idea2strategy.bat` on Windows);
-put its directory on `PATH`. **Java 21 must already be installed** — the archive carries no runtime.
+Download `idea2strategy-<version>.zip` and its `.sha256` from a `cli-v*` release, verify the archive
+from the directory holding both with `sha256sum -c idea2strategy-<version>.zip.sha256` (on macOS,
+`shasum -a 256 -c idea2strategy-<version>.zip.sha256`), and unzip it. The launcher is
+`bin/idea2strategy` (`bin/idea2strategy.bat` on Windows); put its directory on `PATH`. **Java 21 must
+already be installed** — the archive carries no runtime.
 
 An external AI tool should run `idea2strategy tool-contract` first and follow the JSON it returns
 rather than this file: the contract is what the released binary actually enforces.
