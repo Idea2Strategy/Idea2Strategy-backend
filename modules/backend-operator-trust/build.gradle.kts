@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.2"))
     api(project(":modules:backend-application"))
     implementation("org.springframework.boot:spring-boot")
     implementation("org.springframework.boot:spring-boot-autoconfigure")

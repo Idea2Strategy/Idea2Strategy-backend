@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.2"))
     implementation(project(":modules:backend-application"))
     api("org.springframework:spring-tx")
     implementation("com.fasterxml.jackson.core:jackson-databind")
