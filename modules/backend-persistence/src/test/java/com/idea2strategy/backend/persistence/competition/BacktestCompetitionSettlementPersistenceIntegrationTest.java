@@ -10,6 +10,7 @@ import com.idea2strategy.backend.application.competition.ScoringTemplateCatalogS
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -30,7 +31,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @org.springframework.boot.test.context.SpringBootTest(
         classes = BacktestCompetitionSettlementPersistenceIntegrationTest.TestApplication.class)
 class BacktestCompetitionSettlementPersistenceIntegrationTest {
-    private static final Instant NOW = Instant.parse("2026-08-10T03:00:00Z");
+    // Ended rooms leave the leaderboard a year after ended_at, so settlement runs on a recent day.
+    private static final Instant NOW = LocalDate.now(ZoneOffset.UTC).minusDays(30)
+            .atTime(3, 0).toInstant(ZoneOffset.UTC);
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");

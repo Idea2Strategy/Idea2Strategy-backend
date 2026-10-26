@@ -7,6 +7,7 @@ import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQue
 import com.idea2strategy.backend.application.competition.OwnedBotComparisonQueryService;
 import com.idea2strategy.backend.messaging.backtest.v1.BacktestResultContractFixtures;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = BacktestResultIsolationPersistenceIntegrationTest.TestApplication.class)
 class BacktestResultIsolationPersistenceIntegrationTest {
-    private static final Instant AT = Instant.parse("2026-08-02T15:00:00Z");
+    // Ended rooms leave the leaderboard a year after ended_at, so the rooms end on a recent day.
+    private static final Instant AT = LocalDate.now(ZoneOffset.UTC).minusDays(30)
+            .atTime(15, 0).toInstant(ZoneOffset.UTC);
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
