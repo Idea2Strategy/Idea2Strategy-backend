@@ -9,7 +9,8 @@ Download `idea2strategy-<version>.zip` and its `.sha256` from a `cli-v*` release
 from the directory holding both with `sha256sum -c idea2strategy-<version>.zip.sha256` (on macOS,
 `shasum -a 256 -c idea2strategy-<version>.zip.sha256`), and unzip it. The launcher is
 `bin/idea2strategy` (`bin/idea2strategy.bat` on Windows); put its directory on `PATH`. **Java 21 must
-already be installed** — the archive carries no runtime.
+already be installed** — the archive carries no runtime. A `cli-vX.Y.Z` release ships
+`idea2strategy-X.Y.Z.zip`, and `idea2strategy --version` reports `X.Y.Z`.
 
 An external AI tool should run `idea2strategy tool-contract` first and follow the JSON it returns
 rather than this file: the contract is what the released binary actually enforces.

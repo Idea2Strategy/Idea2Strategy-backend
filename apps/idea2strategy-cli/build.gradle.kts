@@ -24,6 +24,10 @@ sourceSets {
     test { resources.srcDir(project(":db-migration").file("src/main/resources")) }
 }
 
+// A cli-vX.Y.Z release passes -PcliVersion=X.Y.Z, so the archive name and the version that
+// `idea2strategy --version` reports come from the tag rather than the build-wide default.
+providers.gradleProperty("cliVersion").orNull?.let { version = it }
+
 application {
     applicationName = "idea2strategy"
     mainClass = "com.idea2strategy.cli.Idea2StrategyCli"
