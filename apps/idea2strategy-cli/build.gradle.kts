@@ -29,10 +29,17 @@ application {
     mainClass = "com.idea2strategy.cli.Idea2StrategyCli"
 }
 
+tasks.named<Jar>("jar") {
+    manifest {
+        attributes("Implementation-Version" to project.version.toString())
+    }
+}
+
 tasks.named<Test>("test") {
     dependsOn(tasks.named("installDist"))
     systemProperty(
         "idea2strategy.cli.installDir",
         layout.buildDirectory.dir("install/idea2strategy").get().asFile.absolutePath,
     )
+    systemProperty("idea2strategy.cli.version", project.version.toString())
 }

@@ -33,6 +33,8 @@ $password | idea2strategy login --email user@example.com
 Supported commands:
 
 ```text
+--help
+--version
 tool-contract
 catalog elements
 catalog instruments [--symbol TICKER[,TICKER...]]
@@ -99,6 +101,10 @@ the reviewed change. The sequence is what makes the review gate hold across a co
 server would re-read the document and apply a diff nobody reviewed against its current state.
 The CLI rejects arbitrary code, external-data access, direct orders, unapproved delegation scopes, and apply requests
 that omit the reviewed preview hash.
+
+`--help` lists the commands and stable exit codes, and `--version` reports the version the archive was
+built as; both answer in the same JSON envelope as every other command. An option with no command in front
+of it is a usage error (exit code 2).
 
 Every successful response is written to standard output as `{ "ok": true, "command": "...", "data": ... }`.
 Every error is written to standard error as `{ "ok": false, "command": "...", "error": ... }`.
