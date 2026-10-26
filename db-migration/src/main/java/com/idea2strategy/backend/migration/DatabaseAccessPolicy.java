@@ -106,6 +106,47 @@ public final class DatabaseAccessPolicy {
     private static final Set<String> BACKTEST_BOT_READ_TABLES =
             Set.of("launch_contract_plans", "bots");
 
+    /**
+     * The only {@code operations} tables the trading worker touches, with exactly the privileges its
+     * SQL needs. Everything else in the schema — operator credentials and sessions, the RBAC catalog,
+     * cases, notifications, batch bookkeeping — stays out of reach of the trading role.
+     *
+     * <p>Derived from every statement in {@code trading-engine} that names the schema, all of them in
+     * {@code apps/trading-worker}:
+     * <ul>
+     *   <li>{@code StrategyBotOutboxPoller} and {@code RoomEvaluationAccountOpenPoller} claim receipts
+     *       with {@code insert ... select ... on conflict do update ... returning}, lock them with
+     *       {@code for update} and settle them with {@code update}; none deletes one.</li>
+     *   <li>Both pollers and {@code OutboxReceiptBotControlCheckpointStore} read
+     *       {@code outbox_messages}; {@code ApprovedCorporateActionPoller} and
+     *       {@code RoomEvaluationAccountOpenPoller} append trading facts to it with
+     *       {@code on conflict (idempotency_key) do nothing}. No statement updates or deletes one.</li>
+     *   <li>The same two pollers append rejection evidence to {@code audit_events}, again with
+     *       {@code on conflict (idempotency_key) do nothing}. Nothing reads the audit trail back, so
+     *       the arbiter column is granted through {@code COLUMN_READS} rather than a table-wide
+     *       SELECT.</li>
+     * </ul>
+     */
+    private static final Map<String, Set<Access>> TRADING_OPERATIONS_ACCESS = Map.of(
+            "outbox_messages", Set.of(Access.READ, Access.INSERT),
+            "outbox_consumer_receipts", Set.of(Access.READ, Access.INSERT, Access.UPDATE),
+            "audit_events", Set.of(Access.INSERT));
+
+    /**
+     * Column-level reads for a role that must not read the whole table.
+     *
+     * <p>PostgreSQL requires SELECT on every column of an {@code on conflict (...)} arbiter, even for
+     * {@code do nothing}. Without it the trading worker's audit append fails with
+     * {@code permission denied for table audit_events}; a table-wide SELECT would hand it every
+     * operator and account audit row instead. A table-level REVOKE also revokes column privileges, so
+     * the generated revocations still reset these on every run.
+     */
+    private static final List<ColumnRead> COLUMN_READS = List.of(
+            new ColumnRead(
+                    ApplicationRole.TRADING,
+                    new QualifiedTable("operations", "audit_events"),
+                    List.of("idempotency_key")));
+
     /** Tables {@code backend-batch} appends to outside the schemas it owns. */
     private static final Set<QualifiedTable> BATCH_INSERTED_TABLES = Set.of(
             new QualifiedTable("competition", "room_events"),
@@ -244,6 +285,17 @@ public final class DatabaseAccessPolicy {
                             .append(quoted(table.table())).append(" TO ").append(roleName).append(";\n");
                 }
             }
+            for (var columnRead : columnReads(role)) {
+                if (!manifest.tables().contains(columnRead.table())) {
+                    continue;
+                }
+                usedSchemas.add(columnRead.table().schema());
+                sql.append("GRANT SELECT (")
+                        .append(columnRead.columns().stream().map(DatabaseAccessPolicy::quoted)
+                                .collect(java.util.stream.Collectors.joining(", ")))
+                        .append(") ON TABLE ").append(quoted(columnRead.table().schema())).append(".")
+                        .append(quoted(columnRead.table().table())).append(" TO ").append(roleName).append(";\n");
+            }
             for (var schema : usedSchemas) {
                 sql.append("GRANT USAGE ON SCHEMA ").append(quoted(schema))
                         .append(" TO ").append(roleName).append(";\n");
@@ -283,6 +335,11 @@ public final class DatabaseAccessPolicy {
 
     public static String databaseRole(ApplicationRole role) {
         return ROLE_PREFIX + role.name().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /** The column-level reads granted to a role on top of its table privileges. */
+    public static List<ColumnRead> columnReads(ApplicationRole role) {
+        return COLUMN_READS.stream().filter(columnRead -> columnRead.role() == role).toList();
     }
 
     private static String sqlPrivilege(Access access) {
@@ -458,12 +515,14 @@ public final class DatabaseAccessPolicy {
     }
 
     private static boolean allowsTrading(Access access, String schema, String table) {
-        if (access == Access.READ && Set.of("strategy", "market_data", "bot", "trading", "operations").contains(schema)) {
+        if ("operations".equals(schema)) {
+            return TRADING_OPERATIONS_ACCESS.getOrDefault(table, Set.of()).contains(access);
+        }
+        if (access == Access.READ && Set.of("strategy", "market_data", "bot", "trading").contains(schema)) {
             return true;
         }
         return "trading".equals(schema)
-                || ("bot".equals(schema) && TRADING_BOT_TABLES.contains(table))
-                || "operations".equals(schema);
+                || ("bot".equals(schema) && TRADING_BOT_TABLES.contains(table));
     }
 
     private static boolean ownsBackendTable(String schema, String table) {
@@ -490,6 +549,16 @@ public final class DatabaseAccessPolicy {
     }
 
     public record QualifiedTable(String schema, String table) {}
+
+    /** SELECT on {@code columns} of {@code table} for {@code role}, without a table-wide SELECT. */
+    public record ColumnRead(ApplicationRole role, QualifiedTable table, List<String> columns) {
+        public ColumnRead {
+            columns = List.copyOf(columns);
+            if (columns.isEmpty()) {
+                throw new IllegalArgumentException("A column read must name at least one column");
+            }
+        }
+    }
 
     public static final class OwnershipManifest {
         private final Map<QualifiedTable, MigrationOwner> ownership;

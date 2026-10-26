@@ -123,6 +123,58 @@ class CentralFlywayIntegrationTest {
             statement.execute("SET ROLE idea2strategy_pipeline");
             statement.execute("RESET ROLE");
 
+            // The statement shapes the trading worker executes against operations, under its own role.
+            // WHERE false keeps the rows out; PostgreSQL checks every privilege before execution anyway,
+            // including SELECT on an ON CONFLICT arbiter and UPDATE for FOR UPDATE.
+            statement.execute("SET ROLE idea2strategy_trading");
+            for (var allowed : java.util.List.of(
+                    "INSERT INTO operations.outbox_consumer_receipts (consumer_handler_id, outbox_message_id, "
+                            + "producer_idempotency_key, payload_hash, status, first_received_at, last_received_at) "
+                            + "SELECT 'grant-check', message.id, message.producer_idempotency_key, message.payload_hash, "
+                            + "'PROCESSING', now(), now() FROM operations.outbox_messages message "
+                            + "LEFT JOIN operations.outbox_consumer_receipts existing "
+                            + "ON existing.outbox_message_id = message.id WHERE false "
+                            + "ON CONFLICT (consumer_handler_id, outbox_message_id) DO UPDATE SET "
+                            + "receive_attempt_count = operations.outbox_consumer_receipts.receive_attempt_count + 1 "
+                            + "RETURNING outbox_message_id, claim_token, receive_attempt_count",
+                    "SELECT claim_token FROM operations.outbox_consumer_receipts WHERE false FOR UPDATE",
+                    "UPDATE operations.outbox_consumer_receipts SET failure_code = NULL WHERE false",
+                    "INSERT INTO operations.outbox_messages (id, owner_domain, aggregate_id, aggregate_sequence, "
+                            + "event_type, event_schema_version, payload_document, idempotency_key, created_at) "
+                            + "SELECT gen_random_uuid(), 'trading', gen_random_uuid(), 1, 'GRANT_CHECK', 'v1', "
+                            + "'{}'::jsonb, 'grant-check', now() WHERE false "
+                            + "ON CONFLICT (idempotency_key) DO NOTHING",
+                    "INSERT INTO operations.audit_events (id, actor_type, actor_id, action_type, target_domain, "
+                            + "target_id, reason_code, correlation_id, idempotency_key, occurred_at) "
+                            + "SELECT gen_random_uuid(), 'SYSTEM', gen_random_uuid(), 'GRANT_CHECK', 'trading', "
+                            + "gen_random_uuid(), 'GRANT_CHECK', gen_random_uuid(), 'grant-check', now() WHERE false "
+                            + "ON CONFLICT (idempotency_key) DO NOTHING")) {
+                statement.execute(allowed);
+            }
+            for (var denied : java.util.List.of(
+                    "SELECT * FROM operations.operator_login_credentials LIMIT 0",
+                    "SELECT * FROM operations.operator_sessions LIMIT 0",
+                    "SELECT * FROM operations.operator_accounts LIMIT 0",
+                    "SELECT * FROM operations.roles LIMIT 0",
+                    "SELECT actor_id, response_document FROM operations.audit_events LIMIT 0",
+                    "DELETE FROM operations.audit_events WHERE false",
+                    "DELETE FROM operations.outbox_consumer_receipts WHERE false",
+                    "UPDATE operations.outbox_messages SET published_at = published_at WHERE false",
+                    "INSERT INTO operations.cases (id) SELECT gen_random_uuid() WHERE false")) {
+                var failure = assertThrows(SQLException.class, () -> statement.execute(denied), denied);
+                assertEquals("42501", failure.getSQLState(), denied);
+                statement.execute("ROLLBACK");
+                statement.execute("SET ROLE idea2strategy_trading");
+            }
+            try (var columns = statement.executeQuery(
+                    "SELECT has_column_privilege('operations.audit_events', 'idempotency_key', 'SELECT'), "
+                            + "has_column_privilege('operations.audit_events', 'actor_id', 'SELECT')")) {
+                assertTrue(columns.next());
+                assertTrue(columns.getBoolean(1));
+                assertFalse(columns.getBoolean(2));
+            }
+            statement.execute("RESET ROLE");
+
             statement.execute("SET ROLE idea2strategy_backend");
             try (var pinPrivileges = statement.executeQuery(
                     "SELECT has_table_privilege('idea2strategy_backend', 'backtest.run_input_pins', 'INSERT'), "
