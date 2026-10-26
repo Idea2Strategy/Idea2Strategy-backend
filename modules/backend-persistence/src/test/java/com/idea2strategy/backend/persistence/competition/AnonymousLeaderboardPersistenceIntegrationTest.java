@@ -7,9 +7,13 @@ import com.idea2strategy.backend.application.competition.AnonymousLeaderboardQue
 import com.idea2strategy.backend.application.competition.InvalidLeaderboardCursorException;
 import com.idea2strategy.backend.application.competition.LeaderboardAccessException;
 import com.idea2strategy.backend.application.competition.LeaderboardAuthenticationException;
+import com.idea2strategy.backend.application.competition.LeaderboardQueryResult;
 import com.idea2strategy.backend.application.competition.RoomLeaderboardQuery;
+import com.idea2strategy.backend.application.competition.RoomLeaderboardQueryResult;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,7 +45,9 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
     private static final UUID FEE_POLICY_ID = id(60);
     private static final UUID BUFFER_POLICY_ID = id(61);
     private static final UUID OPERATOR_ID = id(62);
-    private static final Instant CUTOFF = Instant.parse("2026-08-02T05:00:00Z");
+    // Ended rooms leave the leaderboard a year after ended_at, so the seeded rooms end on a recent day.
+    private static final Instant CUTOFF = LocalDate.now(ZoneOffset.UTC).minusDays(30)
+            .atTime(5, 0).toInstant(ZoneOffset.UTC);
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16-alpine");
@@ -308,14 +314,8 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
 
     @Test
     void usesFrozenFinalSecretGrantsInsteadOfMutableParticipationStatus() {
-        seedSnapshot(SECRET_ROOM_ID, id(40), "FINAL", CUTOFF);
-        seedBotParticipation(SECRET_ROOM_ID, VIEWER_ID, id(41), id(42), "secret-member", "REGISTERED");
+        seedSecretFinalAccess();
         seedRoomDetails(SECRET_ROOM_ID);
-        jdbc.update(
-                "insert into competition.room_final_access_grants "
-                        + "(room_id, account_id, snapshot_id, eligibility_basis, granted_at) "
-                        + "values (?, ?, ?, 'ACTIVE_PARTICIPANT', ?)",
-                SECRET_ROOM_ID, VIEWER_ID, id(40), CUTOFF.atOffset(ZoneOffset.UTC));
 
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10))).isNotNull();
         assertThat(adapter.query(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
@@ -361,6 +361,29 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
                 ROOM_ID);
         assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId())
                 .isEqualTo(SNAPSHOT_ID);
+    }
+
+    @Test
+    void hidesPublicAndGrantedSecretRoomsThatEndedMoreThanAYearAgo() {
+        seedLeaderboard();
+        seedSecretFinalAccess();
+        assertThat(adapter.query(query(ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId()).isEqualTo(SNAPSHOT_ID);
+        assertThat(adapter.query(query(SECRET_ROOM_ID, VIEWER_ID, null, null, 10)).snapshotId()).isEqualTo(id(40));
+
+        jdbc.update(
+                "update competition.rooms set ended_at = current_timestamp - interval '1 year 1 day' "
+                        + "where id in (?, ?)",
+                ROOM_ID, SECRET_ROOM_ID);
+
+        for (UUID roomId : List.of(ROOM_ID, SECRET_ROOM_ID)) {
+            assertThat(adapter.query(query(roomId, VIEWER_ID, null, null, 10)))
+                    .isEqualTo(LeaderboardQueryResult.empty());
+            assertThat(adapter.queryOwned(query(roomId, VIEWER_ID, null, null, 10)))
+                    .isEqualTo(LeaderboardQueryResult.empty());
+            assertThat(roomLeaderboardAdapter.queryRoomLeaderboard(new RoomLeaderboardQuery(
+                            roomId, VIEWER_ID, null, null, null, 10, null, null, 10)))
+                    .isEqualTo(RoomLeaderboardQueryResult.empty());
+        }
     }
 
     @Test
@@ -452,6 +475,16 @@ class AnonymousLeaderboardPersistenceIntegrationTest {
         seedEntry(VIEWER_ID, id(20), id(10), id(30), "alpha", 1, true, "OWNER_ONLY_REASON");
         seedEntry(OTHER_ID, id(21), id(11), id(31), "beta", 1, true, "PRIVATE_OTHER_REASON");
         seedEntry(VIEWER_ID, id(22), id(12), id(32), "gamma", 2, false, null);
+    }
+
+    private void seedSecretFinalAccess() {
+        seedSnapshot(SECRET_ROOM_ID, id(40), "FINAL", CUTOFF);
+        seedBotParticipation(SECRET_ROOM_ID, VIEWER_ID, id(41), id(42), "secret-member", "REGISTERED");
+        jdbc.update(
+                "insert into competition.room_final_access_grants "
+                        + "(room_id, account_id, snapshot_id, eligibility_basis, granted_at) "
+                        + "values (?, ?, ?, 'ACTIVE_PARTICIPANT', ?)",
+                SECRET_ROOM_ID, VIEWER_ID, id(40), CUTOFF.atOffset(ZoneOffset.UTC));
     }
 
     private void seedSanction(UUID accountId, String sanctionType) {
