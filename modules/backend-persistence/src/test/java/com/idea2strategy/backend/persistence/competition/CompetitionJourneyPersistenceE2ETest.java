@@ -40,6 +40,7 @@ import com.idea2strategy.backend.persistence.botcontrol.BotStopCommandJooqAdapte
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
@@ -60,7 +61,9 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(classes = CompetitionJourneyPersistenceE2ETest.TestApplication.class)
 class CompetitionJourneyPersistenceE2ETest {
-    private static final Instant CREATED_AT = Instant.parse("2026-08-02T00:00:00Z");
+    // Ended rooms leave the leaderboard a year after ended_at, so the journey runs on a recent day.
+    private static final Instant CREATED_AT = LocalDate.now(ZoneOffset.UTC).minusDays(30)
+            .atStartOfDay(ZoneOffset.UTC).toInstant();
     private static final Instant RECRUITMENT_AT = CREATED_AT.plusSeconds(10);
     private static final Instant ADMISSION_AT = CREATED_AT.plusSeconds(30);
     private static final Instant EVALUATION_AT = CREATED_AT.plusSeconds(60);
