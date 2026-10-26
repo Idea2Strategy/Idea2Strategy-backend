@@ -597,11 +597,13 @@ class AccountClosurePersistenceIntegrationTest {
                 Integer.class, accountId)).isOne();
 
         Instant eligible = DEADLINE.plus(Duration.ofDays(30));
+        // applied_at defaults to the database clock; keep it on this test's fixed timeline so the
+        // release below satisfies released_at >= applied_at whatever day the suite runs.
         jdbc.update("""
                 insert into identity.account_legal_holds
-                    (account_id, data_category, blocks_identifier_reuse, basis_reference, applied_by)
-                values (?, 'CONTACT_IDENTIFIER', true, 'test-hold', 'test')
-                """, accountId);
+                    (account_id, data_category, blocks_identifier_reuse, basis_reference, applied_by, applied_at)
+                values (?, 'CONTACT_IDENTIFIER', true, 'test-hold', 'test', ?)
+                """, accountId, eligible.minusSeconds(1).atOffset(ZoneOffset.UTC));
         UUID legalHoldId = jdbc.queryForObject("""
                 select id from identity.account_legal_holds
                 where account_id = ? and data_category = 'CONTACT_IDENTIFIER' and status = 'ACTIVE'
@@ -855,9 +857,9 @@ class AccountClosurePersistenceIntegrationTest {
                 """, heldClosedAt.atOffset(ZoneOffset.UTC), actionableAccount);
         jdbc.update("""
                 insert into identity.account_legal_holds
-                    (account_id, data_category, blocks_identifier_reuse, basis_reference, applied_by)
-                values (?, 'CONTACT_IDENTIFIER', true, 'starvation-test', 'test')
-                """, heldAccount);
+                    (account_id, data_category, blocks_identifier_reuse, basis_reference, applied_by, applied_at)
+                values (?, 'CONTACT_IDENTIFIER', true, 'starvation-test', 'test', ?)
+                """, heldAccount, heldClosedAt.atOffset(ZoneOffset.UTC));
         Instant dueAt = heldClosedAt.plus(Duration.ofDays(30));
 
         assertThat(retention.findDueAccounts(10_000, dueAt))
