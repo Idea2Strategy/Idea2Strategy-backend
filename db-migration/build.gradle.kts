@@ -8,7 +8,7 @@ application {
 }
 
 dependencies {
-    testImplementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    testImplementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.2"))
     testImplementation(platform("org.testcontainers:testcontainers-bom:2.0.5"))
     testImplementation("org.flywaydb:flyway-core")
     testImplementation("org.flywaydb:flyway-database-postgresql")

@@ -3,13 +3,13 @@ plugins {
 }
 
 dependencies {
-    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.0"))
+    implementation(platform("org.springframework.boot:spring-boot-dependencies:4.1.2"))
     api(project(":modules:backend-application"))
     implementation("org.springframework.boot:spring-boot")
     implementation("org.springframework.boot:spring-boot-autoconfigure")
     implementation("org.springframework:spring-jdbc")
     implementation("org.springframework:spring-web")
-    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.85")
     implementation("io.lettuce:lettuce-core")
     implementation("org.slf4j:slf4j-api")
     compileOnly("jakarta.servlet:jakarta.servlet-api")
