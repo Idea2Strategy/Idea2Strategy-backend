@@ -4,12 +4,14 @@
 
 `V1__initial_schema.sql` is the immutable executable PostgreSQL baseline established on 2026-08-13 after the Development AWS environment was retired.
 
-It is a deterministic dump of the final schema and canonical seed/reference data produced by the last historical migration bundle. The rebaseline equivalence check recorded:
+It is a deterministic dump of the final schema and canonical seed/reference data produced by the last historical migration bundle. Before launch, V1 was amended once more to add `operations.operator_login_credentials` and `operations.operator_sessions`. The current file records:
 
 - baseline SHA-256: `ccc5950a4d23b9c8f07b895a83dbea18a9fb072523b56b121eecb65bec15c533`
-- schema fingerprint: `301075f9a6c9c1dd5b1f766d099b5fdd3b6149bfc5842fb0f59671e91e719571`
-- seed-data fingerprint: `e14e81ad82c679420aa3f0c27a48a82f853d3fcc7fcea214ce1ef626599076db`
-- 10 application schemas, 70 enum types, and 181 application tables
+- schema fingerprint: `4349602fddfe410e1244a346344ed636ee71aed5560ad6273b586098c314aeef`
+- seed-data fingerprint: `5e99f495dcf8929fadb44f8ca595c1572545d0d530eb0b1afd3afee3a9574308`
+- 10 application schemas, 70 enum types, and 183 application tables
+
+The fingerprints are the SHA-256 of the schema and seed-data fact queries in the root `scripts/new-v1-baseline.ps1`, run against V1 applied to an empty `postgres:16-alpine` database.
 
 The pre-baseline timestamped migrations remain available in Git history but are not active Flyway inputs. Do not restore them to this directory.
 
