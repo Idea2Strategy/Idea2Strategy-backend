@@ -286,8 +286,8 @@ class DatabaseAccessPolicyTest {
                 "operations",
                 "outbox_messages"));
 
-        // The intake never deletes a receipt. The other three roles hold DELETE on this table; the
-        // backtest role must not inherit it just because the rule was widened.
+        // The intake never deletes a receipt. The backend and batch roles hold DELETE on this table;
+        // the backtest role must not inherit it just because the rule was widened.
         assertFalse(DatabaseAccessPolicy.allows(
                 DatabaseAccessPolicy.ApplicationRole.BACKTEST,
                 DatabaseAccessPolicy.Access.DELETE,
@@ -309,6 +309,88 @@ class DatabaseAccessPolicyTest {
                             table),
                     "the intake has no reason to read operations." + table);
         }
+    }
+
+    @Test
+    void limitsTheTradingRoleToTheOperationsTablesItsWorkerExecutes() throws Exception {
+        // The trading worker claims and settles outbox receipts, reads the outbox, and appends its
+        // own facts and rejection audits. It used to hold every privilege on every operations table,
+        // operator credentials and sessions included.
+        var expected = java.util.Map.of(
+                "outbox_messages", List.of(DatabaseAccessPolicy.Access.READ, DatabaseAccessPolicy.Access.INSERT),
+                "outbox_consumer_receipts", List.of(
+                        DatabaseAccessPolicy.Access.READ,
+                        DatabaseAccessPolicy.Access.INSERT,
+                        DatabaseAccessPolicy.Access.UPDATE),
+                "audit_events", List.of(DatabaseAccessPolicy.Access.INSERT));
+        String baseline;
+        try (var input = getClass().getClassLoader().getResourceAsStream("db/migration/V1__initial_schema.sql")) {
+            baseline = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        var operationsTables = DatabaseAccessPolicy.verifyBaselineOwnership(baseline).tables().stream()
+                .filter(table -> "operations".equals(table.schema()))
+                .map(DatabaseAccessPolicy.QualifiedTable::table)
+                .toList();
+        assertTrue(operationsTables.containsAll(List.of(
+                "operator_login_credentials", "operator_sessions", "roles", "audit_events")));
+        for (var table : operationsTables) {
+            for (var access : List.of(
+                    DatabaseAccessPolicy.Access.READ,
+                    DatabaseAccessPolicy.Access.INSERT,
+                    DatabaseAccessPolicy.Access.UPDATE,
+                    DatabaseAccessPolicy.Access.DELETE)) {
+                assertEquals(
+                        expected.getOrDefault(table, List.of()).contains(access),
+                        DatabaseAccessPolicy.allows(
+                                DatabaseAccessPolicy.ApplicationRole.TRADING, access, "operations", table),
+                        "trading " + access + " on operations." + table);
+            }
+        }
+
+        // The audit append's ON CONFLICT arbiter needs SELECT on that one column, not the audit trail.
+        assertEquals(
+                List.of(new DatabaseAccessPolicy.ColumnRead(
+                        DatabaseAccessPolicy.ApplicationRole.TRADING,
+                        new DatabaseAccessPolicy.QualifiedTable("operations", "audit_events"),
+                        List.of("idempotency_key"))),
+                DatabaseAccessPolicy.columnReads(DatabaseAccessPolicy.ApplicationRole.TRADING));
+        for (var role : List.of(
+                DatabaseAccessPolicy.ApplicationRole.BACKEND,
+                DatabaseAccessPolicy.ApplicationRole.BATCH,
+                DatabaseAccessPolicy.ApplicationRole.BACKTEST,
+                DatabaseAccessPolicy.ApplicationRole.PIPELINE)) {
+            assertEquals(List.of(), DatabaseAccessPolicy.columnReads(role), role.toString());
+        }
+
+        // The generated statements are what the database is asked for, so assert them exactly.
+        var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(baseline));
+        assertEquals(
+                List.of(
+                        "GRANT INSERT ON TABLE \"operations\".\"audit_events\" TO idea2strategy_trading;",
+                        "GRANT SELECT, INSERT, UPDATE ON TABLE \"operations\".\"outbox_consumer_receipts\" "
+                                + "TO idea2strategy_trading;",
+                        "GRANT SELECT, INSERT ON TABLE \"operations\".\"outbox_messages\" TO idea2strategy_trading;",
+                        "GRANT SELECT (\"idempotency_key\") ON TABLE \"operations\".\"audit_events\" "
+                                + "TO idea2strategy_trading;"),
+                sql.lines()
+                        .filter(line -> line.startsWith("GRANT ")
+                                && line.contains(" ON TABLE \"operations\".")
+                                && line.endsWith(" TO idea2strategy_trading;"))
+                        .toList());
+        assertTrue(sql.contains("GRANT USAGE ON SCHEMA \"operations\" TO idea2strategy_trading;"));
+        // Every rerun still starts from nothing: a table-level REVOKE also drops column privileges.
+        assertTrue(sql.contains(
+                "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"operations\" FROM idea2strategy_trading;"));
+    }
+
+    @Test
+    void skipsAColumnReadWhoseTableTheBundleDoesNotDeclare() {
+        var sql = DatabaseAccessPolicy.runtimeGrantSql(List.of(
+                "CREATE TABLE operations.outbox_messages (id uuid PRIMARY KEY);"));
+
+        assertTrue(sql.contains(
+                "GRANT SELECT, INSERT ON TABLE \"operations\".\"outbox_messages\" TO idea2strategy_trading;"));
+        assertFalse(sql.contains("\"audit_events\""));
     }
 
     @Test
