@@ -5,9 +5,12 @@ external-data fetching, or direct-order commands.
 
 ## Install
 
-Download `idea2strategy-<version>.zip` from a `cli-v*` release, verify it against the published
-`.sha256`, and unzip it. The launcher is `bin/idea2strategy` (`bin/idea2strategy.bat` on Windows);
-put its directory on `PATH`. **Java 21 must already be installed** — the archive carries no runtime.
+Download `idea2strategy-<version>.zip` and its `.sha256` from a `cli-v*` release, verify the archive
+from the directory holding both with `sha256sum -c idea2strategy-<version>.zip.sha256` (on macOS,
+`shasum -a 256 -c idea2strategy-<version>.zip.sha256`), and unzip it. The launcher is
+`bin/idea2strategy` (`bin/idea2strategy.bat` on Windows); put its directory on `PATH`. **Java 21 must
+already be installed** — the archive carries no runtime. A `cli-vX.Y.Z` release ships
+`idea2strategy-X.Y.Z.zip`, and `idea2strategy --version` reports `X.Y.Z`.
 
 An external AI tool should run `idea2strategy tool-contract` first and follow the JSON it returns
 rather than this file: the contract is what the released binary actually enforces.
@@ -33,6 +36,8 @@ $password | idea2strategy login --email user@example.com
 Supported commands:
 
 ```text
+--help
+--version
 tool-contract
 catalog elements
 catalog instruments [--symbol TICKER[,TICKER...]]
@@ -99,6 +104,10 @@ the reviewed change. The sequence is what makes the review gate hold across a co
 server would re-read the document and apply a diff nobody reviewed against its current state.
 The CLI rejects arbitrary code, external-data access, direct orders, unapproved delegation scopes, and apply requests
 that omit the reviewed preview hash.
+
+`--help` lists the commands and stable exit codes, and `--version` reports the version the archive was
+built as; both answer in the same JSON envelope as every other command. An option with no command in front
+of it is a usage error (exit code 2).
 
 Every successful response is written to standard output as `{ "ok": true, "command": "...", "data": ... }`.
 Every error is written to standard error as `{ "ok": false, "command": "...", "error": ... }`.

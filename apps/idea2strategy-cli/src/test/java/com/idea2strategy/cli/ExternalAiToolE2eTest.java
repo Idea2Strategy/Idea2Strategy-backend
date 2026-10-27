@@ -66,6 +66,30 @@ class ExternalAiToolE2eTest {
         assertThat(requestCount).hasValue(0);
     }
 
+    /**
+     * The installed launcher, not just the classes, has to report the version the archive was
+     * built as: that is what someone checks after unzipping a release.
+     */
+    @Test
+    void installedLauncherAnswersHelpAndReportsTheBuiltVersion() throws Exception {
+        ProcessResult version = invoke(false, "--version");
+
+        assertThat(version.exitCode()).isZero();
+        assertThat(version.stderr()).isEmpty();
+        JsonNode versionOutput = JSON.readTree(version.stdout());
+        assertThat(versionOutput.path("command").asText()).isEqualTo("version");
+        assertThat(versionOutput.path("data").path("version").asText())
+                .isEqualTo(System.getProperty("idea2strategy.cli.version"));
+
+        ProcessResult help = invoke(false, "--help");
+
+        assertThat(help.exitCode()).isZero();
+        assertThat(help.stderr()).isEmpty();
+        assertThat(JSON.readTree(help.stdout()).path("data").path("contractCommand"))
+                .extracting(JsonNode::asText).containsExactly("tool-contract");
+        assertThat(requestCount).hasValue(0);
+    }
+
     @Test
     void externalToolReviewsPreviewDiffBeforeApplyingExactHash() throws Exception {
         Path operations = operations("SET_VALUE");

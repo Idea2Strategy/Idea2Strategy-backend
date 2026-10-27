@@ -217,6 +217,60 @@ class Idea2StrategyCliTest {
     }
 
     @Test
+    void helpListsEveryDispatchedCommandAndTheContractExitCodes() throws Exception {
+        Result result = run("", "--base-url", baseUrl, "--config-dir", tempDir.toString(), "--help");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stderr()).isEmpty();
+        JsonNode output = JSON.readTree(result.stdout());
+        assertThat(output.path("ok").asBoolean()).isTrue();
+        assertThat(output.path("command").asText()).isEqualTo("help");
+        JsonNode help = output.path("data");
+        assertThat(help.path("usage").asText()).startsWith("idea2strategy ").contains("<command>");
+        assertThat(help.path("commands")).extracting(JsonNode::asText)
+                .contains("tool-contract", "login", "operator bootstrap", "strategy list",
+                        "strategy edit preview", "strategy edit apply", "competition delete",
+                        "--help", "--version");
+        assertThat(help.path("contractCommand")).extracting(JsonNode::asText).containsExactly("tool-contract");
+        assertThat(help.path("exitCodes").path("2").asText()).isEqualTo("invalid-usage");
+        assertThat(requestPath.get()).isNull();
+    }
+
+    @Test
+    void versionAnswersInTheJsonEnvelopeWithoutCredentials() throws Exception {
+        Result result = run("", "--config-dir", tempDir.toString(), "--version");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.stderr()).isEmpty();
+        JsonNode output = JSON.readTree(result.stdout());
+        assertThat(output.path("ok").asBoolean()).isTrue();
+        assertThat(output.path("command").asText()).isEqualTo("version");
+        assertThat(output.path("data").path("version").asText()).isNotBlank();
+        assertThat(requestPath.get()).isNull();
+    }
+
+    /**
+     * An option with no command in front of it used to reach `getFirst()` on an empty list and
+     * surface as INTERNAL_ERROR (70). It is a usage mistake and must say so with exit code 2.
+     */
+    @Test
+    void optionsWithoutACommandAreAUsageErrorNotAnInternalFailure() throws Exception {
+        for (String[] args : new String[][] {
+                {"--yes"},
+                {"--help", "strategy", "list"},
+                {"--version", "--yes"},
+                {"--limit", "5", "strategy", "list"}}) {
+            Result result = run("", args);
+
+            assertThat(result.exitCode()).as(String.join(" ", args)).isEqualTo(2);
+            assertThat(result.stdout()).isEmpty();
+            assertThat(JSON.readTree(result.stderr()).path("error").path("code").asText())
+                    .as(String.join(" ", args)).isEqualTo("USAGE_ERROR");
+        }
+        assertThat(requestPath.get()).isNull();
+    }
+
+    @Test
     void requiredWorkflowCommandsUseVersionedApiRoutes() throws Exception {
         Files.writeString(tempDir.resolve("credentials.json"), "{\"sessionToken\":\"stored-token\"}");
 

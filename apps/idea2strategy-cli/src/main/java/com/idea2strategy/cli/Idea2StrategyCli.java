@@ -54,6 +54,14 @@ public final class Idea2StrategyCli {
             "competition.list",
             "competition.get",
             "competition.delete");
+    private static final String HELP_OPTION = "--help";
+    private static final String VERSION_OPTION = "--version";
+    private static final List<String> UNAUTHENTICATED_COMMANDS = List.of(
+            "tool-contract",
+            "login",
+            "operator.bootstrap",
+            "operator.credential-provision",
+            "operator.credential-reset");
 
     private Idea2StrategyCli() {}
 
@@ -85,6 +93,12 @@ public final class Idea2StrategyCli {
     }
 
     private static JsonNode execute(Invocation invocation, InputStream stdin, Map<String, String> environment) {
+        if (invocation.commandArguments().equals(List.of(HELP_OPTION))) {
+            return help();
+        }
+        if (invocation.commandArguments().equals(List.of(VERSION_OPTION))) {
+            return version();
+        }
         Arguments arguments = Arguments.parse(invocation.commandArguments());
         if (arguments.positionals().equals(List.of("operator", "bootstrap"))) {
             return OperatorBootstrapCommand.execute(arguments, environment, stdin);
@@ -154,6 +168,33 @@ public final class Idea2StrategyCli {
             throw new CliFailure(70, "TOOL_CONTRACT_UNAVAILABLE",
                     "The external AI tool contract could not be loaded");
         }
+    }
+
+    /**
+     * Answers `--help` in the same JSON envelope as every other command, so a caller that only
+     * parses JSON is not handed prose. The command list is derived from the dispatch tables, and
+     * the exit codes come from the tool contract, so neither can drift from what actually runs.
+     */
+    private static JsonNode help() {
+        ObjectNode help = JSON.createObjectNode().put("usage",
+                "idea2strategy [--base-url URL] [--backtest-base-url URL] [--config-dir DIR] <command> [options]");
+        ArrayNode commands = help.putArray("commands");
+        UNAUTHENTICATED_COMMANDS.forEach(command -> commands.add(command.replace('.', ' ')));
+        AUTHENTICATED_COMMANDS.stream().sorted().forEach(command -> commands.add(command.replace('.', ' ')));
+        commands.add(HELP_OPTION);
+        commands.add(VERSION_OPTION);
+        help.putArray("contractCommand").add("tool-contract");
+        help.set("exitCodes", toolContract().path("exitCodes"));
+        return help;
+    }
+
+    /**
+     * Reports the version the archive was built as. A release build stamps it from the cli-vX.Y.Z
+     * tag into the jar manifest; classes run straight from a source tree carry no manifest.
+     */
+    private static JsonNode version() {
+        String version = Idea2StrategyCli.class.getPackage().getImplementationVersion();
+        return JSON.createObjectNode().put("version", version == null ? "unknown" : version);
     }
 
     /**
@@ -674,7 +715,14 @@ public final class Idea2StrategyCli {
             if (values.isEmpty()) {
                 throw Arguments.usage("A command is required");
             }
+            if (values.equals(List.of(HELP_OPTION)) || values.equals(List.of(VERSION_OPTION))) {
+                return new Invocation(baseUrl, backtestBaseUrl, Path.of(config), null,
+                        List.copyOf(values), values.getFirst().substring(2));
+            }
             List<String> words = values.stream().takeWhile(value -> !value.startsWith("--")).toList();
+            if (words.isEmpty()) {
+                throw Arguments.usage("A command is required before any option; run --help for usage");
+            }
             int commandWordCount = switch (words.getFirst()) {
                 case "login" -> 1;
                 case "catalog" -> 2;

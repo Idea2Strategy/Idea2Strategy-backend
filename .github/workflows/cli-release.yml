@@ -43,6 +43,19 @@ jobs:
         with:
           cache-read-only: true
 
+      # The archive is named and stamped with the version in the tag, so what a person
+      # downloads, and what `idea2strategy --version` reports, match the release.
+      - name: Derive the CLI version from the tag
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^cli-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "::error::$TAG is not a cli-vX.Y.Z tag"
+            exit 1
+          fi
+          echo "CLI_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+
       # The tool contract is what an external AI reads before it does anything. A release
       # whose contract does not parse is worse than no release, so it is checked here and
       # not only in the unit tests that build it.
@@ -50,7 +63,7 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :apps:idea2strategy-cli:test :apps:idea2strategy-cli:distZip \
-            --no-daemon --build-cache
+            -PcliVersion="$CLI_VERSION" --no-daemon --build-cache
           jq -e '.contractCommand and .workflow and .exitCodes' \
             apps/idea2strategy-cli/src/main/resources/idea2strategy-ai-tool-contract.json > /dev/null
 
@@ -60,11 +73,14 @@ jobs:
           TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          archive="$(ls apps/idea2strategy-cli/build/distributions/*.zip)"
-          sha256sum "$archive" > "${archive}.sha256"
+          archive="apps/idea2strategy-cli/build/distributions/idea2strategy-${CLI_VERSION}.zip"
+          test -f "$archive"
+          # Hash from inside the directory so the line names the file alone and
+          # `sha256sum -c` works wherever the two downloads land.
+          (cd "$(dirname "$archive")" && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
                  --title "Idea2Strategy CLI $TAG" \
-                 --notes "Requires Java 21. Verify with the published .sha256, unzip, and run \`bin/idea2strategy tool-contract\`."
+                 --notes "Requires Java 21. Verify with \`sha256sum -c\` on the published .sha256, unzip, and run \`bin/idea2strategy tool-contract\`."
           gh release upload "$TAG" "$archive" "${archive}.sha256" \
             --repo "$GITHUB_REPOSITORY" --clobber
